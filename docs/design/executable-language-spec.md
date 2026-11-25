@@ -416,6 +416,11 @@ link; after changing an example, run that class once with
 `KATLANG_REGENERATE_TUTORIAL_PLAYGROUND_LINKS=1`, which rewrites the links and
 then fails by design.
 
+The front-end decision corpus also reads each example's source and identifies
+it by fence order. When adding, editing, removing or reordering examples changes
+the generated decisions or their IDs, regenerate `FrontEndDecisionCases.lean`
+with `KATLANG_REGENERATE_FRONT_END_DECISIONS=1` and include it with the tutorial edit.
+
 The deliberately narrow fence contract is a column-zero, untagged, exactly
 three-backtick fence; tagged, indented/list/blockquote, longer, and trailing-
 space fence forms are not KatLang source fences. If any such unsupported form

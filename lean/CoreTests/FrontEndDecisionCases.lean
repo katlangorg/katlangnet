@@ -82,39 +82,39 @@ property names, a clause body's head binders), innermost level first, ending in 
 property level. `forwarded` lists the parameters automatic forwarding added afterwards (the resolved
 signature minus the detected one); the owner walk never reads it. Identical guards of one program
 are emitted once, with their multiplicity, and programs whose levels and guards are identical share
-one block that names every one of them (1770 blocks): nothing is sampled.
+one block that names every one of them (1760 blocks): nothing is sampled.
 
 Partition:
-- corpus programs: 4617 (explorer 2821, spec 809, SEM-2B 744, tutorial 195,
+- corpus programs: 4596 (explorer 2821, spec 809, SEM-2B 744, tutorial 174,
   witness 48: 16 witnesses, three members each)
 - skipped, the parser rejected the source: 49
 - skipped, an unresolved `load` directive (module elaboration is async-only): 2
 - skipped, parameter inference refused as circular: 0
 - excluded by exact id, a reviewed Lean/C# disagreement (class and witness in
   `FrontEndDecisionCorpus.ReviewedDriftById`): 0
-- guarded programs: 4566 (15807 scope levels, 148 with a forwarded parameter)
-- name occurrences: 22829 (8079 parameters, 1850 dot-edge fallback names)
+- guarded programs: 4545 (15742 scope levels, 146 with a forwarded parameter)
+- name occurrences: 22727 (8060 parameters, 1842 dot-edge fallback names)
 - of those names and heads, the same node in the complete pipeline's tree (matched by source span):
-  21855; with no source span to match by (names the parser synthesized, such as the plumbing of an
-  assignment deconstruction): 1124; with no node of that span and name left there: 0
+  21757; with no source span to match by (names the parser synthesized, such as the plumbing of an
+  assignment deconstruction): 1120; with no node of that span and name left there: 0
 - open heads: 150 (9 parameter-owned)
-- clause families: 156 (24 with no lifting signature); skipped, a head with no Lean spelling: 1
-- promotion: 9296 inferring levels; 10495 decisions guarded (10351 over an owner chain, 144 over an encoded tree
-  of 108 programs): 400 promoted, 10086 resolved (89 through an open), 9 ambiguous; not asked: 268 owned
-  by an enclosing parameter, 736 not participating, 40 a C#-only prelude member;
+- clause families: 154 (22 with no lifting signature); skipped, a head with no Lean spelling: 1
+- promotion: 9252 inferring levels; 10439 decisions guarded (10295 over an owner chain, 144 over an encoded tree
+  of 108 programs): 394 promoted, 10036 resolved (89 through an open), 9 ambiguous; not asked: 269 owned
+  by an enclosing parameter, 734 not participating, 40 a C#-only prelude member;
   not guarded over an encoded tree: 15 in a program with an invalid open, 1 in a program the encoder cannot spell, 2 with no property path
-- forwarding: 414 reads (105 own, 24 captured, 285 forwarded) in 263 lifted calls;
+- forwarding: 409 reads (105 own, 24 captured, 280 forwarded) in 258 lifted calls;
   10 of the own reads supplied by shape under another name (7 FD-F1, 3 FD-F2); unattributed lifts: 0
 - refused forwards: 23 unavailable sources (10 at closed value operands, 13 from bare-forwarding reports);
   not attributed: 3 bare references whose callee leaves 6 names unbound between them,
   5 bare-forwarding refusals of a pattern's form
-- slot roles: 8776 call nodes, 11410 positions including dot receivers; role shown at 427 slots of 376 programs
-  (38 value, including 3 unliftable-family reports; 389 callable: an available lift not made); not shown: 10055 hold no
-  role-sensitive reference, 25 stay bare where a requested name is unbound (refused or callable);
-  331 receivers outside the argument supply; not read: 0 with no static callee classification, 10 after an inserted spread, 562 of a call
+- slot roles: 8731 call nodes, 11359 positions including dot receivers; role shown at 427 slots of 377 programs
+  (38 value, including 3 unliftable-family reports; 389 callable: an available lift not made); not shown: 10007 hold no
+  role-sensitive reference, 23 stay bare where a requested name is unbound (refused or callable);
+  332 receivers outside the argument supply; not read: 0 with no static callee classification, 10 after an inserted spread, 560 of a call
   the parser synthesized, 0 with no counterpart in the complete tree
-- declaration validity: 584 declaring levels checked (8 with a reported collision, 8 names);
-  626 innermost chains checked (14 invalid)
+- declaration validity: 580 declaring levels checked (8 with a reported collision, 8 names);
+  622 innermost chains checked (14 invalid)
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_FRONT_END_DECISIONS = "1"
@@ -372,9 +372,9 @@ def treeSite (program : Expr) (path : List SiteStep) : Option (Algorithm × Eval
 --   spec/hunt-selection-negative-index-is-bad-index, spec/hunt-selection-boolean-selector-is-type
 --   spec/hunt-selection-first-selector-failure-wins, spec/hunt-selection-scalar-boolean-selects-itself
 --   tutorial/fence-000, tutorial/fence-001, tutorial/fence-002, tutorial/fence-003, tutorial/fence-004
---   tutorial/fence-005, tutorial/fence-006, tutorial/fence-007, tutorial/fence-008, tutorial/fence-032
---   tutorial/fence-042, tutorial/fence-053, tutorial/fence-054, tutorial/fence-072, tutorial/fence-073
---   tutorial/fence-074, tutorial/fence-075, tutorial/fence-080, tutorial/fence-083
+--   tutorial/fence-005, tutorial/fence-006, tutorial/fence-007, tutorial/fence-008, tutorial/fence-030
+--   tutorial/fence-040, tutorial/fence-050, tutorial/fence-051, tutorial/fence-062, tutorial/fence-063
+--   tutorial/fence-064, tutorial/fence-065, tutorial/fence-070, tutorial/fence-071
 def p0_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 
 -- explorer/capture__e: x = () \n x
@@ -878,7 +878,7 @@ def p14_4 : List OwnerLevel := { parameters := ["p", "z"], properties := [] } ::
 #guard promotes p14_3 "$deconstruct$0" == some false
 
 -- explorer/count__e: count(())
--- the same levels and decisions, 110 more:
+-- the same levels and decisions, 109 more:
 --   explorer/count__n0, explorer/count__n1, explorer/count__bt, explorer/count__bf, explorer/count__pbt
 --   explorer/count__pbt_e, explorer/count__pbt_1, explorer/count__lbt, explorer/count__lbt_bf
 --   explorer/count__lpbt_1, explorer/count__p1, explorer/count__p12, explorer/count__p123, explorer/count__pee
@@ -909,7 +909,7 @@ def p14_4 : List OwnerLevel := { parameters := ["p", "z"], properties := [] } ::
 --   explorer/literalDotCount__p_l12, explorer/literalDotCount__pl1, explorer/special__strCount
 --   explorer/special__huntA5Select1S03StringCount, spec/empty-count-one-arg, spec/empty-count-two-args
 --   spec/count-scalar-and-string, spec/builtin-fixed-collection-arity
---   spec/variadic-selection-shares-the-positional-view, spec/list-builtin-collection, tutorial/fence-071
+--   spec/variadic-selection-shares-the-positional-view, spec/list-builtin-collection
 def p15_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 #guard selectOwnedDeclaration p15_0 "count" == .property 1
 #guard elaboratesToParameter p15_0 "count" == false
@@ -1118,7 +1118,7 @@ def p24_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 --   explorer/order__le, explorer/order__l7, explorer/order__l12, explorer/order__l12_3, explorer/order__lle
 --   explorer/order__l_e, explorer/order__l_p12, explorer/order__p_l12, explorer/order__pl1
 --   explorer/special__orderSingle, explorer/special__orderEmpty, explorer/special__orderIndex0
---   spec/order-sorts-atoms, spec/order-rejects-non-numeric, spec/order-is-stable, tutorial/fence-099
+--   spec/order-sorts-atoms, spec/order-rejects-non-numeric, spec/order-is-stable, tutorial/fence-086
 def p25_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 #guard selectOwnedDeclaration p25_0 "order" == .property 1
 #guard elaboratesToParameter p25_0 "order" == false
@@ -1321,7 +1321,7 @@ def p31_1 : List OwnerLevel := { parameters := ["a"], properties := [] } :: p31_
 --   explorer/atoms__le, explorer/atoms__l7, explorer/atoms__l12, explorer/atoms__l12_3, explorer/atoms__lle
 --   explorer/atoms__l_e, explorer/atoms__l_p12, explorer/atoms__p_l12, explorer/atoms__pl1
 --   explorer/special__atomsNested, spec/atoms-recursive-flatten, spec/atoms-exact-list-result
---   spec/atoms-list-traversal, spec/atoms-mixed-traversal, tutorial/fence-111
+--   spec/atoms-list-traversal, spec/atoms-mixed-traversal, tutorial/fence-100
 def p32_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 #guard selectOwnedDeclaration p32_0 "atoms" == .property 1
 #guard elaboratesToParameter p32_0 "atoms" == false
@@ -1485,7 +1485,7 @@ def p42_2 : List OwnerLevel := { parameters := ["b"], properties := [] } :: p42_
 -- explorer/special__range13: range(1, 3)
 -- the same levels and decisions, 6 more:
 --   explorer/special__rangeIndex0, spec/range-inclusive, spec/range-single-value
---   spec/range-integral-bound-quantum, spec/list-index-builtin-results, tutorial/fence-091
+--   spec/range-integral-bound-quantum, spec/list-index-builtin-results, tutorial/fence-078
 def p43_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 #guard selectOwnedDeclaration p43_0 "range" == .property 1
 #guard elaboratesToParameter p43_0 "range" == false
@@ -1557,7 +1557,7 @@ def p48_1 : List OwnerLevel := { parameters := ["a"], properties := [] } :: p48_
 -- explorer/special__mapPairSwap: Swap(a, b) = b, a \n map(((1, 2), (3, 4)), Swap)
 -- the same levels and decisions, 4 more:
 --   explorer/special__mapPairSwapOk, explorer/special__mapPairSwapFlatIsArity, spec/map-pair-callback
---   tutorial/fence-101
+--   tutorial/fence-088
 def p49_0 : List OwnerLevel := { parameters := [], properties := ["Swap"] } :: prelude
 def p49_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p49_0
 #guard selectOwnedDeclaration p49_1 "b" == .parameter 0
@@ -1622,7 +1622,7 @@ def p53_2 : List OwnerLevel := { parameters := ["x", "y", "z"], properties := []
 
 -- explorer/special__sumEmpty: sum(())
 -- the same levels and decisions, 1 more:
---   tutorial/fence-097
+--   tutorial/fence-084
 def p54_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 #guard selectOwnedDeclaration p54_0 "sum" == .property 1
 #guard elaboratesToParameter p54_0 "sum" == false
@@ -1657,7 +1657,7 @@ def p56_1 : List OwnerLevel := { parameters := ["history", "previous"], properti
 -- explorer/special__ifBranchSeq: if(true, (1, 2), 3)
 -- the same levels and decisions, 4 more:
 --   explorer/special__huntA11Cmp1K04IfNumber, explorer/special__huntA12Builtins1B02IfCondFail
---   spec/if-arity-is-uniform-across-spellings, tutorial/fence-038
+--   spec/if-arity-is-uniform-across-spellings, tutorial/fence-037
 def p57_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 #guard selectOwnedDeclaration p57_0 "if" == .property 1
 #guard elaboratesToParameter p57_0 "if" == false
@@ -1683,7 +1683,7 @@ def p59_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p59_
 -- the same levels and decisions, 8 more:
 --   explorer/special__listSpreadConcat, explorer/special__listMixedSpread, spec/eq-structural-nested
 --   spec/output-rows-interleave-definitions, spec/star-before-operand-row-is-multiplication
---   spec/star-before-declaration-or-boundary-is-spread, tutorial/fence-012, tutorial/fence-192
+--   spec/star-before-declaration-or-boundary-is-spread, tutorial/fence-012, tutorial/fence-171
 def p60_0 : List OwnerLevel := { parameters := [], properties := ["A", "B"] } :: prelude
 def p60_1 : List OwnerLevel := { parameters := [], properties := [] } :: p60_0
 def p60_2 : List OwnerLevel := { parameters := [], properties := [] } :: p60_0
@@ -11486,8 +11486,6 @@ def p383_3 : List OwnerLevel := { parameters := [], properties := [] } :: p383_2
 #guard validOwnedDeclarations p383_3 == true
 
 -- explorer/special__huntA3Cache1C01ReentrantQ37: A = if(tick() < 3, A + 1, 0) \n A, A
--- the same levels and decisions, 1 more:
---   tutorial/fence-173
 def p384_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
 def p384_1 : List OwnerLevel := { parameters := [], properties := [] } :: p384_0
 #guard selectOwnedDeclaration p384_1 "if" == .property 2
@@ -13401,10 +13399,9 @@ def p485_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p48
 #guard promotes p485_0 "F" == some false
 
 -- spec/need-collector-demand-materializes-whole-slice: F(*xs) = xs \n F(1, 1 / 0)
--- the same levels and decisions, 4 more:
+-- the same levels and decisions, 3 more:
 --   spec/selective-collector-selection-demands-selected-positions
 --   spec/selective-collector-whole-value-stays-eager, spec/selective-collector-written-list-stays-eager
---   tutorial/fence-186
 def p486_0 : List OwnerLevel := { parameters := [], properties := ["F"] } :: prelude
 def p486_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p486_0
 #guard selectOwnedDeclaration p486_1 "xs" == .parameter 0
@@ -14057,7 +14054,7 @@ def p522_3 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :
 
 -- spec/loop-step-family-while: Countdown(0) = 0, false \n Countdown(n) = n - 1, true \n Countdown(3).while
 -- the same levels and decisions, 1 more:
---   tutorial/fence-149
+--   tutorial/fence-134
 def p523_0 : List OwnerLevel := { parameters := [], properties := ["Countdown"] } :: prelude
 def p523_1 : List OwnerLevel := { parameters := [], properties := [] } :: p523_0
 def p523_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p523_0
@@ -14073,7 +14070,7 @@ def p523_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p52
 
 -- spec/loop-while-condition-first-skips-transition: Step(x) = 10 / (x - 1), x > 1 \n Step(1).while
 -- the same levels and decisions, 1 more:
---   tutorial/fence-145
+--   tutorial/fence-130
 def p524_0 : List OwnerLevel := { parameters := [], properties := ["Step"] } :: prelude
 def p524_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p524_0
 #guard selectOwnedDeclaration p524_1 "x" == .parameter 0 -- x2
@@ -14186,7 +14183,7 @@ def p530_2 : List OwnerLevel := { parameters := ["step"], properties := [] } :: 
 
 -- spec/property-value-boundary: Coordinates = 10, 20 \n Coordinates \n Coordinates*, 997
 -- the same levels and decisions, 1 more:
---   tutorial/fence-059
+--   tutorial/fence-056
 def p531_0 : List OwnerLevel := { parameters := [], properties := ["Coordinates"] } :: prelude
 def p531_1 : List OwnerLevel := { parameters := [], properties := [] } :: p531_0
 #guard selectOwnedDeclaration p531_0 "Coordinates" == .property 0 -- x2
@@ -14218,7 +14215,7 @@ def p533_2 : List OwnerLevel := { parameters := ["items"], properties := [] } ::
 
 -- spec/repeated-spread-singleton-opens: Collect(*items) = items \n  \n Collect([[7]]*) \n Collect([[7]]**) \n Collect([7]*) \n Collect([7]**)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-114
+--   tutorial/fence-103
 def p534_0 : List OwnerLevel := { parameters := [], properties := ["Collect"] } :: prelude
 def p534_1 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p534_0
 #guard selectOwnedDeclaration p534_1 "items" == .parameter 0
@@ -14247,7 +14244,7 @@ def p536_1 : List OwnerLevel := { parameters := [], properties := [] } :: p536_0
 
 -- spec/fixed-call-preserves-boundaries: Pair = 10, 20 \n Add(x, y) = x + y \n  \n Add(Pair)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-058
+--   tutorial/fence-055
 def p537_0 : List OwnerLevel := { parameters := [], properties := ["Pair", "Add"] } :: prelude
 def p537_1 : List OwnerLevel := { parameters := [], properties := [] } :: p537_0
 def p537_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p537_0
@@ -14292,7 +14289,7 @@ def p539_1 : List OwnerLevel := { parameters := ["a"], properties := [] } :: p53
 
 -- spec/decon-pair: x, y = 1, 2 \n x \n y
 -- the same levels and decisions, 2 more:
---   spec/list-deconstruction-not-recursive, tutorial/fence-121
+--   spec/list-deconstruction-not-recursive, tutorial/fence-108
 def p540_0 : List OwnerLevel := { parameters := [], properties := ["$deconstruct$0", "x", "y"] } :: prelude
 def p540_1 : List OwnerLevel := { parameters := [], properties := [] } :: p540_0
 def p540_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p540_1
@@ -14533,7 +14530,7 @@ def p547_7 : List OwnerLevel := { parameters := ["x", "y", "z"], properties := [
 
 -- spec/decon-tutorial-full: A = 1, 2, 3, 4, 5 \n  \n x, *y, z = A \n x \n y \n z
 -- the same levels and decisions, 1 more:
---   tutorial/fence-123
+--   tutorial/fence-110
 def p548_0 : List OwnerLevel := { parameters := [], properties := ["A", "$deconstruct$0", "x", "y", "z"] } :: prelude
 def p548_1 : List OwnerLevel := { parameters := [], properties := [] } :: p548_0
 def p548_2 : List OwnerLevel := { parameters := [], properties := [] } :: p548_0
@@ -14619,7 +14616,7 @@ def p551_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p55
 
 -- spec/variadic-forwarding-list-spread: Target(*items) = items \n Forward(*items) = Target(items*) \n  \n Forward(1, 2) \n Forward([1, 2])
 -- the same levels and decisions, 1 more:
---   tutorial/fence-120
+--   tutorial/fence-107
 def p552_0 : List OwnerLevel := { parameters := [], properties := ["Target", "Forward"] } :: prelude
 def p552_1 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p552_0
 def p552_2 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p552_0
@@ -15007,8 +15004,6 @@ def p571_2 : List OwnerLevel := { parameters := ["items"], properties := [] } ::
 #guard forwardingSource p571_2 false "xs" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "items" by shape
 
 -- spec/implicit-forwarding-is-by-binding-name: F(x) = x + 1 \n G(x) = x * 2 \n H = F + G \n  \n Common(x, x) = x \n Twice = Common * 2 \n  \n H(3) \n Twice(7)
--- the same levels and decisions, 1 more:
---   tutorial/fence-165
 def p572_0 : List OwnerLevel := { parameters := [], properties := ["H", "Twice", "F", "G", "Common"] } :: prelude
 def p572_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p572_0
 def p572_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p572_0
@@ -15041,7 +15036,7 @@ def p572_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p57
 
 -- spec/formula-lifting-is-one-law-for-every-callable: Lib = { \n     public Inc(x) = x + 1 \n } \n E(0) = 100 \n E(n) = n \n Total = count + 0 \n Next = Lib.Inc + 0 \n Fam = E + 1 \n  \n Total((1, 2, 3)) \n Next(4) \n Fam(0)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-166
+--   tutorial/fence-151
 def p573_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "Total", "Next", "Fam", "E"] } :: prelude
 def p573_1 : List OwnerLevel := { parameters := [], properties := ["Inc"] } :: p573_0
 def p573_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p573_1
@@ -15081,7 +15076,7 @@ def p573_7 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p57
 
 -- spec/formula-lifting-follows-the-consumers-role: Inc(x) = x + 1 \n Apply(f) = f(10) \n  \n Values = [Inc, Inc * 2] \n Kept = Apply(Inc) \n Branch = if(true, Inc, 0) \n  \n Values(4) \n Kept \n Branch(4)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-167
+--   tutorial/fence-150
 def p574_0 : List OwnerLevel := { parameters := [], properties := ["Values", "Kept", "Branch", "Inc", "Apply"] } :: prelude
 def p574_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p574_0
 def p574_2 : List OwnerLevel := { parameters := [], properties := [] } :: p574_0
@@ -15252,7 +15247,7 @@ def p579_7 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p57
 
 -- spec/alias-forwarding-and-explicit-call: Double(x) = x * 2 \n Other(y) = y * 2 \n  \n Alias = Double \n Forward(x) = Double \n Explicit(x) = Other(x) \n Formula = Double + 1 \n  \n Alias(5) \n Forward(5) \n Explicit(5) \n Formula(5)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-029
+--   tutorial/fence-148
 def p580_0 : List OwnerLevel := { parameters := [], properties := ["Alias", "Formula", "Double", "Other", "Forward", "Explicit"] } :: prelude
 def p580_1 : List OwnerLevel := { parameters := [], properties := [] } :: p580_0
 def p580_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p580_0
@@ -15320,8 +15315,6 @@ def p582_2 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p58
 #guard forwardingSource p582_2 false "q" == .unavailable
 
 -- spec/alias-structural-forwarding-and-written-call: Single([x]) = x \n  \n Alias = Single \n SameShape([x]) = Single \n Explicit(x) = Single(x) \n Construct = Single([x]) \n  \n Alias([7]) \n SameShape([7]) \n Explicit([7]) \n Construct(7)
--- the same levels and decisions, 1 more:
---   tutorial/fence-168
 def p583_0 : List OwnerLevel := { parameters := [], properties := ["Alias", "Construct", "Single", "SameShape", "Explicit"] } :: prelude
 def p583_1 : List OwnerLevel := { parameters := [], properties := [] } :: p583_0
 def p583_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p583_0
@@ -15461,7 +15454,7 @@ def p588_3 : List OwnerLevel := { parameters := [], properties := [], forwarded 
 
 -- spec/alias-of-a-builtin-is-the-builtin: C = count \n I = if \n M = map \n Bad(x) = x / 0 \n  \n C([1, 2, 3]) \n I(true, 1, 1 / 0) \n M([], Bad)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-169
+--   tutorial/fence-152
 def p589_0 : List OwnerLevel := { parameters := [], properties := ["C", "I", "M", "Bad"] } :: prelude
 def p589_1 : List OwnerLevel := { parameters := [], properties := [] } :: p589_0
 def p589_2 : List OwnerLevel := { parameters := [], properties := [] } :: p589_0
@@ -15555,8 +15548,6 @@ def p592_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p59
 #guard promotes p592_1 "Lib" == some false
 
 -- spec/reference-and-carrier-transport-the-whole-definition: Box = { \n     public Q = 99 \n     F(x) = x * x \n     F \n } \n A = Box \n B = { Box } \n GetQ(f) = f.Q \n  \n A.Q \n GetQ(A) \n A(3) \n B(3)
--- the same levels and decisions, 1 more:
---   tutorial/fence-170
 def p593_0 : List OwnerLevel := { parameters := [], properties := ["Box", "A", "B", "GetQ"] } :: prelude
 def p593_1 : List OwnerLevel := { parameters := [], properties := ["Q", "F"] } :: p593_0
 def p593_2 : List OwnerLevel := { parameters := [], properties := [] } :: p593_1
@@ -15593,8 +15584,6 @@ def p593_6 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p59
 #guard liftingSlotRole .user 0 true == .callable -- GetQ: A
 
 -- spec/repeated-name-matches-definitions-by-identity: A = 7 \n D = 7 \n Same(x, x) = true \n Same(x, y) = false \n  \n Same(A, A) \n Same(A, D) \n Same(A, 7)
--- the same levels and decisions, 1 more:
---   tutorial/fence-134
 def p594_0 : List OwnerLevel := { parameters := [], properties := ["A", "D", "Same"] } :: prelude
 def p594_1 : List OwnerLevel := { parameters := [], properties := [] } :: p594_0
 def p594_2 : List OwnerLevel := { parameters := [], properties := [] } :: p594_0
@@ -17008,7 +16997,7 @@ def p661_2 : List OwnerLevel := { parameters := [], properties := [] } :: p661_1
 
 -- spec/dot-call-structural-member-is-not-a-lexical-rewrite: B(a, c) = a * 100 + c \n Obj = { \n     public B(c) = c + 1 \n } \n  \n Obj.B(5) \n 3.B(5)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-159
+--   tutorial/fence-142
 def p662_0 : List OwnerLevel := { parameters := [], properties := ["Obj", "B"] } :: prelude
 def p662_1 : List OwnerLevel := { parameters := [], properties := ["B"] } :: p662_0
 def p662_2 : List OwnerLevel := { parameters := ["c"], properties := [] } :: p662_1
@@ -17028,7 +17017,7 @@ def p662_3 : List OwnerLevel := { parameters := ["a", "c"], properties := [] } :
 
 -- spec/visibility-private-member-is-structural-not-exported: Lib = { \n     public Area = 4 \n     Helper = Area / 2 \n } \n  \n Lib.Area \n Lib.Helper
 -- the same levels and decisions, 1 more:
---   tutorial/fence-161
+--   tutorial/fence-144
 def p663_0 : List OwnerLevel := { parameters := [], properties := ["Lib"] } :: prelude
 def p663_1 : List OwnerLevel := { parameters := [], properties := ["Area", "Helper"] } :: p663_0
 def p663_2 : List OwnerLevel := { parameters := [], properties := [] } :: p663_1
@@ -17046,7 +17035,7 @@ def p663_3 : List OwnerLevel := { parameters := [], properties := [] } :: p663_1
 
 -- spec/filter-keeps-matching: IsEven = x mod 2 == 0 \n filter((1, 2, 3, 4, 5, 6), IsEven)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-094
+--   tutorial/fence-081
 def p664_0 : List OwnerLevel := { parameters := [], properties := ["IsEven"] } :: prelude
 def p664_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p664_0
 #guard selectOwnedDeclaration p664_1 "x" == .parameter 0
@@ -17168,7 +17157,7 @@ def p669_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p66
 
 -- spec/lazy-map-runs-its-mapper-only-for-the-positions-read: [1, 2].map{if(n == 1, 10, 1 / 0)}.first
 -- the same levels and decisions, 1 more:
---   tutorial/fence-081
+--   tutorial/fence-098
 def p670_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 def p670_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p670_0
 #guard selectOwnedDeclaration p670_0 "map" == .property 1
@@ -17186,7 +17175,7 @@ def p670_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p67
 
 -- spec/lazy-filter-discovers-only-the-matches-it-needs: [1, 0].filter{1 / n > 0}.take(1)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-082
+--   tutorial/fence-099
 def p671_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 def p671_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p671_0
 #guard selectOwnedDeclaration p671_0 "filter" == .property 1
@@ -17333,7 +17322,7 @@ def p681_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p68
 
 -- spec/map-identity-preserves-empty-elements: Id(x) = x \n map([(), 1, [], 2], Id)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-104
+--   tutorial/fence-092
 def p682_0 : List OwnerLevel := { parameters := [], properties := ["Id"] } :: prelude
 def p682_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p682_0
 #guard selectOwnedDeclaration p682_1 "x" == .parameter 0
@@ -17618,7 +17607,7 @@ def p699_2 : List OwnerLevel := { parameters := ["x", "acc"], properties := [] }
 
 -- spec/index-selects-atom: Nums = 10, 20, 30, 40, 50 \n  \n # Select the third value (index 2): \n Nums[2]
 -- the same levels and decisions, 1 more:
---   tutorial/fence-055
+--   tutorial/fence-052
 def p700_0 : List OwnerLevel := { parameters := [], properties := ["Nums"] } :: prelude
 def p700_1 : List OwnerLevel := { parameters := [], properties := [] } :: p700_0
 #guard selectOwnedDeclaration p700_0 "Nums" == .property 0
@@ -17686,7 +17675,7 @@ def p706_2 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p70
 
 -- spec/line-final-star-in-definition-continues: A = 2 \n X = A * \n 3 \n X
 -- the same levels and decisions, 1 more:
---   tutorial/fence-194
+--   tutorial/fence-173
 def p707_0 : List OwnerLevel := { parameters := [], properties := ["A", "X"] } :: prelude
 def p707_1 : List OwnerLevel := { parameters := [], properties := [] } :: p707_0
 def p707_2 : List OwnerLevel := { parameters := [], properties := [] } :: p707_0
@@ -17752,8 +17741,6 @@ def p710_6 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :
 #guard familyLiftingSignature? [clause (.litInt 0), clause (.bind "n")] == some [.capture { name := "n" }] -- family F
 
 -- spec/grace-in-branch-nested-block-belongs-to-the-block: Apply(f) = f(1, 10) \n F(0) = Apply({ y - ~x }) \n F(0)
--- the same levels and decisions, 1 more:
---   tutorial/fence-140
 def p711_0 : List OwnerLevel := { parameters := [], properties := ["Apply", "F"] } :: prelude
 def p711_1 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p711_0
 def p711_2 : List OwnerLevel := { parameters := [], properties := [] } :: p711_0
@@ -17931,7 +17918,7 @@ def p716_1 : List OwnerLevel := { parameters := ["b", "a"], properties := [] } :
 
 -- spec/adjacency-call-across-space: Add(a, b) = a + b \n  \n Add(1, 2)    # 3 \n Add (1, 2)   # the same call, 3
 -- the same levels and decisions, 1 more:
---   tutorial/fence-046
+--   tutorial/fence-043
 def p717_0 : List OwnerLevel := { parameters := [], properties := ["Add"] } :: prelude
 def p717_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p717_0
 #guard selectOwnedDeclaration p717_1 "a" == .parameter 0
@@ -17963,7 +17950,7 @@ def p719_2 : List OwnerLevel := { parameters := ["vals"], properties := [] } :: 
 
 -- spec/dot-chain-continuation: (1, 2, 3) \n .map { n * 2 } \n .sum
 -- the same levels and decisions, 1 more:
---   tutorial/fence-093
+--   tutorial/fence-080
 def p720_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
 def p720_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p720_0
 #guard selectOwnedDeclaration p720_0 "map" == .property 1
@@ -18181,7 +18168,7 @@ def p736_6 : List OwnerLevel := { parameters := ["x", "y", "z"], properties := [
 
 -- spec/collecting-binding-exact-list: x, *rest = [1, 2, 3] \n  \n x \n rest
 -- the same levels and decisions, 1 more:
---   tutorial/fence-124
+--   tutorial/fence-111
 def p737_0 : List OwnerLevel := { parameters := [], properties := ["$deconstruct$0", "x", "rest"] } :: prelude
 def p737_1 : List OwnerLevel := { parameters := [], properties := [] } :: p737_0
 def p737_2 : List OwnerLevel := { parameters := ["x", "rest"], properties := [] } :: p737_1
@@ -18585,7 +18572,7 @@ def p755_8 : List OwnerLevel := { parameters := [], properties := [], forwarded 
 
 -- spec/ownership-captured-parameter-beats-outer-property: v = 99 \n Outer(v) = { \n     Inner = v + 1 \n     Inner \n } \n Outer(7)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-155
+--   tutorial/fence-139
 def p756_0 : List OwnerLevel := { parameters := [], properties := ["v", "Outer"] } :: prelude
 def p756_1 : List OwnerLevel := { parameters := [], properties := [] } :: p756_0
 def p756_2 : List OwnerLevel := { parameters := ["v"], properties := ["Inner"] } :: p756_0
@@ -19587,8 +19574,6 @@ def p815_3 : List OwnerLevel := { parameters := ["op"], properties := [] } :: p8
 #guard promotes p815_1 "Square" == some false
 
 -- spec/call-reference-algorithm-loops: Step(x) = x + 1, x < 3 \n Loop(meta operation) = operation.Algorithm(operation.Arguments*).while \n  \n Step(0).Loop
--- the same levels and decisions, 1 more:
---   tutorial/fence-184
 def p816_0 : List OwnerLevel := { parameters := [], properties := ["Step", "Loop"] } :: prelude
 def p816_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p816_0
 def p816_2 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p816_0
@@ -19645,7 +19630,7 @@ def p818_3 : List OwnerLevel := { parameters := ["op"], properties := [] } :: p8
 
 -- spec/runtime-alias-of-a-parameter: Square(x) = x * x \n Apply(f, x) = f(x) \n Use(f) = { \n     A = f \n     A(9), 2.A, Apply(A, 4) \n } \n  \n Use(Square)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-090
+--   tutorial/fence-153
 def p819_0 : List OwnerLevel := { parameters := [], properties := ["Square", "Apply", "Use"] } :: prelude
 def p819_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p819_0
 def p819_2 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p819_0
@@ -20586,8 +20571,6 @@ def p854_1 : List OwnerLevel := { parameters := [], properties := [] } :: p854_0
 #guard promotes p854_1 "tick" == some false
 
 -- spec/tick-argument-is-one-lazy-computation: Ignore(x) = 7 \n Twice(x) = x + x \n Ignore(tick()), Twice(tick()), tick()
--- the same levels and decisions, 1 more:
---   tutorial/fence-026
 def p855_0 : List OwnerLevel := { parameters := [], properties := ["Ignore", "Twice"] } :: prelude
 def p855_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p855_0
 def p855_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p855_0
@@ -20604,8 +20587,6 @@ def p855_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p85
 #guard promotes p855_0 "Twice" == some false
 
 -- spec/tick-callable-reference-is-not-an-execution: T = tick \n Apply(f) = f() \n T(), Apply(tick), tick()
--- the same levels and decisions, 1 more:
---   tutorial/fence-086
 def p856_0 : List OwnerLevel := { parameters := [], properties := ["T", "Apply"] } :: prelude
 def p856_1 : List OwnerLevel := { parameters := [], properties := [] } :: p856_0
 def p856_2 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p856_0
@@ -46371,25 +46352,30 @@ def p1609_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1609
 #guard promotes p1609_0 "Totl" == some true
 #guard ownedConflicts p1609_0 == []
 
--- tutorial/fence-024: Double(x) = x + x \n Double(randomInt(1, 7)) mod 2
-def p1610_0 : List OwnerLevel := { parameters := [], properties := ["Double"] } :: prelude
+-- tutorial/fence-024: Keep(x) = 42 \n Keep(1 / 0)
+def p1610_0 : List OwnerLevel := { parameters := [], properties := ["Keep"] } :: prelude
 def p1610_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1610_0
-#guard selectOwnedDeclaration p1610_1 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p1610_1 "x" == true -- x2
-#guard selectOwnedDeclaration p1610_0 "Double" == .property 0
-#guard elaboratesToParameter p1610_0 "Double" == false
-#guard selectOwnedDeclaration p1610_0 "randomInt" == .property 1
-#guard elaboratesToParameter p1610_0 "randomInt" == false
-#guard promotes p1610_0 "Double" == some false
+#guard selectOwnedDeclaration p1610_0 "Keep" == .property 0
+#guard elaboratesToParameter p1610_0 "Keep" == false
+#guard promotes p1610_0 "Keep" == some false
 
--- tutorial/fence-025: Keep(x) = 42 \n Keep(1 / 0)
-def p1611_0 : List OwnerLevel := { parameters := [], properties := ["Keep"] } :: prelude
+-- tutorial/fence-025: Ignore(x) = 7 \n Double(x) = x + x \n Ignore(tick()), Double(tick()), tick()
+def p1611_0 : List OwnerLevel := { parameters := [], properties := ["Ignore", "Double"] } :: prelude
 def p1611_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1611_0
-#guard selectOwnedDeclaration p1611_0 "Keep" == .property 0
-#guard elaboratesToParameter p1611_0 "Keep" == false
-#guard promotes p1611_0 "Keep" == some false
+def p1611_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1611_0
+#guard selectOwnedDeclaration p1611_2 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1611_2 "x" == true -- x2
+#guard selectOwnedDeclaration p1611_0 "Ignore" == .property 0
+#guard elaboratesToParameter p1611_0 "Ignore" == false
+#guard selectOwnedDeclaration p1611_0 "tick" == .property 1 -- x3
+#guard elaboratesToParameter p1611_0 "tick" == false -- x3
+#guard selectOwnedDeclaration p1611_0 "Double" == .property 0
+#guard elaboratesToParameter p1611_0 "Double" == false
+#guard promotes p1611_0 "Ignore" == some false
+#guard promotes p1611_0 "tick" == some false
+#guard promotes p1611_0 "Double" == some false
 
--- tutorial/fence-027: Speed = distance / time \n KineticEnergy = mass * Speed ^ 2 / 2 \n  \n KineticEnergy(2, 10, 5)
+-- tutorial/fence-026: Speed = distance / time \n KineticEnergy = mass * Speed ^ 2 / 2 \n  \n KineticEnergy(2, 10, 5)
 def p1612_0 : List OwnerLevel := { parameters := [], properties := ["Speed", "KineticEnergy"] } :: prelude
 def p1612_1 : List OwnerLevel := { parameters := ["distance", "time"], properties := [] } :: p1612_0
 def p1612_2 : List OwnerLevel := { parameters := ["mass"], properties := [], forwarded := ["distance", "time"] } :: p1612_0
@@ -46411,7 +46397,7 @@ def p1612_2 : List OwnerLevel := { parameters := ["mass"], properties := [], for
 #guard forwardingSource p1612_2 true "distance" == .forwardedParameter
 #guard forwardingSource p1612_2 true "time" == .forwardedParameter
 
--- tutorial/fence-028: F(x) = x + 1 \n G(x) = x * 2 \n H = F + G \n  \n H(3)
+-- tutorial/fence-027: F(x) = x + 1 \n G(x) = x * 2 \n H = F + G \n  \n H(3)
 def p1613_0 : List OwnerLevel := { parameters := [], properties := ["H", "F", "G"] } :: prelude
 def p1613_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1613_0
 def p1613_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1613_0
@@ -46431,30 +46417,30 @@ def p1613_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1
 #guard promotes p1613_1 "G" == some false
 #guard forwardingSource p1613_1 true "x" == .forwardedParameter -- x2
 
--- tutorial/fence-030: Divide = y / ~x \n Divide(2, 10)
-def p1614_0 : List OwnerLevel := { parameters := [], properties := ["Divide"] } :: prelude
-def p1614_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1614_0
-#guard selectOwnedDeclaration p1614_1 "y" == .parameter 0
-#guard elaboratesToParameter p1614_1 "y" == true
-#guard selectOwnedDeclaration p1614_1 "x" == .parameter 0
-#guard elaboratesToParameter p1614_1 "x" == true
-#guard selectOwnedDeclaration p1614_0 "Divide" == .property 0
-#guard elaboratesToParameter p1614_0 "Divide" == false
-#guard promotes p1614_0 "Divide" == some false
-#guard promotes p1614_1 "y" == some true
-#guard promotes p1614_1 "x" == some true
+-- tutorial/fence-028: Half = abs / 2 \n  \n Half(-6)
+def p1614_0 : List OwnerLevel := { parameters := [], properties := ["Half"] } :: prelude
+def p1614_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1614_0
+#guard selectOwnedDeclaration p1614_1 "abs" == .property 2
+#guard elaboratesToParameter p1614_1 "abs" == false
+#guard selectOwnedDeclaration p1614_0 "Half" == .property 0
+#guard elaboratesToParameter p1614_0 "Half" == false
+#guard promotes p1614_0 "Half" == some false
+#guard forwardingSource p1614_1 true "x" == .forwardedParameter
 
--- tutorial/fence-031: Double = ~x * 2 \n Double(4)
-def p1615_0 : List OwnerLevel := { parameters := [], properties := ["Double"] } :: prelude
-def p1615_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1615_0
+-- tutorial/fence-029: Divide = y / ~x \n Divide(2, 10)
+def p1615_0 : List OwnerLevel := { parameters := [], properties := ["Divide"] } :: prelude
+def p1615_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1615_0
+#guard selectOwnedDeclaration p1615_1 "y" == .parameter 0
+#guard elaboratesToParameter p1615_1 "y" == true
 #guard selectOwnedDeclaration p1615_1 "x" == .parameter 0
 #guard elaboratesToParameter p1615_1 "x" == true
-#guard selectOwnedDeclaration p1615_0 "Double" == .property 0
-#guard elaboratesToParameter p1615_0 "Double" == false
-#guard promotes p1615_0 "Double" == some false
+#guard selectOwnedDeclaration p1615_0 "Divide" == .property 0
+#guard elaboratesToParameter p1615_0 "Divide" == false
+#guard promotes p1615_0 "Divide" == some false
+#guard promotes p1615_1 "y" == some true
 #guard promotes p1615_1 "x" == some true
 
--- tutorial/fence-033: IsTeen = 13 <= age <= 19 \n  \n IsTeen(15) \n IsTeen(21)
+-- tutorial/fence-031: IsTeen = 13 <= age <= 19 \n  \n IsTeen(15) \n IsTeen(21)
 def p1616_0 : List OwnerLevel := { parameters := [], properties := ["IsTeen"] } :: prelude
 def p1616_1 : List OwnerLevel := { parameters := ["age"], properties := [] } :: p1616_0
 #guard selectOwnedDeclaration p1616_1 "age" == .parameter 0
@@ -46464,7 +46450,7 @@ def p1616_1 : List OwnerLevel := { parameters := ["age"], properties := [] } :: 
 #guard promotes p1616_0 "IsTeen" == some false
 #guard promotes p1616_1 "age" == some true
 
--- tutorial/fence-034: CanVote = age >= 18 and registered \n  \n CanVote(20, true) \n CanVote(20, false) \n CanVote(16, true)
+-- tutorial/fence-032: CanVote = age >= 18 and registered \n  \n CanVote(20, true) \n CanVote(20, false) \n CanVote(16, true)
 def p1617_0 : List OwnerLevel := { parameters := [], properties := ["CanVote"] } :: prelude
 def p1617_1 : List OwnerLevel := { parameters := ["age", "registered"], properties := [] } :: p1617_0
 #guard selectOwnedDeclaration p1617_1 "age" == .parameter 0
@@ -46477,7 +46463,7 @@ def p1617_1 : List OwnerLevel := { parameters := ["age", "registered"], properti
 #guard promotes p1617_1 "age" == some true
 #guard promotes p1617_1 "registered" == some true
 
--- tutorial/fence-035: GoodAverage = games != 0 and points / games >= 20 \n  \n GoodAverage(4, 100) \n GoodAverage(0, 0)
+-- tutorial/fence-033: GoodAverage = games != 0 and points / games >= 20 \n  \n GoodAverage(4, 100) \n GoodAverage(0, 0)
 def p1618_0 : List OwnerLevel := { parameters := [], properties := ["GoodAverage"] } :: prelude
 def p1618_1 : List OwnerLevel := { parameters := ["games", "points"], properties := [] } :: p1618_0
 #guard selectOwnedDeclaration p1618_1 "games" == .parameter 0 -- x2
@@ -46490,7 +46476,7 @@ def p1618_1 : List OwnerLevel := { parameters := ["games", "points"], properties
 #guard promotes p1618_1 "games" == some true
 #guard promotes p1618_1 "points" == some true
 
--- tutorial/fence-036: Abs = if(x < 0, -x, x) \n  \n Abs(-5) \n Abs(3)
+-- tutorial/fence-034: Abs = if(x < 0, -x, x) \n  \n Abs(-5) \n Abs(3)
 def p1619_0 : List OwnerLevel := { parameters := [], properties := ["Abs"] } :: prelude
 def p1619_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1619_0
 #guard selectOwnedDeclaration p1619_1 "if" == .property 2
@@ -46503,7 +46489,7 @@ def p1619_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1
 #guard promotes p1619_1 "if" == some false
 #guard promotes p1619_1 "x" == some true
 
--- tutorial/fence-037: SafeDivide(n, d) = if(d == 0, 0, n / d) \n  \n SafeDivide(10, 4) \n SafeDivide(1, 0)
+-- tutorial/fence-035: SafeDivide(n, d) = if(d == 0, 0, n / d) \n  \n SafeDivide(10, 4) \n SafeDivide(1, 0)
 def p1620_0 : List OwnerLevel := { parameters := [], properties := ["SafeDivide"] } :: prelude
 def p1620_1 : List OwnerLevel := { parameters := ["n", "d"], properties := [] } :: p1620_0
 #guard selectOwnedDeclaration p1620_1 "if" == .property 2
@@ -46516,2291 +46502,2180 @@ def p1620_1 : List OwnerLevel := { parameters := ["n", "d"], properties := [] } 
 #guard elaboratesToParameter p1620_0 "SafeDivide" == false -- x2
 #guard promotes p1620_0 "SafeDivide" == some false
 
--- tutorial/fence-039: Greeting = 'hello' \n  \n Greeting \n Greeting == 'hello' \n 'Hello' == 'hello'
-def p1621_0 : List OwnerLevel := { parameters := [], properties := ["Greeting"] } :: prelude
-def p1621_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1621_0
-#guard selectOwnedDeclaration p1621_0 "Greeting" == .property 0 -- x2
-#guard elaboratesToParameter p1621_0 "Greeting" == false -- x2
-#guard promotes p1621_0 "Greeting" == some false
+-- tutorial/fence-036: Sign = if(x > 0, 1, if(x < 0, -1, 0)) \n  \n Sign(-4), Sign(0), Sign(9)
+def p1621_0 : List OwnerLevel := { parameters := [], properties := ["Sign"] } :: prelude
+def p1621_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1621_0
+#guard selectOwnedDeclaration p1621_1 "if" == .property 2 -- x2
+#guard elaboratesToParameter p1621_1 "if" == false -- x2
+#guard selectOwnedDeclaration p1621_1 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1621_1 "x" == true -- x2
+#guard selectOwnedDeclaration p1621_0 "Sign" == .property 0 -- x3
+#guard elaboratesToParameter p1621_0 "Sign" == false -- x3
+#guard promotes p1621_0 "Sign" == some false
+#guard promotes p1621_1 "if" == some false
+#guard promotes p1621_1 "x" == some true
 
--- tutorial/fence-040: Verdict = if(score >= 50, 'pass', 'fail') \n  \n Verdict(72) \n Verdict(35)
-def p1622_0 : List OwnerLevel := { parameters := [], properties := ["Verdict"] } :: prelude
-def p1622_1 : List OwnerLevel := { parameters := ["score"], properties := [] } :: p1622_0
-#guard selectOwnedDeclaration p1622_1 "if" == .property 2
-#guard elaboratesToParameter p1622_1 "if" == false
-#guard selectOwnedDeclaration p1622_1 "score" == .parameter 0
-#guard elaboratesToParameter p1622_1 "score" == true
-#guard selectOwnedDeclaration p1622_0 "Verdict" == .property 0 -- x2
-#guard elaboratesToParameter p1622_0 "Verdict" == false -- x2
-#guard promotes p1622_0 "Verdict" == some false
-#guard promotes p1622_1 "if" == some false
-#guard promotes p1622_1 "score" == some true
+-- tutorial/fence-038: Greeting = 'hello' \n  \n Greeting \n Greeting == 'hello' \n 'Hello' == 'hello'
+def p1622_0 : List OwnerLevel := { parameters := [], properties := ["Greeting"] } :: prelude
+def p1622_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1622_0
+#guard selectOwnedDeclaration p1622_0 "Greeting" == .property 0 -- x2
+#guard elaboratesToParameter p1622_0 "Greeting" == false -- x2
+#guard promotes p1622_0 "Greeting" == some false
 
--- tutorial/fence-041: Grade(score) = if(score >= 90, 'A', if(score >= 50, 'B', 'C')) \n  \n Grade(95) \n Grade(60) \n Grade(10)
-def p1623_0 : List OwnerLevel := { parameters := [], properties := ["Grade"] } :: prelude
+-- tutorial/fence-039: Verdict = if(score >= 50, 'pass', 'fail') \n  \n Verdict(72) \n Verdict(35)
+def p1623_0 : List OwnerLevel := { parameters := [], properties := ["Verdict"] } :: prelude
 def p1623_1 : List OwnerLevel := { parameters := ["score"], properties := [] } :: p1623_0
-#guard selectOwnedDeclaration p1623_1 "if" == .property 2 -- x2
-#guard elaboratesToParameter p1623_1 "if" == false -- x2
-#guard selectOwnedDeclaration p1623_1 "score" == .parameter 0 -- x2
-#guard elaboratesToParameter p1623_1 "score" == true -- x2
-#guard selectOwnedDeclaration p1623_0 "Grade" == .property 0 -- x3
-#guard elaboratesToParameter p1623_0 "Grade" == false -- x3
-#guard promotes p1623_0 "Grade" == some false
+#guard selectOwnedDeclaration p1623_1 "if" == .property 2
+#guard elaboratesToParameter p1623_1 "if" == false
+#guard selectOwnedDeclaration p1623_1 "score" == .parameter 0
+#guard elaboratesToParameter p1623_1 "score" == true
+#guard selectOwnedDeclaration p1623_0 "Verdict" == .property 0 -- x2
+#guard elaboratesToParameter p1623_0 "Verdict" == false -- x2
+#guard promotes p1623_0 "Verdict" == some false
+#guard promotes p1623_1 "if" == some false
+#guard promotes p1623_1 "score" == some true
 
--- tutorial/fence-043: Price = 19.99 \n Quantity = 3 \n  \n Price * Quantity
-def p1624_0 : List OwnerLevel := { parameters := [], properties := ["Price", "Quantity"] } :: prelude
+-- tutorial/fence-041: Score = 72 \n  \n Score, if(Score >= 50, 'pass', 'fail')
+def p1624_0 : List OwnerLevel := { parameters := [], properties := ["Score"] } :: prelude
 def p1624_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1624_0
-def p1624_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1624_0
-#guard selectOwnedDeclaration p1624_0 "Price" == .property 0
-#guard elaboratesToParameter p1624_0 "Price" == false
-#guard selectOwnedDeclaration p1624_0 "Quantity" == .property 0
-#guard elaboratesToParameter p1624_0 "Quantity" == false
-#guard promotes p1624_0 "Price" == some false
-#guard promotes p1624_0 "Quantity" == some false
+#guard selectOwnedDeclaration p1624_0 "Score" == .property 0 -- x2
+#guard elaboratesToParameter p1624_0 "Score" == false -- x2
+#guard selectOwnedDeclaration p1624_0 "if" == .property 1
+#guard elaboratesToParameter p1624_0 "if" == false
+#guard promotes p1624_0 "Score" == some false
+#guard promotes p1624_0 "if" == some false
 
--- tutorial/fence-044: Score = 72 \n  \n Score, if(Score >= 50, 'pass', 'fail')
-def p1625_0 : List OwnerLevel := { parameters := [], properties := ["Score"] } :: prelude
-def p1625_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1625_0
-#guard selectOwnedDeclaration p1625_0 "Score" == .property 0 -- x2
-#guard elaboratesToParameter p1625_0 "Score" == false -- x2
-#guard selectOwnedDeclaration p1625_0 "if" == .property 1
-#guard elaboratesToParameter p1625_0 "if" == false
-#guard promotes p1625_0 "Score" == some false
-#guard promotes p1625_0 "if" == some false
+-- tutorial/fence-042: Square = n * n \n  \n Square(5) \n 5.Square
+def p1625_0 : List OwnerLevel := { parameters := [], properties := ["Square"] } :: prelude
+def p1625_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1625_0
+#guard selectOwnedDeclaration p1625_1 "n" == .parameter 0 -- x2
+#guard elaboratesToParameter p1625_1 "n" == true -- x2
+#guard selectOwnedDeclaration p1625_0 "Square" == .property 0 -- x2
+#guard elaboratesToParameter p1625_0 "Square" == false -- x2
+#guard promotes p1625_0 "Square" == some false
+#guard promotes p1625_1 "n" == some true
 
--- tutorial/fence-045: Square = n * n \n  \n Square(5) \n 5.Square
-def p1626_0 : List OwnerLevel := { parameters := [], properties := ["Square"] } :: prelude
-def p1626_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1626_0
-#guard selectOwnedDeclaration p1626_1 "n" == .parameter 0 -- x2
-#guard elaboratesToParameter p1626_1 "n" == true -- x2
-#guard selectOwnedDeclaration p1626_0 "Square" == .property 0 -- x2
-#guard elaboratesToParameter p1626_0 "Square" == false -- x2
-#guard promotes p1626_0 "Square" == some false
-#guard promotes p1626_1 "n" == some true
+-- tutorial/fence-044: 16.sqrt \n pi.round(2) \n 2.pow(10)
+def p1626_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
+#guard selectOwnedDeclaration p1626_0 "sqrt" == .property 1
+#guard elaboratesToParameter p1626_0 "sqrt" == false
+#guard selectOwnedDeclaration p1626_0 "pi" == .property 1
+#guard elaboratesToParameter p1626_0 "pi" == false
+#guard selectOwnedDeclaration p1626_0 "round" == .property 1
+#guard elaboratesToParameter p1626_0 "round" == false
+#guard selectOwnedDeclaration p1626_0 "pow" == .property 1
+#guard elaboratesToParameter p1626_0 "pow" == false
 
--- tutorial/fence-047: 16.sqrt \n pi.round(2) \n 2.pow(10)
-def p1627_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-#guard selectOwnedDeclaration p1627_0 "sqrt" == .property 1
-#guard elaboratesToParameter p1627_0 "sqrt" == false
-#guard selectOwnedDeclaration p1627_0 "pi" == .property 1
-#guard elaboratesToParameter p1627_0 "pi" == false
-#guard selectOwnedDeclaration p1627_0 "round" == .property 1
-#guard elaboratesToParameter p1627_0 "round" == false
-#guard selectOwnedDeclaration p1627_0 "pow" == .property 1
-#guard elaboratesToParameter p1627_0 "pow" == false
+-- tutorial/fence-045: Double = n * 2 \n Increment = n + 1 \n  \n 3.Double.Increment \n Increment(Double(3)) \n 3.Increment.Double
+def p1627_0 : List OwnerLevel := { parameters := [], properties := ["Double", "Increment"] } :: prelude
+def p1627_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1627_0
+def p1627_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1627_0
+#guard selectOwnedDeclaration p1627_1 "n" == .parameter 0
+#guard elaboratesToParameter p1627_1 "n" == true
+#guard selectOwnedDeclaration p1627_2 "n" == .parameter 0
+#guard elaboratesToParameter p1627_2 "n" == true
+#guard selectOwnedDeclaration p1627_0 "Double" == .property 0 -- x3
+#guard elaboratesToParameter p1627_0 "Double" == false -- x3
+#guard selectOwnedDeclaration p1627_0 "Increment" == .property 0 -- x3
+#guard elaboratesToParameter p1627_0 "Increment" == false -- x3
+#guard promotes p1627_0 "Double" == some false
+#guard promotes p1627_0 "Increment" == some false
+#guard promotes p1627_1 "n" == some true
+#guard promotes p1627_2 "n" == some true
 
--- tutorial/fence-048: Double = n * 2 \n Increment = n + 1 \n  \n 3.Double.Increment \n Increment(Double(3)) \n 3.Increment.Double
-def p1628_0 : List OwnerLevel := { parameters := [], properties := ["Double", "Increment"] } :: prelude
-def p1628_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1628_0
-def p1628_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1628_0
-#guard selectOwnedDeclaration p1628_1 "n" == .parameter 0
-#guard elaboratesToParameter p1628_1 "n" == true
-#guard selectOwnedDeclaration p1628_2 "n" == .parameter 0
-#guard elaboratesToParameter p1628_2 "n" == true
-#guard selectOwnedDeclaration p1628_0 "Double" == .property 0 -- x3
-#guard elaboratesToParameter p1628_0 "Double" == false -- x3
-#guard selectOwnedDeclaration p1628_0 "Increment" == .property 0 -- x3
-#guard elaboratesToParameter p1628_0 "Increment" == false -- x3
-#guard promotes p1628_0 "Double" == some false
-#guard promotes p1628_0 "Increment" == some false
-#guard promotes p1628_1 "n" == some true
-#guard promotes p1628_2 "n" == some true
+-- tutorial/fence-046: Math.Pi \n Math.Sqrt(16)
+def p1628_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
+#guard selectOwnedDeclaration p1628_0 "Math" == .property 1 -- x2
+#guard elaboratesToParameter p1628_0 "Math" == false -- x2
+#guard selectOwnedDeclaration p1628_0 "Pi" == .none
+#guard elaboratesToParameter p1628_0 "Pi" == false
+#guard selectOwnedDeclaration p1628_0 "Sqrt" == .none
+#guard elaboratesToParameter p1628_0 "Sqrt" == false
 
--- tutorial/fence-049: Math.Sqrt(16) \n (Math.Sqrt)(16)
+-- tutorial/fence-047: 42.string \n 42.string == '42'
 def p1629_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-#guard selectOwnedDeclaration p1629_0 "Math" == .property 1 -- x2
-#guard elaboratesToParameter p1629_0 "Math" == false -- x2
-#guard selectOwnedDeclaration p1629_0 "Sqrt" == .none -- x2
-#guard elaboratesToParameter p1629_0 "Sqrt" == false -- x2
+#guard selectOwnedDeclaration p1629_0 "string" == .none -- x2
+#guard elaboratesToParameter p1629_0 "string" == false -- x2
 
--- tutorial/fence-050: 42.string \n 42.string == '42'
-def p1630_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-#guard selectOwnedDeclaration p1630_0 "string" == .none -- x2
-#guard elaboratesToParameter p1630_0 "string" == false -- x2
+-- tutorial/fence-048: Rectangle(width, height) = width * height, 2 * (width + height) \n  \n Rectangle(3, 4)
+def p1630_0 : List OwnerLevel := { parameters := [], properties := ["Rectangle"] } :: prelude
+def p1630_1 : List OwnerLevel := { parameters := ["width", "height"], properties := [] } :: p1630_0
+#guard selectOwnedDeclaration p1630_1 "width" == .parameter 0 -- x2
+#guard elaboratesToParameter p1630_1 "width" == true -- x2
+#guard selectOwnedDeclaration p1630_1 "height" == .parameter 0 -- x2
+#guard elaboratesToParameter p1630_1 "height" == true -- x2
+#guard selectOwnedDeclaration p1630_0 "Rectangle" == .property 0
+#guard elaboratesToParameter p1630_0 "Rectangle" == false
+#guard promotes p1630_0 "Rectangle" == some false
 
--- tutorial/fence-051: Rectangle(width, height) = width * height, 2 * (width + height) \n  \n Rectangle(3, 4)
-def p1631_0 : List OwnerLevel := { parameters := [], properties := ["Rectangle"] } :: prelude
-def p1631_1 : List OwnerLevel := { parameters := ["width", "height"], properties := [] } :: p1631_0
-#guard selectOwnedDeclaration p1631_1 "width" == .parameter 0 -- x2
-#guard elaboratesToParameter p1631_1 "width" == true -- x2
-#guard selectOwnedDeclaration p1631_1 "height" == .parameter 0 -- x2
-#guard elaboratesToParameter p1631_1 "height" == true -- x2
-#guard selectOwnedDeclaration p1631_0 "Rectangle" == .property 0
-#guard elaboratesToParameter p1631_0 "Rectangle" == false
-#guard promotes p1631_0 "Rectangle" == some false
+-- tutorial/fence-049: Point = 3, 4 \n  \n Point \n 10, 20
+def p1631_0 : List OwnerLevel := { parameters := [], properties := ["Point"] } :: prelude
+def p1631_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1631_0
+#guard selectOwnedDeclaration p1631_0 "Point" == .property 0
+#guard elaboratesToParameter p1631_0 "Point" == false
+#guard promotes p1631_0 "Point" == some false
 
--- tutorial/fence-052: Point = 3, 4 \n  \n Point \n 10, 20
-def p1632_0 : List OwnerLevel := { parameters := [], properties := ["Point"] } :: prelude
+-- tutorial/fence-053: Pairs = (1, 2), (3, 4) \n  \n Pairs.count \n Pairs[1] \n Pairs[1][0]
+def p1632_0 : List OwnerLevel := { parameters := [], properties := ["Pairs"] } :: prelude
 def p1632_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1632_0
-#guard selectOwnedDeclaration p1632_0 "Point" == .property 0
-#guard elaboratesToParameter p1632_0 "Point" == false
-#guard promotes p1632_0 "Point" == some false
+#guard selectOwnedDeclaration p1632_0 "Pairs" == .property 0 -- x3
+#guard elaboratesToParameter p1632_0 "Pairs" == false -- x3
+#guard selectOwnedDeclaration p1632_0 "count" == .property 1
+#guard elaboratesToParameter p1632_0 "count" == false
+#guard promotes p1632_0 "Pairs" == some false
+#guard promotes p1632_0 "count" == some false
 
--- tutorial/fence-056: Pairs = (1, 2), (3, 4) \n  \n Pairs.count \n Pairs[1] \n Pairs[1][0]
-def p1633_0 : List OwnerLevel := { parameters := [], properties := ["Pairs"] } :: prelude
+-- tutorial/fence-054: Data = 10, 20, 30 \n  \n Data[2, 0, 2] \n Data[0] \n Data[]
+def p1633_0 : List OwnerLevel := { parameters := [], properties := ["Data"] } :: prelude
 def p1633_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1633_0
-#guard selectOwnedDeclaration p1633_0 "Pairs" == .property 0 -- x3
-#guard elaboratesToParameter p1633_0 "Pairs" == false -- x3
-#guard selectOwnedDeclaration p1633_0 "count" == .property 1
-#guard elaboratesToParameter p1633_0 "count" == false
-#guard promotes p1633_0 "Pairs" == some false
-#guard promotes p1633_0 "count" == some false
+#guard selectOwnedDeclaration p1633_0 "Data" == .property 0 -- x3
+#guard elaboratesToParameter p1633_0 "Data" == false -- x3
+#guard promotes p1633_0 "Data" == some false
 
--- tutorial/fence-057: Data = 10, 20, 30 \n  \n Data[2, 0, 2] \n Data[0] \n Data[]
-def p1634_0 : List OwnerLevel := { parameters := [], properties := ["Data"] } :: prelude
+-- tutorial/fence-057: Pair = 10, 20 \n Add(x, y) = x + y \n  \n Add(Pair*) \n Pair*.Add
+def p1634_0 : List OwnerLevel := { parameters := [], properties := ["Pair", "Add"] } :: prelude
 def p1634_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1634_0
-#guard selectOwnedDeclaration p1634_0 "Data" == .property 0 -- x3
-#guard elaboratesToParameter p1634_0 "Data" == false -- x3
-#guard promotes p1634_0 "Data" == some false
+def p1634_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1634_0
+#guard selectOwnedDeclaration p1634_2 "x" == .parameter 0
+#guard elaboratesToParameter p1634_2 "x" == true
+#guard selectOwnedDeclaration p1634_2 "y" == .parameter 0
+#guard elaboratesToParameter p1634_2 "y" == true
+#guard selectOwnedDeclaration p1634_0 "Add" == .property 0 -- x2
+#guard elaboratesToParameter p1634_0 "Add" == false -- x2
+#guard selectOwnedDeclaration p1634_0 "Pair" == .property 0 -- x2
+#guard elaboratesToParameter p1634_0 "Pair" == false -- x2
+#guard promotes p1634_0 "Add" == some false
+#guard promotes p1634_0 "Pair" == some false
 
--- tutorial/fence-060: Pair = 10, 20 \n Add(x, y) = x + y \n  \n Add(Pair*) \n Pair*.Add
-def p1635_0 : List OwnerLevel := { parameters := [], properties := ["Pair", "Add"] } :: prelude
-def p1635_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1635_0
-def p1635_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1635_0
-#guard selectOwnedDeclaration p1635_2 "x" == .parameter 0
-#guard elaboratesToParameter p1635_2 "x" == true
-#guard selectOwnedDeclaration p1635_2 "y" == .parameter 0
-#guard elaboratesToParameter p1635_2 "y" == true
-#guard selectOwnedDeclaration p1635_0 "Add" == .property 0 -- x2
-#guard elaboratesToParameter p1635_0 "Add" == false -- x2
-#guard selectOwnedDeclaration p1635_0 "Pair" == .property 0 -- x2
-#guard elaboratesToParameter p1635_0 "Pair" == false -- x2
-#guard promotes p1635_0 "Add" == some false
-#guard promotes p1635_0 "Pair" == some false
-
--- tutorial/fence-061: A = 1, 2 \n B = 3, 4 \n  \n (A*, B*) \n (A, B)
+-- tutorial/fence-058: A = 1, 2 \n B = 3, 4 \n  \n (A*, B*) \n (A, B)
 -- the same levels and decisions, 1 more:
---   tutorial/fence-193
-def p1636_0 : List OwnerLevel := { parameters := [], properties := ["A", "B"] } :: prelude
+--   tutorial/fence-172
+def p1635_0 : List OwnerLevel := { parameters := [], properties := ["A", "B"] } :: prelude
+def p1635_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1635_0
+def p1635_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1635_0
+#guard selectOwnedDeclaration p1635_0 "A" == .property 0 -- x2
+#guard elaboratesToParameter p1635_0 "A" == false -- x2
+#guard selectOwnedDeclaration p1635_0 "B" == .property 0 -- x2
+#guard elaboratesToParameter p1635_0 "B" == false -- x2
+#guard promotes p1635_0 "A" == some false
+#guard promotes p1635_0 "B" == some false
+
+-- tutorial/fence-059: Distance(x1, y1, x2, y2) = sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2) \n P = 0, 0 \n Q = 3, 4 \n  \n Distance(P*, Q*)
+def p1636_0 : List OwnerLevel := { parameters := [], properties := ["P", "Q", "Distance"] } :: prelude
 def p1636_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1636_0
 def p1636_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1636_0
-#guard selectOwnedDeclaration p1636_0 "A" == .property 0 -- x2
-#guard elaboratesToParameter p1636_0 "A" == false -- x2
-#guard selectOwnedDeclaration p1636_0 "B" == .property 0 -- x2
-#guard elaboratesToParameter p1636_0 "B" == false -- x2
-#guard promotes p1636_0 "A" == some false
-#guard promotes p1636_0 "B" == some false
+def p1636_3 : List OwnerLevel := { parameters := ["x1", "y1", "x2", "y2"], properties := [] } :: p1636_0
+#guard selectOwnedDeclaration p1636_3 "sqrt" == .property 2
+#guard elaboratesToParameter p1636_3 "sqrt" == false
+#guard selectOwnedDeclaration p1636_3 "x2" == .parameter 0
+#guard elaboratesToParameter p1636_3 "x2" == true
+#guard selectOwnedDeclaration p1636_3 "x1" == .parameter 0
+#guard elaboratesToParameter p1636_3 "x1" == true
+#guard selectOwnedDeclaration p1636_3 "y2" == .parameter 0
+#guard elaboratesToParameter p1636_3 "y2" == true
+#guard selectOwnedDeclaration p1636_3 "y1" == .parameter 0
+#guard elaboratesToParameter p1636_3 "y1" == true
+#guard selectOwnedDeclaration p1636_0 "Distance" == .property 0
+#guard elaboratesToParameter p1636_0 "Distance" == false
+#guard selectOwnedDeclaration p1636_0 "P" == .property 0
+#guard elaboratesToParameter p1636_0 "P" == false
+#guard selectOwnedDeclaration p1636_0 "Q" == .property 0
+#guard elaboratesToParameter p1636_0 "Q" == false
+#guard promotes p1636_0 "Distance" == some false
+#guard promotes p1636_0 "P" == some false
+#guard promotes p1636_0 "Q" == some false
 
--- tutorial/fence-062: Distance(x1, y1, x2, y2) = sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2) \n P = 0, 0 \n Q = 3, 4 \n  \n Distance(P*, Q*)
-def p1637_0 : List OwnerLevel := { parameters := [], properties := ["P", "Q", "Distance"] } :: prelude
+-- tutorial/fence-060: Add(x, y) = x + y \n Bad = 1 / 0 \n  \n Add(Bad*)
+def p1637_0 : List OwnerLevel := { parameters := [], properties := ["Bad", "Add"] } :: prelude
 def p1637_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1637_0
-def p1637_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1637_0
-def p1637_3 : List OwnerLevel := { parameters := ["x1", "y1", "x2", "y2"], properties := [] } :: p1637_0
-#guard selectOwnedDeclaration p1637_3 "sqrt" == .property 2
-#guard elaboratesToParameter p1637_3 "sqrt" == false
-#guard selectOwnedDeclaration p1637_3 "x2" == .parameter 0
-#guard elaboratesToParameter p1637_3 "x2" == true
-#guard selectOwnedDeclaration p1637_3 "x1" == .parameter 0
-#guard elaboratesToParameter p1637_3 "x1" == true
-#guard selectOwnedDeclaration p1637_3 "y2" == .parameter 0
-#guard elaboratesToParameter p1637_3 "y2" == true
-#guard selectOwnedDeclaration p1637_3 "y1" == .parameter 0
-#guard elaboratesToParameter p1637_3 "y1" == true
-#guard selectOwnedDeclaration p1637_0 "Distance" == .property 0
-#guard elaboratesToParameter p1637_0 "Distance" == false
-#guard selectOwnedDeclaration p1637_0 "P" == .property 0
-#guard elaboratesToParameter p1637_0 "P" == false
-#guard selectOwnedDeclaration p1637_0 "Q" == .property 0
-#guard elaboratesToParameter p1637_0 "Q" == false
-#guard promotes p1637_0 "Distance" == some false
-#guard promotes p1637_0 "P" == some false
-#guard promotes p1637_0 "Q" == some false
+def p1637_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1637_0
+#guard selectOwnedDeclaration p1637_2 "x" == .parameter 0
+#guard elaboratesToParameter p1637_2 "x" == true
+#guard selectOwnedDeclaration p1637_2 "y" == .parameter 0
+#guard elaboratesToParameter p1637_2 "y" == true
+#guard selectOwnedDeclaration p1637_0 "Add" == .property 0
+#guard elaboratesToParameter p1637_0 "Add" == false
+#guard selectOwnedDeclaration p1637_0 "Bad" == .property 0
+#guard elaboratesToParameter p1637_0 "Bad" == false
+#guard promotes p1637_0 "Add" == some false
+#guard promotes p1637_0 "Bad" == some false
 
--- tutorial/fence-063: Add(x, y) = x + y \n Bad = 1 / 0 \n  \n Add(Bad*)
-def p1638_0 : List OwnerLevel := { parameters := [], properties := ["Bad", "Add"] } :: prelude
+-- tutorial/fence-061: Length((x, y)) = sqrt(x ^ 2 + y ^ 2) \n Point = 3, 4 \n  \n Length(Point) \n Length((6, 8))
+def p1638_0 : List OwnerLevel := { parameters := [], properties := ["Point", "Length"] } :: prelude
 def p1638_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1638_0
 def p1638_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1638_0
+#guard selectOwnedDeclaration p1638_2 "sqrt" == .property 2
+#guard elaboratesToParameter p1638_2 "sqrt" == false
 #guard selectOwnedDeclaration p1638_2 "x" == .parameter 0
 #guard elaboratesToParameter p1638_2 "x" == true
 #guard selectOwnedDeclaration p1638_2 "y" == .parameter 0
 #guard elaboratesToParameter p1638_2 "y" == true
-#guard selectOwnedDeclaration p1638_0 "Add" == .property 0
-#guard elaboratesToParameter p1638_0 "Add" == false
-#guard selectOwnedDeclaration p1638_0 "Bad" == .property 0
-#guard elaboratesToParameter p1638_0 "Bad" == false
-#guard promotes p1638_0 "Add" == some false
-#guard promotes p1638_0 "Bad" == some false
+#guard selectOwnedDeclaration p1638_0 "Length" == .property 0 -- x2
+#guard elaboratesToParameter p1638_0 "Length" == false -- x2
+#guard selectOwnedDeclaration p1638_0 "Point" == .property 0
+#guard elaboratesToParameter p1638_0 "Point" == false
+#guard promotes p1638_0 "Length" == some false
+#guard promotes p1638_0 "Point" == some false
 
--- tutorial/fence-064: Data = 10, 20, 30 \n Order = 2, 0 \n  \n Data[Order*]
-def p1639_0 : List OwnerLevel := { parameters := [], properties := ["Data", "Order"] } :: prelude
+-- tutorial/fence-066: Primes = [2, 3, 5, 7] \n  \n Primes.count \n Primes[0] \n [0, Primes*, 11] \n [Primes, 11]
+def p1639_0 : List OwnerLevel := { parameters := [], properties := ["Primes"] } :: prelude
 def p1639_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1639_0
-def p1639_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1639_0
-#guard selectOwnedDeclaration p1639_0 "Data" == .property 0
-#guard elaboratesToParameter p1639_0 "Data" == false
-#guard selectOwnedDeclaration p1639_0 "Order" == .property 0
-#guard elaboratesToParameter p1639_0 "Order" == false
-#guard promotes p1639_0 "Data" == some false
-#guard promotes p1639_0 "Order" == some false
+#guard selectOwnedDeclaration p1639_0 "Primes" == .property 0 -- x4
+#guard elaboratesToParameter p1639_0 "Primes" == false -- x4
+#guard selectOwnedDeclaration p1639_0 "count" == .property 1
+#guard elaboratesToParameter p1639_0 "count" == false
+#guard promotes p1639_0 "Primes" == some false
+#guard promotes p1639_0 "count" == some false
 
--- tutorial/fence-065: Point(x, y)* = x, y \n Add(x, y) = x + y \n  \n Point(1, 2) \n Add(Point(3, 4)) \n [Point(5, 6), Point(7, 8)]
-def p1640_0 : List OwnerLevel := { parameters := [], properties := ["Point", "Add"] } :: prelude
-def p1640_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1640_0
-def p1640_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1640_0
-#guard selectOwnedDeclaration p1640_1 "x" == .parameter 0
-#guard elaboratesToParameter p1640_1 "x" == true
-#guard selectOwnedDeclaration p1640_1 "y" == .parameter 0
-#guard elaboratesToParameter p1640_1 "y" == true
-#guard selectOwnedDeclaration p1640_2 "x" == .parameter 0
-#guard elaboratesToParameter p1640_2 "x" == true
-#guard selectOwnedDeclaration p1640_2 "y" == .parameter 0
-#guard elaboratesToParameter p1640_2 "y" == true
-#guard selectOwnedDeclaration p1640_0 "Point" == .property 0 -- x4
-#guard elaboratesToParameter p1640_0 "Point" == false -- x4
-#guard selectOwnedDeclaration p1640_0 "Add" == .property 0
-#guard elaboratesToParameter p1640_0 "Add" == false
-#guard promotes p1640_0 "Point" == some false
-#guard promotes p1640_0 "Add" == some false
+-- tutorial/fence-067: Grid = [[1, 2], [3, 4]] \n  \n Grid[1] \n Grid[1][0]
+def p1640_0 : List OwnerLevel := { parameters := [], properties := ["Grid"] } :: prelude
+def p1640_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1640_0
+#guard selectOwnedDeclaration p1640_0 "Grid" == .property 0 -- x2
+#guard elaboratesToParameter p1640_0 "Grid" == false -- x2
+#guard promotes p1640_0 "Grid" == some false
 
--- tutorial/fence-066: Point(x, y)* = x, y \n  \n Point(1, 2)[0] \n count({ Point(1, 2) }) \n count([Point(1, 2)])
-def p1641_0 : List OwnerLevel := { parameters := [], properties := ["Point"] } :: prelude
-def p1641_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1641_0
-def p1641_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1641_0
+-- tutorial/fence-068: Only([x]) = x \n PairSum([x, y]) = x + y \n  \n Only([10]) \n PairSum([10, 20])
+def p1641_0 : List OwnerLevel := { parameters := [], properties := ["Only", "PairSum"] } :: prelude
+def p1641_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1641_0
+def p1641_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1641_0
 #guard selectOwnedDeclaration p1641_1 "x" == .parameter 0
 #guard elaboratesToParameter p1641_1 "x" == true
-#guard selectOwnedDeclaration p1641_1 "y" == .parameter 0
-#guard elaboratesToParameter p1641_1 "y" == true
-#guard selectOwnedDeclaration p1641_0 "Point" == .property 0 -- x2
-#guard elaboratesToParameter p1641_0 "Point" == false -- x2
-#guard selectOwnedDeclaration p1641_0 "count" == .property 1 -- x2
-#guard elaboratesToParameter p1641_0 "count" == false -- x2
-#guard selectOwnedDeclaration p1641_2 "Point" == .property 1
-#guard elaboratesToParameter p1641_2 "Point" == false
-#guard promotes p1641_0 "Point" == some false
-#guard promotes p1641_0 "count" == some false
-#guard promotes p1641_2 "Point" == some false
+#guard selectOwnedDeclaration p1641_2 "x" == .parameter 0
+#guard elaboratesToParameter p1641_2 "x" == true
+#guard selectOwnedDeclaration p1641_2 "y" == .parameter 0
+#guard elaboratesToParameter p1641_2 "y" == true
+#guard selectOwnedDeclaration p1641_0 "Only" == .property 0
+#guard elaboratesToParameter p1641_0 "Only" == false
+#guard selectOwnedDeclaration p1641_0 "PairSum" == .property 0
+#guard elaboratesToParameter p1641_0 "PairSum" == false
+#guard promotes p1641_0 "Only" == some false
+#guard promotes p1641_0 "PairSum" == some false
 
--- tutorial/fence-067: Point(x, y)* = x, y \n Apply(f) = [f(1, 2)] \n Also = Point \n  \n Apply(Point) \n [Also(3, 4)]
-def p1642_0 : List OwnerLevel := { parameters := [], properties := ["Also", "Point", "Apply"] } :: prelude
-def p1642_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1642_0
-def p1642_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1642_0
-def p1642_3 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1642_0
-#guard selectOwnedDeclaration p1642_1 "Point" == .property 1
-#guard elaboratesToParameter p1642_1 "Point" == false
-#guard selectOwnedDeclaration p1642_2 "x" == .parameter 0
-#guard elaboratesToParameter p1642_2 "x" == true
-#guard selectOwnedDeclaration p1642_2 "y" == .parameter 0
-#guard elaboratesToParameter p1642_2 "y" == true
-#guard selectOwnedDeclaration p1642_3 "f" == .parameter 0
-#guard elaboratesToParameter p1642_3 "f" == true
-#guard selectOwnedDeclaration p1642_0 "Apply" == .property 0
-#guard elaboratesToParameter p1642_0 "Apply" == false
-#guard selectOwnedDeclaration p1642_0 "Point" == .property 0
-#guard elaboratesToParameter p1642_0 "Point" == false
-#guard selectOwnedDeclaration p1642_0 "Also" == .property 0
-#guard elaboratesToParameter p1642_0 "Also" == false
-#guard promotes p1642_0 "Apply" == some false
-#guard promotes p1642_0 "Point" == some false
-#guard promotes p1642_0 "Also" == some false
-#guard promotes p1642_1 "Point" == some false
-#guard liftingSlotRole .user 0 true == .callable -- Apply: Point
+-- tutorial/fence-069: F(([x, y], z)) = x + y + z \n  \n F(([10, 20], 30))
+def p1642_0 : List OwnerLevel := { parameters := [], properties := ["F"] } :: prelude
+def p1642_1 : List OwnerLevel := { parameters := ["x", "y", "z"], properties := [] } :: p1642_0
+#guard selectOwnedDeclaration p1642_1 "x" == .parameter 0
+#guard elaboratesToParameter p1642_1 "x" == true
+#guard selectOwnedDeclaration p1642_1 "y" == .parameter 0
+#guard elaboratesToParameter p1642_1 "y" == true
+#guard selectOwnedDeclaration p1642_1 "z" == .parameter 0
+#guard elaboratesToParameter p1642_1 "z" == true
+#guard selectOwnedDeclaration p1642_0 "F" == .property 0
+#guard elaboratesToParameter p1642_0 "F" == false
+#guard promotes p1642_0 "F" == some false
 
--- tutorial/fence-068: Fib(a, b)* = b, a + b \n Step(a, b) = Fib(a, b) \n  \n Fib(0, 1) \n Step(0, 1).repeat(10)
-def p1643_0 : List OwnerLevel := { parameters := [], properties := ["Fib", "Step"] } :: prelude
-def p1643_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1643_0
-def p1643_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1643_0
-#guard selectOwnedDeclaration p1643_1 "b" == .parameter 0 -- x2
-#guard elaboratesToParameter p1643_1 "b" == true -- x2
-#guard selectOwnedDeclaration p1643_1 "a" == .parameter 0
-#guard elaboratesToParameter p1643_1 "a" == true
-#guard selectOwnedDeclaration p1643_2 "Fib" == .property 1
-#guard elaboratesToParameter p1643_2 "Fib" == false
-#guard selectOwnedDeclaration p1643_2 "a" == .parameter 0
-#guard elaboratesToParameter p1643_2 "a" == true
-#guard selectOwnedDeclaration p1643_2 "b" == .parameter 0
-#guard elaboratesToParameter p1643_2 "b" == true
-#guard selectOwnedDeclaration p1643_0 "Fib" == .property 0
-#guard elaboratesToParameter p1643_0 "Fib" == false
-#guard selectOwnedDeclaration p1643_0 "Step" == .property 0
-#guard elaboratesToParameter p1643_0 "Step" == false
-#guard selectOwnedDeclaration p1643_0 "repeat" == .property 1
-#guard elaboratesToParameter p1643_0 "repeat" == false
-#guard promotes p1643_0 "Fib" == some false
-#guard promotes p1643_0 "Step" == some false
-#guard promotes p1643_0 "repeat" == some false
-
--- tutorial/fence-069: Length((x, y)) = sqrt(x ^ 2 + y ^ 2) \n Point = 3, 4 \n  \n Length(Point) \n Length((6, 8))
-def p1644_0 : List OwnerLevel := { parameters := [], properties := ["Point", "Length"] } :: prelude
-def p1644_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1644_0
-def p1644_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1644_0
-#guard selectOwnedDeclaration p1644_2 "sqrt" == .property 2
-#guard elaboratesToParameter p1644_2 "sqrt" == false
-#guard selectOwnedDeclaration p1644_2 "x" == .parameter 0
-#guard elaboratesToParameter p1644_2 "x" == true
-#guard selectOwnedDeclaration p1644_2 "y" == .parameter 0
-#guard elaboratesToParameter p1644_2 "y" == true
-#guard selectOwnedDeclaration p1644_0 "Length" == .property 0 -- x2
-#guard elaboratesToParameter p1644_0 "Length" == false -- x2
-#guard selectOwnedDeclaration p1644_0 "Point" == .property 0
-#guard elaboratesToParameter p1644_0 "Point" == false
-#guard promotes p1644_0 "Length" == some false
-#guard promotes p1644_0 "Point" == some false
-
--- tutorial/fence-070: FirstPair((x, y)) = x \n  \n FirstPair((10, 20))
-def p1645_0 : List OwnerLevel := { parameters := [], properties := ["FirstPair"] } :: prelude
-def p1645_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1645_0
-#guard selectOwnedDeclaration p1645_1 "x" == .parameter 0
-#guard elaboratesToParameter p1645_1 "x" == true
-#guard selectOwnedDeclaration p1645_0 "FirstPair" == .property 0
-#guard elaboratesToParameter p1645_0 "FirstPair" == false
-#guard promotes p1645_0 "FirstPair" == some false
-
--- tutorial/fence-076: Primes = [2, 3, 5, 7] \n  \n Primes.count \n Primes[0] \n [0, Primes*, 11] \n [Primes, 11]
-def p1646_0 : List OwnerLevel := { parameters := [], properties := ["Primes"] } :: prelude
-def p1646_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1646_0
-#guard selectOwnedDeclaration p1646_0 "Primes" == .property 0 -- x4
-#guard elaboratesToParameter p1646_0 "Primes" == false -- x4
-#guard selectOwnedDeclaration p1646_0 "count" == .property 1
-#guard elaboratesToParameter p1646_0 "count" == false
-#guard promotes p1646_0 "Primes" == some false
-#guard promotes p1646_0 "count" == some false
-
--- tutorial/fence-077: Grid = [[1, 2], [3, 4]] \n  \n Grid[1] \n Grid[1][0]
-def p1647_0 : List OwnerLevel := { parameters := [], properties := ["Grid"] } :: prelude
-def p1647_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1647_0
-#guard selectOwnedDeclaration p1647_0 "Grid" == .property 0 -- x2
-#guard elaboratesToParameter p1647_0 "Grid" == false -- x2
-#guard promotes p1647_0 "Grid" == some false
-
--- tutorial/fence-078: Only([x]) = x \n PairSum([x, y]) = x + y \n  \n Only([10]) \n PairSum([10, 20])
-def p1648_0 : List OwnerLevel := { parameters := [], properties := ["Only", "PairSum"] } :: prelude
-def p1648_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1648_0
-def p1648_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1648_0
-#guard selectOwnedDeclaration p1648_1 "x" == .parameter 0
-#guard elaboratesToParameter p1648_1 "x" == true
-#guard selectOwnedDeclaration p1648_2 "x" == .parameter 0
-#guard elaboratesToParameter p1648_2 "x" == true
-#guard selectOwnedDeclaration p1648_2 "y" == .parameter 0
-#guard elaboratesToParameter p1648_2 "y" == true
-#guard selectOwnedDeclaration p1648_0 "Only" == .property 0
-#guard elaboratesToParameter p1648_0 "Only" == false
-#guard selectOwnedDeclaration p1648_0 "PairSum" == .property 0
-#guard elaboratesToParameter p1648_0 "PairSum" == false
-#guard promotes p1648_0 "Only" == some false
-#guard promotes p1648_0 "PairSum" == some false
-
--- tutorial/fence-079: F(([x, y], z)) = x + y + z \n  \n F(([10, 20], 30))
-def p1649_0 : List OwnerLevel := { parameters := [], properties := ["F"] } :: prelude
-def p1649_1 : List OwnerLevel := { parameters := ["x", "y", "z"], properties := [] } :: p1649_0
-#guard selectOwnedDeclaration p1649_1 "x" == .parameter 0
-#guard elaboratesToParameter p1649_1 "x" == true
-#guard selectOwnedDeclaration p1649_1 "y" == .parameter 0
-#guard elaboratesToParameter p1649_1 "y" == true
-#guard selectOwnedDeclaration p1649_1 "z" == .parameter 0
-#guard elaboratesToParameter p1649_1 "z" == true
-#guard selectOwnedDeclaration p1649_0 "F" == .property 0
-#guard elaboratesToParameter p1649_0 "F" == false
-#guard promotes p1649_0 "F" == some false
-
--- tutorial/fence-084: Apply(f, x) = f(x) \n Square = n * n \n  \n Apply(Square, 4) \n Apply(sqrt, 16)
-def p1650_0 : List OwnerLevel := { parameters := [], properties := ["Square", "Apply"] } :: prelude
-def p1650_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1650_0
-def p1650_2 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1650_0
-#guard selectOwnedDeclaration p1650_1 "n" == .parameter 0 -- x2
-#guard elaboratesToParameter p1650_1 "n" == true -- x2
-#guard selectOwnedDeclaration p1650_2 "f" == .parameter 0
-#guard elaboratesToParameter p1650_2 "f" == true
-#guard selectOwnedDeclaration p1650_2 "x" == .parameter 0
-#guard elaboratesToParameter p1650_2 "x" == true
-#guard selectOwnedDeclaration p1650_0 "Apply" == .property 0 -- x2
-#guard elaboratesToParameter p1650_0 "Apply" == false -- x2
-#guard selectOwnedDeclaration p1650_0 "Square" == .property 0
-#guard elaboratesToParameter p1650_0 "Square" == false
-#guard selectOwnedDeclaration p1650_0 "sqrt" == .property 1
-#guard elaboratesToParameter p1650_0 "sqrt" == false
-#guard promotes p1650_0 "Apply" == some false
-#guard promotes p1650_0 "Square" == some false
-#guard promotes p1650_1 "n" == some true
+-- tutorial/fence-072: Apply(f, x) = f(x) \n Square = n * n \n  \n Apply(Square, 4) \n Apply(sqrt, 16)
+def p1643_0 : List OwnerLevel := { parameters := [], properties := ["Square", "Apply"] } :: prelude
+def p1643_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1643_0
+def p1643_2 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1643_0
+#guard selectOwnedDeclaration p1643_1 "n" == .parameter 0 -- x2
+#guard elaboratesToParameter p1643_1 "n" == true -- x2
+#guard selectOwnedDeclaration p1643_2 "f" == .parameter 0
+#guard elaboratesToParameter p1643_2 "f" == true
+#guard selectOwnedDeclaration p1643_2 "x" == .parameter 0
+#guard elaboratesToParameter p1643_2 "x" == true
+#guard selectOwnedDeclaration p1643_0 "Apply" == .property 0 -- x2
+#guard elaboratesToParameter p1643_0 "Apply" == false -- x2
+#guard selectOwnedDeclaration p1643_0 "Square" == .property 0
+#guard elaboratesToParameter p1643_0 "Square" == false
+#guard selectOwnedDeclaration p1643_0 "sqrt" == .property 1
+#guard elaboratesToParameter p1643_0 "sqrt" == false
+#guard promotes p1643_0 "Apply" == some false
+#guard promotes p1643_0 "Square" == some false
+#guard promotes p1643_1 "n" == some true
 #guard liftingSlotRole .user 0 true == .callable -- Apply: Square
 #guard liftingSlotRole .user 0 true == .callable -- Apply: sqrt
 
--- tutorial/fence-085: Twice = f(f(x)) \n Square = n * n \n  \n Twice(Square, 3)
-def p1651_0 : List OwnerLevel := { parameters := [], properties := ["Twice", "Square"] } :: prelude
-def p1651_1 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1651_0
-def p1651_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1651_0
-#guard selectOwnedDeclaration p1651_1 "f" == .parameter 0 -- x2
-#guard elaboratesToParameter p1651_1 "f" == true -- x2
-#guard selectOwnedDeclaration p1651_1 "x" == .parameter 0
-#guard elaboratesToParameter p1651_1 "x" == true
-#guard selectOwnedDeclaration p1651_2 "n" == .parameter 0 -- x2
-#guard elaboratesToParameter p1651_2 "n" == true -- x2
-#guard selectOwnedDeclaration p1651_0 "Twice" == .property 0
-#guard elaboratesToParameter p1651_0 "Twice" == false
-#guard selectOwnedDeclaration p1651_0 "Square" == .property 0
-#guard elaboratesToParameter p1651_0 "Square" == false
-#guard promotes p1651_0 "Twice" == some false
-#guard promotes p1651_0 "Square" == some false
-#guard promotes p1651_1 "f" == some true
-#guard promotes p1651_1 "x" == some true
-#guard promotes p1651_2 "n" == some true
+-- tutorial/fence-073: Twice = f(f(x)) \n Square = n * n \n  \n Twice(Square, 3)
+def p1644_0 : List OwnerLevel := { parameters := [], properties := ["Twice", "Square"] } :: prelude
+def p1644_1 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1644_0
+def p1644_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1644_0
+#guard selectOwnedDeclaration p1644_1 "f" == .parameter 0 -- x2
+#guard elaboratesToParameter p1644_1 "f" == true -- x2
+#guard selectOwnedDeclaration p1644_1 "x" == .parameter 0
+#guard elaboratesToParameter p1644_1 "x" == true
+#guard selectOwnedDeclaration p1644_2 "n" == .parameter 0 -- x2
+#guard elaboratesToParameter p1644_2 "n" == true -- x2
+#guard selectOwnedDeclaration p1644_0 "Twice" == .property 0
+#guard elaboratesToParameter p1644_0 "Twice" == false
+#guard selectOwnedDeclaration p1644_0 "Square" == .property 0
+#guard elaboratesToParameter p1644_0 "Square" == false
+#guard promotes p1644_0 "Twice" == some false
+#guard promotes p1644_0 "Square" == some false
+#guard promotes p1644_1 "f" == some true
+#guard promotes p1644_1 "x" == some true
+#guard promotes p1644_2 "n" == some true
 #guard liftingSlotRole .user 0 true == .callable -- Twice: Square
 
--- tutorial/fence-087: Apply(f, x) = f(x) \n  \n Apply({n + 1}, 4) \n Apply({n * n}, 4)
-def p1652_0 : List OwnerLevel := { parameters := [], properties := ["Apply"] } :: prelude
-def p1652_1 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1652_0
-def p1652_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1652_0
-def p1652_3 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1652_0
-#guard selectOwnedDeclaration p1652_1 "f" == .parameter 0
-#guard elaboratesToParameter p1652_1 "f" == true
-#guard selectOwnedDeclaration p1652_1 "x" == .parameter 0
-#guard elaboratesToParameter p1652_1 "x" == true
-#guard selectOwnedDeclaration p1652_0 "Apply" == .property 0 -- x2
-#guard elaboratesToParameter p1652_0 "Apply" == false -- x2
-#guard selectOwnedDeclaration p1652_2 "n" == .parameter 0
-#guard elaboratesToParameter p1652_2 "n" == true
-#guard selectOwnedDeclaration p1652_3 "n" == .parameter 0 -- x2
-#guard elaboratesToParameter p1652_3 "n" == true -- x2
-#guard promotes p1652_0 "Apply" == some false
-#guard promotes p1652_2 "n" == some true
-#guard promotes p1652_3 "n" == some true
+-- tutorial/fence-074: Apply(f, x) = f(x) \n  \n Apply({n + 1}, 4) \n Apply({n * n}, 4)
+def p1645_0 : List OwnerLevel := { parameters := [], properties := ["Apply"] } :: prelude
+def p1645_1 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1645_0
+def p1645_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1645_0
+def p1645_3 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1645_0
+#guard selectOwnedDeclaration p1645_1 "f" == .parameter 0
+#guard elaboratesToParameter p1645_1 "f" == true
+#guard selectOwnedDeclaration p1645_1 "x" == .parameter 0
+#guard elaboratesToParameter p1645_1 "x" == true
+#guard selectOwnedDeclaration p1645_0 "Apply" == .property 0 -- x2
+#guard elaboratesToParameter p1645_0 "Apply" == false -- x2
+#guard selectOwnedDeclaration p1645_2 "n" == .parameter 0
+#guard elaboratesToParameter p1645_2 "n" == true
+#guard selectOwnedDeclaration p1645_3 "n" == .parameter 0 -- x2
+#guard elaboratesToParameter p1645_3 "n" == true -- x2
+#guard promotes p1645_0 "Apply" == some false
+#guard promotes p1645_2 "n" == some true
+#guard promotes p1645_3 "n" == some true
 
--- tutorial/fence-088: Twice(x, f) = f(f(x)) \n  \n Twice(5, {n * 2}) \n 5.Twice{n * 2}
-def p1653_0 : List OwnerLevel := { parameters := [], properties := ["Twice"] } :: prelude
-def p1653_1 : List OwnerLevel := { parameters := ["x", "f"], properties := [] } :: p1653_0
-def p1653_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1653_0
-def p1653_3 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1653_0
-#guard selectOwnedDeclaration p1653_1 "f" == .parameter 0 -- x2
-#guard elaboratesToParameter p1653_1 "f" == true -- x2
-#guard selectOwnedDeclaration p1653_1 "x" == .parameter 0
-#guard elaboratesToParameter p1653_1 "x" == true
-#guard selectOwnedDeclaration p1653_0 "Twice" == .property 0 -- x2
-#guard elaboratesToParameter p1653_0 "Twice" == false -- x2
-#guard selectOwnedDeclaration p1653_2 "n" == .parameter 0
-#guard elaboratesToParameter p1653_2 "n" == true
-#guard selectOwnedDeclaration p1653_3 "n" == .parameter 0
-#guard elaboratesToParameter p1653_3 "n" == true
-#guard promotes p1653_0 "Twice" == some false
-#guard promotes p1653_2 "n" == some true
-#guard promotes p1653_3 "n" == some true
+-- tutorial/fence-075: Apply(f, x) = f(x) \n Shift(k) = Apply({n + k}, 1) \n  \n Shift(10)
+def p1646_0 : List OwnerLevel := { parameters := [], properties := ["Apply", "Shift"] } :: prelude
+def p1646_1 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1646_0
+def p1646_2 : List OwnerLevel := { parameters := ["k"], properties := [] } :: p1646_0
+def p1646_3 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1646_2
+#guard selectOwnedDeclaration p1646_1 "f" == .parameter 0
+#guard elaboratesToParameter p1646_1 "f" == true
+#guard selectOwnedDeclaration p1646_1 "x" == .parameter 0
+#guard elaboratesToParameter p1646_1 "x" == true
+#guard selectOwnedDeclaration p1646_2 "Apply" == .property 1
+#guard elaboratesToParameter p1646_2 "Apply" == false
+#guard selectOwnedDeclaration p1646_3 "n" == .parameter 0
+#guard elaboratesToParameter p1646_3 "n" == true
+#guard selectOwnedDeclaration p1646_3 "k" == .parameter 1
+#guard elaboratesToParameter p1646_3 "k" == true
+#guard selectOwnedDeclaration p1646_0 "Shift" == .property 0
+#guard elaboratesToParameter p1646_0 "Shift" == false
+#guard promotes p1646_0 "Shift" == some false
+#guard promotes p1646_3 "n" == some true
 
--- tutorial/fence-089: Circle(r) = { \n     Area = pi * r ^ 2 \n     Area.round(2) \n } \n  \n Circle(1)
-def p1654_0 : List OwnerLevel := { parameters := [], properties := ["Circle"] } :: prelude
-def p1654_1 : List OwnerLevel := { parameters := ["r"], properties := ["Area"] } :: p1654_0
-def p1654_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1654_1
-#guard selectOwnedDeclaration p1654_2 "pi" == .property 3
-#guard elaboratesToParameter p1654_2 "pi" == false
-#guard selectOwnedDeclaration p1654_2 "r" == .parameter 1
-#guard elaboratesToParameter p1654_2 "r" == true
-#guard selectOwnedDeclaration p1654_1 "Area" == .property 0
-#guard elaboratesToParameter p1654_1 "Area" == false
-#guard selectOwnedDeclaration p1654_1 "round" == .property 2
-#guard elaboratesToParameter p1654_1 "round" == false
-#guard selectOwnedDeclaration p1654_0 "Circle" == .property 0
-#guard elaboratesToParameter p1654_0 "Circle" == false
-#guard promotes p1654_0 "Circle" == some false
-#guard ownedConflicts p1654_1 == []
-#guard validOwnedDeclarations p1654_2 == true
+-- tutorial/fence-076: Twice(x, f) = f(f(x)) \n  \n Twice(5, {n * 2}) \n 5.Twice{n * 2}
+def p1647_0 : List OwnerLevel := { parameters := [], properties := ["Twice"] } :: prelude
+def p1647_1 : List OwnerLevel := { parameters := ["x", "f"], properties := [] } :: p1647_0
+def p1647_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1647_0
+def p1647_3 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1647_0
+#guard selectOwnedDeclaration p1647_1 "f" == .parameter 0 -- x2
+#guard elaboratesToParameter p1647_1 "f" == true -- x2
+#guard selectOwnedDeclaration p1647_1 "x" == .parameter 0
+#guard elaboratesToParameter p1647_1 "x" == true
+#guard selectOwnedDeclaration p1647_0 "Twice" == .property 0 -- x2
+#guard elaboratesToParameter p1647_0 "Twice" == false -- x2
+#guard selectOwnedDeclaration p1647_2 "n" == .parameter 0
+#guard elaboratesToParameter p1647_2 "n" == true
+#guard selectOwnedDeclaration p1647_3 "n" == .parameter 0
+#guard elaboratesToParameter p1647_3 "n" == true
+#guard promotes p1647_0 "Twice" == some false
+#guard promotes p1647_2 "n" == some true
+#guard promotes p1647_3 "n" == some true
 
--- tutorial/fence-092: range(1, 10).filter{n mod 2 == 0}.map{n * n}.sum
-def p1655_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-def p1655_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1655_0
-def p1655_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1655_0
-#guard selectOwnedDeclaration p1655_0 "range" == .property 1
-#guard elaboratesToParameter p1655_0 "range" == false
-#guard selectOwnedDeclaration p1655_0 "filter" == .property 1
-#guard elaboratesToParameter p1655_0 "filter" == false
-#guard selectOwnedDeclaration p1655_1 "n" == .parameter 0
-#guard elaboratesToParameter p1655_1 "n" == true
+-- tutorial/fence-077: Circle(r) = { \n     Area = pi * r ^ 2 \n     Area.round(2) \n } \n  \n Circle(1)
+def p1648_0 : List OwnerLevel := { parameters := [], properties := ["Circle"] } :: prelude
+def p1648_1 : List OwnerLevel := { parameters := ["r"], properties := ["Area"] } :: p1648_0
+def p1648_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1648_1
+#guard selectOwnedDeclaration p1648_2 "pi" == .property 3
+#guard elaboratesToParameter p1648_2 "pi" == false
+#guard selectOwnedDeclaration p1648_2 "r" == .parameter 1
+#guard elaboratesToParameter p1648_2 "r" == true
+#guard selectOwnedDeclaration p1648_1 "Area" == .property 0
+#guard elaboratesToParameter p1648_1 "Area" == false
+#guard selectOwnedDeclaration p1648_1 "round" == .property 2
+#guard elaboratesToParameter p1648_1 "round" == false
+#guard selectOwnedDeclaration p1648_0 "Circle" == .property 0
+#guard elaboratesToParameter p1648_0 "Circle" == false
+#guard promotes p1648_0 "Circle" == some false
+#guard ownedConflicts p1648_1 == []
+#guard validOwnedDeclarations p1648_2 == true
+
+-- tutorial/fence-079: range(1, 10).filter{n mod 2 == 0}.map{n * n}.sum
+def p1649_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
+def p1649_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1649_0
+def p1649_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1649_0
+#guard selectOwnedDeclaration p1649_0 "range" == .property 1
+#guard elaboratesToParameter p1649_0 "range" == false
+#guard selectOwnedDeclaration p1649_0 "filter" == .property 1
+#guard elaboratesToParameter p1649_0 "filter" == false
+#guard selectOwnedDeclaration p1649_1 "n" == .parameter 0
+#guard elaboratesToParameter p1649_1 "n" == true
+#guard selectOwnedDeclaration p1649_0 "map" == .property 1
+#guard elaboratesToParameter p1649_0 "map" == false
+#guard selectOwnedDeclaration p1649_2 "n" == .parameter 0 -- x2
+#guard elaboratesToParameter p1649_2 "n" == true -- x2
+#guard selectOwnedDeclaration p1649_0 "sum" == .property 1
+#guard elaboratesToParameter p1649_0 "sum" == false
+#guard promotes p1649_0 "range" == some false
+#guard promotes p1649_0 "filter" == some false
+#guard promotes p1649_0 "map" == some false
+#guard promotes p1649_0 "sum" == some false
+#guard promotes p1649_1 "n" == some true
+#guard promotes p1649_2 "n" == some true
+
+-- tutorial/fence-082: Scores = [72, 95, 58, 88, 64] \n  \n Scores.count \n Scores.sum \n Scores.avg \n Scores.max \n Scores.order \n Scores.filter{s >= 60} \n Scores.map{s + 5} \n Scores.contains(88) \n Scores.orderDesc.take(3)
+def p1650_0 : List OwnerLevel := { parameters := [], properties := ["Scores"] } :: prelude
+def p1650_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1650_0
+def p1650_2 : List OwnerLevel := { parameters := ["s"], properties := [] } :: p1650_0
+def p1650_3 : List OwnerLevel := { parameters := ["s"], properties := [] } :: p1650_0
+#guard selectOwnedDeclaration p1650_0 "Scores" == .property 0 -- x9
+#guard elaboratesToParameter p1650_0 "Scores" == false -- x9
+#guard selectOwnedDeclaration p1650_0 "count" == .property 1
+#guard elaboratesToParameter p1650_0 "count" == false
+#guard selectOwnedDeclaration p1650_0 "sum" == .property 1
+#guard elaboratesToParameter p1650_0 "sum" == false
+#guard selectOwnedDeclaration p1650_0 "avg" == .property 1
+#guard elaboratesToParameter p1650_0 "avg" == false
+#guard selectOwnedDeclaration p1650_0 "max" == .property 1
+#guard elaboratesToParameter p1650_0 "max" == false
+#guard selectOwnedDeclaration p1650_0 "order" == .property 1
+#guard elaboratesToParameter p1650_0 "order" == false
+#guard selectOwnedDeclaration p1650_0 "filter" == .property 1
+#guard elaboratesToParameter p1650_0 "filter" == false
+#guard selectOwnedDeclaration p1650_2 "s" == .parameter 0
+#guard elaboratesToParameter p1650_2 "s" == true
+#guard selectOwnedDeclaration p1650_0 "map" == .property 1
+#guard elaboratesToParameter p1650_0 "map" == false
+#guard selectOwnedDeclaration p1650_3 "s" == .parameter 0
+#guard elaboratesToParameter p1650_3 "s" == true
+#guard selectOwnedDeclaration p1650_0 "contains" == .property 1
+#guard elaboratesToParameter p1650_0 "contains" == false
+#guard selectOwnedDeclaration p1650_0 "orderDesc" == .property 1
+#guard elaboratesToParameter p1650_0 "orderDesc" == false
+#guard selectOwnedDeclaration p1650_0 "take" == .property 1
+#guard elaboratesToParameter p1650_0 "take" == false
+#guard promotes p1650_0 "Scores" == some false
+#guard promotes p1650_0 "count" == some false
+#guard promotes p1650_0 "sum" == some false
+#guard promotes p1650_0 "avg" == some false
+#guard promotes p1650_0 "max" == some false
+#guard promotes p1650_0 "order" == some false
+#guard promotes p1650_0 "filter" == some false
+#guard promotes p1650_0 "map" == some false
+#guard promotes p1650_0 "contains" == some false
+#guard promotes p1650_0 "orderDesc" == some false
+#guard promotes p1650_0 "take" == some false
+#guard promotes p1650_2 "s" == some true
+#guard promotes p1650_3 "s" == some true
+
+-- tutorial/fence-083: sum([1, 2, 3]) \n sum((1, 2, 3)) \n (1, 2, 3).sum
+def p1651_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
+#guard selectOwnedDeclaration p1651_0 "sum" == .property 1 -- x3
+#guard elaboratesToParameter p1651_0 "sum" == false -- x3
+#guard promotes p1651_0 "sum" == some false
+
+-- tutorial/fence-085: Scores = [72, 95, 58, 88, 64] \n  \n Scores.take(1) \n Scores.filter{s > 100} \n Scores.first
+def p1652_0 : List OwnerLevel := { parameters := [], properties := ["Scores"] } :: prelude
+def p1652_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1652_0
+def p1652_2 : List OwnerLevel := { parameters := ["s"], properties := [] } :: p1652_0
+#guard selectOwnedDeclaration p1652_0 "Scores" == .property 0 -- x3
+#guard elaboratesToParameter p1652_0 "Scores" == false -- x3
+#guard selectOwnedDeclaration p1652_0 "take" == .property 1
+#guard elaboratesToParameter p1652_0 "take" == false
+#guard selectOwnedDeclaration p1652_0 "filter" == .property 1
+#guard elaboratesToParameter p1652_0 "filter" == false
+#guard selectOwnedDeclaration p1652_2 "s" == .parameter 0
+#guard elaboratesToParameter p1652_2 "s" == true
+#guard selectOwnedDeclaration p1652_0 "first" == .property 1
+#guard elaboratesToParameter p1652_0 "first" == false
+#guard promotes p1652_0 "Scores" == some false
+#guard promotes p1652_0 "take" == some false
+#guard promotes p1652_0 "filter" == some false
+#guard promotes p1652_0 "first" == some false
+#guard promotes p1652_2 "s" == some true
+
+-- tutorial/fence-087: Pairs = [(2, 3), (4, 5)] \n  \n Pairs.map{p[0] * p[1]}
+def p1653_0 : List OwnerLevel := { parameters := [], properties := ["Pairs"] } :: prelude
+def p1653_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1653_0
+def p1653_2 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1653_0
+#guard selectOwnedDeclaration p1653_0 "Pairs" == .property 0
+#guard elaboratesToParameter p1653_0 "Pairs" == false
+#guard selectOwnedDeclaration p1653_0 "map" == .property 1
+#guard elaboratesToParameter p1653_0 "map" == false
+#guard selectOwnedDeclaration p1653_2 "p" == .parameter 0 -- x2
+#guard elaboratesToParameter p1653_2 "p" == true -- x2
+#guard promotes p1653_0 "Pairs" == some false
+#guard promotes p1653_0 "map" == some false
+#guard promotes p1653_2 "p" == some true
+
+-- tutorial/fence-089: Scale(values, factor) = values.map{n * factor} \n  \n Scale([1, 2, 3], 10)
+def p1654_0 : List OwnerLevel := { parameters := [], properties := ["Scale"] } :: prelude
+def p1654_1 : List OwnerLevel := { parameters := ["values", "factor"], properties := [] } :: p1654_0
+def p1654_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1654_1
+#guard selectOwnedDeclaration p1654_1 "values" == .parameter 0
+#guard elaboratesToParameter p1654_1 "values" == true
+#guard selectOwnedDeclaration p1654_1 "map" == .property 2
+#guard elaboratesToParameter p1654_1 "map" == false
+#guard selectOwnedDeclaration p1654_2 "n" == .parameter 0
+#guard elaboratesToParameter p1654_2 "n" == true
+#guard selectOwnedDeclaration p1654_2 "factor" == .parameter 1
+#guard elaboratesToParameter p1654_2 "factor" == true
+#guard selectOwnedDeclaration p1654_0 "Scale" == .property 0
+#guard elaboratesToParameter p1654_0 "Scale" == false
+#guard promotes p1654_0 "Scale" == some false
+#guard promotes p1654_2 "n" == some true
+
+-- tutorial/fence-090: Broken(x) = x / 0 \n  \n map([], Broken)
+def p1655_0 : List OwnerLevel := { parameters := [], properties := ["Broken"] } :: prelude
+def p1655_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1655_0
+#guard selectOwnedDeclaration p1655_1 "x" == .parameter 0
+#guard elaboratesToParameter p1655_1 "x" == true
 #guard selectOwnedDeclaration p1655_0 "map" == .property 1
 #guard elaboratesToParameter p1655_0 "map" == false
-#guard selectOwnedDeclaration p1655_2 "n" == .parameter 0 -- x2
-#guard elaboratesToParameter p1655_2 "n" == true -- x2
-#guard selectOwnedDeclaration p1655_0 "sum" == .property 1
-#guard elaboratesToParameter p1655_0 "sum" == false
-#guard promotes p1655_0 "range" == some false
-#guard promotes p1655_0 "filter" == some false
+#guard selectOwnedDeclaration p1655_0 "Broken" == .property 0
+#guard elaboratesToParameter p1655_0 "Broken" == false
 #guard promotes p1655_0 "map" == some false
-#guard promotes p1655_0 "sum" == some false
-#guard promotes p1655_1 "n" == some true
-#guard promotes p1655_2 "n" == some true
+#guard promotes p1655_0 "Broken" == some false
+#guard liftingSlotRole (.builtin .mapBuiltin) 1 true == .callable -- map: Broken
 
--- tutorial/fence-095: Scores = [72, 95, 58, 88, 64] \n  \n Scores.count \n Scores.sum \n Scores.avg \n Scores.max \n Scores.order \n Scores.filter{s >= 60} \n Scores.map{s + 5} \n Scores.contains(88) \n Scores.orderDesc.take(3)
-def p1656_0 : List OwnerLevel := { parameters := [], properties := ["Scores"] } :: prelude
-def p1656_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1656_0
-def p1656_2 : List OwnerLevel := { parameters := ["s"], properties := [] } :: p1656_0
-def p1656_3 : List OwnerLevel := { parameters := ["s"], properties := [] } :: p1656_0
-#guard selectOwnedDeclaration p1656_0 "Scores" == .property 0 -- x9
-#guard elaboratesToParameter p1656_0 "Scores" == false -- x9
-#guard selectOwnedDeclaration p1656_0 "count" == .property 1
-#guard elaboratesToParameter p1656_0 "count" == false
-#guard selectOwnedDeclaration p1656_0 "sum" == .property 1
-#guard elaboratesToParameter p1656_0 "sum" == false
-#guard selectOwnedDeclaration p1656_0 "avg" == .property 1
-#guard elaboratesToParameter p1656_0 "avg" == false
-#guard selectOwnedDeclaration p1656_0 "max" == .property 1
-#guard elaboratesToParameter p1656_0 "max" == false
-#guard selectOwnedDeclaration p1656_0 "order" == .property 1
-#guard elaboratesToParameter p1656_0 "order" == false
-#guard selectOwnedDeclaration p1656_0 "filter" == .property 1
-#guard elaboratesToParameter p1656_0 "filter" == false
-#guard selectOwnedDeclaration p1656_2 "s" == .parameter 0
-#guard elaboratesToParameter p1656_2 "s" == true
+-- tutorial/fence-091: Both(x) = x, x \n  \n [1, 2].map(Both)
+def p1656_0 : List OwnerLevel := { parameters := [], properties := ["Both"] } :: prelude
+def p1656_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1656_0
+#guard selectOwnedDeclaration p1656_1 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1656_1 "x" == true -- x2
 #guard selectOwnedDeclaration p1656_0 "map" == .property 1
 #guard elaboratesToParameter p1656_0 "map" == false
-#guard selectOwnedDeclaration p1656_3 "s" == .parameter 0
-#guard elaboratesToParameter p1656_3 "s" == true
-#guard selectOwnedDeclaration p1656_0 "contains" == .property 1
-#guard elaboratesToParameter p1656_0 "contains" == false
-#guard selectOwnedDeclaration p1656_0 "orderDesc" == .property 1
-#guard elaboratesToParameter p1656_0 "orderDesc" == false
-#guard selectOwnedDeclaration p1656_0 "take" == .property 1
-#guard elaboratesToParameter p1656_0 "take" == false
-#guard promotes p1656_0 "Scores" == some false
-#guard promotes p1656_0 "count" == some false
-#guard promotes p1656_0 "sum" == some false
-#guard promotes p1656_0 "avg" == some false
-#guard promotes p1656_0 "max" == some false
-#guard promotes p1656_0 "order" == some false
-#guard promotes p1656_0 "filter" == some false
+#guard selectOwnedDeclaration p1656_0 "Both" == .property 0
+#guard elaboratesToParameter p1656_0 "Both" == false
 #guard promotes p1656_0 "map" == some false
-#guard promotes p1656_0 "contains" == some false
-#guard promotes p1656_0 "orderDesc" == some false
-#guard promotes p1656_0 "take" == some false
-#guard promotes p1656_2 "s" == some true
-#guard promotes p1656_3 "s" == some true
+#guard promotes p1656_0 "Both" == some false
+#guard liftingSlotRole (.builtin .mapBuiltin) 1 true == .callable -- map: Both
 
--- tutorial/fence-096: sum([1, 2, 3]) \n sum((1, 2, 3)) \n (1, 2, 3).sum
-def p1657_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-#guard selectOwnedDeclaration p1657_0 "sum" == .property 1 -- x3
-#guard elaboratesToParameter p1657_0 "sum" == false -- x3
-#guard promotes p1657_0 "sum" == some false
-
--- tutorial/fence-098: Scores = [72, 95, 58, 88, 64] \n  \n Scores.take(1) \n Scores.filter{s > 100} \n Scores.first
-def p1658_0 : List OwnerLevel := { parameters := [], properties := ["Scores"] } :: prelude
-def p1658_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1658_0
-def p1658_2 : List OwnerLevel := { parameters := ["s"], properties := [] } :: p1658_0
-#guard selectOwnedDeclaration p1658_0 "Scores" == .property 0 -- x3
-#guard elaboratesToParameter p1658_0 "Scores" == false -- x3
-#guard selectOwnedDeclaration p1658_0 "take" == .property 1
-#guard elaboratesToParameter p1658_0 "take" == false
-#guard selectOwnedDeclaration p1658_0 "filter" == .property 1
-#guard elaboratesToParameter p1658_0 "filter" == false
-#guard selectOwnedDeclaration p1658_2 "s" == .parameter 0
-#guard elaboratesToParameter p1658_2 "s" == true
-#guard selectOwnedDeclaration p1658_0 "first" == .property 1
-#guard elaboratesToParameter p1658_0 "first" == false
-#guard promotes p1658_0 "Scores" == some false
-#guard promotes p1658_0 "take" == some false
-#guard promotes p1658_0 "filter" == some false
-#guard promotes p1658_0 "first" == some false
-#guard promotes p1658_2 "s" == some true
-
--- tutorial/fence-100: Pairs = [(2, 3), (4, 5)] \n  \n Pairs.map{p[0] * p[1]}
-def p1659_0 : List OwnerLevel := { parameters := [], properties := ["Pairs"] } :: prelude
-def p1659_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1659_0
-def p1659_2 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1659_0
-#guard selectOwnedDeclaration p1659_0 "Pairs" == .property 0
-#guard elaboratesToParameter p1659_0 "Pairs" == false
-#guard selectOwnedDeclaration p1659_0 "map" == .property 1
-#guard elaboratesToParameter p1659_0 "map" == false
-#guard selectOwnedDeclaration p1659_2 "p" == .parameter 0 -- x2
-#guard elaboratesToParameter p1659_2 "p" == true -- x2
-#guard promotes p1659_0 "Pairs" == some false
-#guard promotes p1659_0 "map" == some false
-#guard promotes p1659_2 "p" == some true
-
--- tutorial/fence-102: Broken = 1 / 0 \n  \n map([], Broken)
-def p1660_0 : List OwnerLevel := { parameters := [], properties := ["Broken"] } :: prelude
-def p1660_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1660_0
-#guard selectOwnedDeclaration p1660_0 "map" == .property 1
-#guard elaboratesToParameter p1660_0 "map" == false
-#guard selectOwnedDeclaration p1660_0 "Broken" == .property 0
-#guard elaboratesToParameter p1660_0 "Broken" == false
-#guard promotes p1660_0 "map" == some false
-#guard promotes p1660_0 "Broken" == some false
-
--- tutorial/fence-103: Twice(x) = x, x \n  \n [1, 2].map(Twice)
-def p1661_0 : List OwnerLevel := { parameters := [], properties := ["Twice"] } :: prelude
-def p1661_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1661_0
-#guard selectOwnedDeclaration p1661_1 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p1661_1 "x" == true -- x2
-#guard selectOwnedDeclaration p1661_0 "map" == .property 1
-#guard elaboratesToParameter p1661_0 "map" == false
-#guard selectOwnedDeclaration p1661_0 "Twice" == .property 0
-#guard elaboratesToParameter p1661_0 "Twice" == false
-#guard promotes p1661_0 "map" == some false
-#guard promotes p1661_0 "Twice" == some false
-#guard liftingSlotRole (.builtin .mapBuiltin) 1 true == .callable -- map: Twice
-
--- tutorial/fence-105: Half(n) = if(n mod 2 == 0, n / 2, ()) \n  \n [4, 5, 6].map(Half) \n [4, 5, 6].filter{n mod 2 == 0}.map(Half)
-def p1662_0 : List OwnerLevel := { parameters := [], properties := ["Half"] } :: prelude
-def p1662_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1662_0
-def p1662_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1662_0
-#guard selectOwnedDeclaration p1662_1 "if" == .property 2
-#guard elaboratesToParameter p1662_1 "if" == false
-#guard selectOwnedDeclaration p1662_1 "n" == .parameter 0 -- x2
-#guard elaboratesToParameter p1662_1 "n" == true -- x2
-#guard selectOwnedDeclaration p1662_0 "map" == .property 1 -- x2
-#guard elaboratesToParameter p1662_0 "map" == false -- x2
-#guard selectOwnedDeclaration p1662_0 "Half" == .property 0 -- x2
-#guard elaboratesToParameter p1662_0 "Half" == false -- x2
-#guard selectOwnedDeclaration p1662_0 "filter" == .property 1
-#guard elaboratesToParameter p1662_0 "filter" == false
-#guard selectOwnedDeclaration p1662_2 "n" == .parameter 0
-#guard elaboratesToParameter p1662_2 "n" == true
-#guard promotes p1662_0 "map" == some false
-#guard promotes p1662_0 "Half" == some false
-#guard promotes p1662_0 "filter" == some false
-#guard promotes p1662_2 "n" == some true
+-- tutorial/fence-093: Half(n) = if(n mod 2 == 0, n / 2, ()) \n  \n [4, 5, 6].map(Half) \n [4, 5, 6].filter{n mod 2 == 0}.map(Half)
+def p1657_0 : List OwnerLevel := { parameters := [], properties := ["Half"] } :: prelude
+def p1657_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1657_0
+def p1657_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1657_0
+#guard selectOwnedDeclaration p1657_1 "if" == .property 2
+#guard elaboratesToParameter p1657_1 "if" == false
+#guard selectOwnedDeclaration p1657_1 "n" == .parameter 0 -- x2
+#guard elaboratesToParameter p1657_1 "n" == true -- x2
+#guard selectOwnedDeclaration p1657_0 "map" == .property 1 -- x2
+#guard elaboratesToParameter p1657_0 "map" == false -- x2
+#guard selectOwnedDeclaration p1657_0 "Half" == .property 0 -- x2
+#guard elaboratesToParameter p1657_0 "Half" == false -- x2
+#guard selectOwnedDeclaration p1657_0 "filter" == .property 1
+#guard elaboratesToParameter p1657_0 "filter" == false
+#guard selectOwnedDeclaration p1657_2 "n" == .parameter 0
+#guard elaboratesToParameter p1657_2 "n" == true
+#guard promotes p1657_0 "map" == some false
+#guard promotes p1657_0 "Half" == some false
+#guard promotes p1657_0 "filter" == some false
+#guard promotes p1657_2 "n" == some true
 #guard liftingSlotRole (.builtin .mapBuiltin) 1 true == .callable -- map: Half -- x2
 
--- tutorial/fence-106: Total(price) = { \n     Tax = price div 5 \n     Tax \n     price + Tax \n } \n  \n [100, 50].map(Total)
-def p1663_0 : List OwnerLevel := { parameters := [], properties := ["Total"] } :: prelude
-def p1663_1 : List OwnerLevel := { parameters := ["price"], properties := ["Tax"] } :: p1663_0
-def p1663_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1663_1
-#guard selectOwnedDeclaration p1663_2 "price" == .parameter 1
-#guard elaboratesToParameter p1663_2 "price" == true
-#guard selectOwnedDeclaration p1663_1 "Tax" == .property 0 -- x2
-#guard elaboratesToParameter p1663_1 "Tax" == false -- x2
-#guard selectOwnedDeclaration p1663_1 "price" == .parameter 0
-#guard elaboratesToParameter p1663_1 "price" == true
-#guard selectOwnedDeclaration p1663_0 "map" == .property 1
-#guard elaboratesToParameter p1663_0 "map" == false
-#guard selectOwnedDeclaration p1663_0 "Total" == .property 0
-#guard elaboratesToParameter p1663_0 "Total" == false
-#guard promotes p1663_0 "map" == some false
-#guard promotes p1663_0 "Total" == some false
+-- tutorial/fence-094: Total(price) = { \n     Tax = price div 5 \n     Tax \n     price + Tax \n } \n  \n [100, 50].map(Total)
+def p1658_0 : List OwnerLevel := { parameters := [], properties := ["Total"] } :: prelude
+def p1658_1 : List OwnerLevel := { parameters := ["price"], properties := ["Tax"] } :: p1658_0
+def p1658_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1658_1
+#guard selectOwnedDeclaration p1658_2 "price" == .parameter 1
+#guard elaboratesToParameter p1658_2 "price" == true
+#guard selectOwnedDeclaration p1658_1 "Tax" == .property 0 -- x2
+#guard elaboratesToParameter p1658_1 "Tax" == false -- x2
+#guard selectOwnedDeclaration p1658_1 "price" == .parameter 0
+#guard elaboratesToParameter p1658_1 "price" == true
+#guard selectOwnedDeclaration p1658_0 "map" == .property 1
+#guard elaboratesToParameter p1658_0 "map" == false
+#guard selectOwnedDeclaration p1658_0 "Total" == .property 0
+#guard elaboratesToParameter p1658_0 "Total" == false
+#guard promotes p1658_0 "map" == some false
+#guard promotes p1658_0 "Total" == some false
 #guard liftingSlotRole (.builtin .mapBuiltin) 1 true == .callable -- map: Total
-#guard ownedConflicts p1663_1 == []
-#guard validOwnedDeclarations p1663_2 == true
+#guard ownedConflicts p1658_1 == []
+#guard validOwnedDeclarations p1658_2 == true
 
--- tutorial/fence-107: Numbers = [1, 2, 3, 4] \n  \n Numbers.reduce({x + total}, 0) \n range(1, 5).reduce({x * product}, 1)
-def p1664_0 : List OwnerLevel := { parameters := [], properties := ["Numbers"] } :: prelude
-def p1664_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1664_0
-def p1664_2 : List OwnerLevel := { parameters := ["x", "total"], properties := [] } :: p1664_0
-def p1664_3 : List OwnerLevel := { parameters := ["x", "product"], properties := [] } :: p1664_0
-#guard selectOwnedDeclaration p1664_0 "Numbers" == .property 0
-#guard elaboratesToParameter p1664_0 "Numbers" == false
-#guard selectOwnedDeclaration p1664_0 "reduce" == .property 1 -- x2
-#guard elaboratesToParameter p1664_0 "reduce" == false -- x2
-#guard selectOwnedDeclaration p1664_2 "x" == .parameter 0
-#guard elaboratesToParameter p1664_2 "x" == true
-#guard selectOwnedDeclaration p1664_2 "total" == .parameter 0
-#guard elaboratesToParameter p1664_2 "total" == true
-#guard selectOwnedDeclaration p1664_0 "range" == .property 1
-#guard elaboratesToParameter p1664_0 "range" == false
-#guard selectOwnedDeclaration p1664_3 "x" == .parameter 0
-#guard elaboratesToParameter p1664_3 "x" == true
-#guard selectOwnedDeclaration p1664_3 "product" == .parameter 0
-#guard elaboratesToParameter p1664_3 "product" == true
-#guard promotes p1664_0 "Numbers" == some false
-#guard promotes p1664_0 "reduce" == some false
-#guard promotes p1664_0 "range" == some false
-#guard promotes p1664_2 "x" == some true
-#guard promotes p1664_2 "total" == some true
-#guard promotes p1664_3 "x" == some true
-#guard promotes p1664_3 "product" == some true
+-- tutorial/fence-095: Numbers = [1, 2, 3, 4] \n  \n Numbers.reduce({x + total}, 0) \n range(1, 5).reduce({x * product}, 1)
+def p1659_0 : List OwnerLevel := { parameters := [], properties := ["Numbers"] } :: prelude
+def p1659_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1659_0
+def p1659_2 : List OwnerLevel := { parameters := ["x", "total"], properties := [] } :: p1659_0
+def p1659_3 : List OwnerLevel := { parameters := ["x", "product"], properties := [] } :: p1659_0
+#guard selectOwnedDeclaration p1659_0 "Numbers" == .property 0
+#guard elaboratesToParameter p1659_0 "Numbers" == false
+#guard selectOwnedDeclaration p1659_0 "reduce" == .property 1 -- x2
+#guard elaboratesToParameter p1659_0 "reduce" == false -- x2
+#guard selectOwnedDeclaration p1659_2 "x" == .parameter 0
+#guard elaboratesToParameter p1659_2 "x" == true
+#guard selectOwnedDeclaration p1659_2 "total" == .parameter 0
+#guard elaboratesToParameter p1659_2 "total" == true
+#guard selectOwnedDeclaration p1659_0 "range" == .property 1
+#guard elaboratesToParameter p1659_0 "range" == false
+#guard selectOwnedDeclaration p1659_3 "x" == .parameter 0
+#guard elaboratesToParameter p1659_3 "x" == true
+#guard selectOwnedDeclaration p1659_3 "product" == .parameter 0
+#guard elaboratesToParameter p1659_3 "product" == true
+#guard promotes p1659_0 "Numbers" == some false
+#guard promotes p1659_0 "reduce" == some false
+#guard promotes p1659_0 "range" == some false
+#guard promotes p1659_2 "x" == some true
+#guard promotes p1659_2 "total" == some true
+#guard promotes p1659_3 "x" == some true
+#guard promotes p1659_3 "product" == some true
 
--- tutorial/fence-108: Pair(x, acc) = x, acc \n Clear(x, acc) = () \n  \n [1, 2].reduce(Pair, 0) \n [1, 2].reduce(Clear, 0)
-def p1665_0 : List OwnerLevel := { parameters := [], properties := ["Pair", "Clear"] } :: prelude
-def p1665_1 : List OwnerLevel := { parameters := ["x", "acc"], properties := [] } :: p1665_0
-def p1665_2 : List OwnerLevel := { parameters := ["x", "acc"], properties := [] } :: p1665_0
-#guard selectOwnedDeclaration p1665_1 "x" == .parameter 0
-#guard elaboratesToParameter p1665_1 "x" == true
-#guard selectOwnedDeclaration p1665_1 "acc" == .parameter 0
-#guard elaboratesToParameter p1665_1 "acc" == true
-#guard selectOwnedDeclaration p1665_0 "reduce" == .property 1 -- x2
-#guard elaboratesToParameter p1665_0 "reduce" == false -- x2
-#guard selectOwnedDeclaration p1665_0 "Pair" == .property 0
-#guard elaboratesToParameter p1665_0 "Pair" == false
-#guard selectOwnedDeclaration p1665_0 "Clear" == .property 0
-#guard elaboratesToParameter p1665_0 "Clear" == false
-#guard promotes p1665_0 "reduce" == some false
-#guard promotes p1665_0 "Pair" == some false
-#guard promotes p1665_0 "Clear" == some false
+-- tutorial/fence-096: Pair(x, acc) = x, acc \n  \n [1, 2].reduce(Pair, 0)
+def p1660_0 : List OwnerLevel := { parameters := [], properties := ["Pair"] } :: prelude
+def p1660_1 : List OwnerLevel := { parameters := ["x", "acc"], properties := [] } :: p1660_0
+#guard selectOwnedDeclaration p1660_1 "x" == .parameter 0
+#guard elaboratesToParameter p1660_1 "x" == true
+#guard selectOwnedDeclaration p1660_1 "acc" == .parameter 0
+#guard elaboratesToParameter p1660_1 "acc" == true
+#guard selectOwnedDeclaration p1660_0 "reduce" == .property 1
+#guard elaboratesToParameter p1660_0 "reduce" == false
+#guard selectOwnedDeclaration p1660_0 "Pair" == .property 0
+#guard elaboratesToParameter p1660_0 "Pair" == false
+#guard promotes p1660_0 "reduce" == some false
+#guard promotes p1660_0 "Pair" == some false
 #guard liftingSlotRole (.builtin .reduceBuiltin) 1 true == .callable -- reduce: Pair
-#guard liftingSlotRole (.builtin .reduceBuiltin) 1 true == .callable -- reduce: Clear
 
--- tutorial/fence-109: Last(x, acc) = x \n  \n [1, 2, 3].reduce(Last, 1 / 0)
-def p1666_0 : List OwnerLevel := { parameters := [], properties := ["Last"] } :: prelude
-def p1666_1 : List OwnerLevel := { parameters := ["x", "acc"], properties := [] } :: p1666_0
-#guard selectOwnedDeclaration p1666_1 "x" == .parameter 0
-#guard elaboratesToParameter p1666_1 "x" == true
-#guard selectOwnedDeclaration p1666_0 "reduce" == .property 1
-#guard elaboratesToParameter p1666_0 "reduce" == false
-#guard selectOwnedDeclaration p1666_0 "Last" == .property 0
-#guard elaboratesToParameter p1666_0 "Last" == false
-#guard promotes p1666_0 "reduce" == some false
-#guard promotes p1666_0 "Last" == some false
+-- tutorial/fence-097: Last(x, acc) = x \n  \n [1, 2, 3].reduce(Last, 1 / 0)
+def p1661_0 : List OwnerLevel := { parameters := [], properties := ["Last"] } :: prelude
+def p1661_1 : List OwnerLevel := { parameters := ["x", "acc"], properties := [] } :: p1661_0
+#guard selectOwnedDeclaration p1661_1 "x" == .parameter 0
+#guard elaboratesToParameter p1661_1 "x" == true
+#guard selectOwnedDeclaration p1661_0 "reduce" == .property 1
+#guard elaboratesToParameter p1661_0 "reduce" == false
+#guard selectOwnedDeclaration p1661_0 "Last" == .property 0
+#guard elaboratesToParameter p1661_0 "Last" == false
+#guard promotes p1661_0 "reduce" == some false
+#guard promotes p1661_0 "Last" == some false
 #guard liftingSlotRole (.builtin .reduceBuiltin) 1 true == .callable -- reduce: Last
 
--- tutorial/fence-110: [].reduce({x + total}, 1 / 0)
-def p1667_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-def p1667_1 : List OwnerLevel := { parameters := ["x", "total"], properties := [] } :: p1667_0
-#guard selectOwnedDeclaration p1667_0 "reduce" == .property 1
-#guard elaboratesToParameter p1667_0 "reduce" == false
-#guard selectOwnedDeclaration p1667_1 "x" == .parameter 0
-#guard elaboratesToParameter p1667_1 "x" == true
-#guard selectOwnedDeclaration p1667_1 "total" == .parameter 0
-#guard elaboratesToParameter p1667_1 "total" == true
-#guard promotes p1667_0 "reduce" == some false
-#guard promotes p1667_1 "x" == some true
-#guard promotes p1667_1 "total" == some true
+-- tutorial/fence-101: Data = [2, 4, 4, 4, 5, 5, 7, 9] \n  \n Mean = Data.avg \n Variance = Data.map{(x - Mean) ^ 2}.avg \n Deviation = Variance.sqrt \n  \n Mean, Variance, Deviation
+def p1662_0 : List OwnerLevel := { parameters := [], properties := ["Data", "Mean", "Variance", "Deviation"] } :: prelude
+def p1662_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1662_0
+def p1662_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1662_0
+def p1662_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1662_0
+def p1662_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1662_3
+def p1662_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1662_0
+#guard selectOwnedDeclaration p1662_2 "Data" == .property 1
+#guard elaboratesToParameter p1662_2 "Data" == false
+#guard selectOwnedDeclaration p1662_2 "avg" == .property 2
+#guard elaboratesToParameter p1662_2 "avg" == false
+#guard selectOwnedDeclaration p1662_3 "Data" == .property 1
+#guard elaboratesToParameter p1662_3 "Data" == false
+#guard selectOwnedDeclaration p1662_3 "map" == .property 2
+#guard elaboratesToParameter p1662_3 "map" == false
+#guard selectOwnedDeclaration p1662_4 "x" == .parameter 0
+#guard elaboratesToParameter p1662_4 "x" == true
+#guard selectOwnedDeclaration p1662_4 "Mean" == .property 2
+#guard elaboratesToParameter p1662_4 "Mean" == false
+#guard selectOwnedDeclaration p1662_3 "avg" == .property 2
+#guard elaboratesToParameter p1662_3 "avg" == false
+#guard selectOwnedDeclaration p1662_5 "Variance" == .property 1
+#guard elaboratesToParameter p1662_5 "Variance" == false
+#guard selectOwnedDeclaration p1662_5 "sqrt" == .property 2
+#guard elaboratesToParameter p1662_5 "sqrt" == false
+#guard selectOwnedDeclaration p1662_0 "Mean" == .property 0
+#guard elaboratesToParameter p1662_0 "Mean" == false
+#guard selectOwnedDeclaration p1662_0 "Variance" == .property 0
+#guard elaboratesToParameter p1662_0 "Variance" == false
+#guard selectOwnedDeclaration p1662_0 "Deviation" == .property 0
+#guard elaboratesToParameter p1662_0 "Deviation" == false
+#guard promotes p1662_0 "Mean" == some false
+#guard promotes p1662_0 "Variance" == some false
+#guard promotes p1662_0 "Deviation" == some false
+#guard promotes p1662_2 "Data" == some false
+#guard promotes p1662_2 "avg" == some false
+#guard promotes p1662_3 "Data" == some false
+#guard promotes p1662_3 "map" == some false
+#guard promotes p1662_3 "avg" == some false
+#guard promotes p1662_4 "x" == some true
+#guard promotes p1662_4 "Mean" == some false
+#guard promotes p1662_5 "Variance" == some false
 
--- tutorial/fence-112: Data = [2, 4, 4, 4, 5, 5, 7, 9] \n  \n Mean = Data.avg \n Variance = Data.map{(x - Mean) ^ 2}.avg \n Deviation = Variance.sqrt \n  \n Mean, Variance, Deviation
-def p1668_0 : List OwnerLevel := { parameters := [], properties := ["Data", "Mean", "Variance", "Deviation"] } :: prelude
+-- tutorial/fence-102: Mean(*values) = values.sum / values.count \n  \n Mean(1, 2, 3, 4) \n Mean(10)
+def p1663_0 : List OwnerLevel := { parameters := [], properties := ["Mean"] } :: prelude
+def p1663_1 : List OwnerLevel := { parameters := ["values"], properties := [] } :: p1663_0
+#guard selectOwnedDeclaration p1663_1 "values" == .parameter 0 -- x2
+#guard elaboratesToParameter p1663_1 "values" == true -- x2
+#guard selectOwnedDeclaration p1663_1 "sum" == .property 2
+#guard elaboratesToParameter p1663_1 "sum" == false
+#guard selectOwnedDeclaration p1663_1 "count" == .property 2
+#guard elaboratesToParameter p1663_1 "count" == false
+#guard selectOwnedDeclaration p1663_0 "Mean" == .property 0 -- x2
+#guard elaboratesToParameter p1663_0 "Mean" == false -- x2
+#guard promotes p1663_0 "Mean" == some false
+
+-- tutorial/fence-104: Mean(*values) = values.sum / values.count \n Data = [2, 4, 6] \n  \n Mean(2, 4, 6) \n Mean(Data*) \n Data*.Mean
+def p1664_0 : List OwnerLevel := { parameters := [], properties := ["Data", "Mean"] } :: prelude
+def p1664_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1664_0
+def p1664_2 : List OwnerLevel := { parameters := ["values"], properties := [] } :: p1664_0
+#guard selectOwnedDeclaration p1664_2 "values" == .parameter 0 -- x2
+#guard elaboratesToParameter p1664_2 "values" == true -- x2
+#guard selectOwnedDeclaration p1664_2 "sum" == .property 2
+#guard elaboratesToParameter p1664_2 "sum" == false
+#guard selectOwnedDeclaration p1664_2 "count" == .property 2
+#guard elaboratesToParameter p1664_2 "count" == false
+#guard selectOwnedDeclaration p1664_0 "Mean" == .property 0 -- x3
+#guard elaboratesToParameter p1664_0 "Mean" == false -- x3
+#guard selectOwnedDeclaration p1664_0 "Data" == .property 0 -- x2
+#guard elaboratesToParameter p1664_0 "Data" == false -- x2
+#guard promotes p1664_0 "Mean" == some false
+#guard promotes p1664_0 "Data" == some false
+
+-- tutorial/fence-105: Scale(*values, factor) = values.map{n * factor} \n Head(first, *rest) = first \n Tail(first, *rest) = rest \n  \n Scale(1, 2, 3, 10) \n Head(5, 6, 7) \n Tail(5, 6, 7)
+def p1665_0 : List OwnerLevel := { parameters := [], properties := ["Scale", "Head", "Tail"] } :: prelude
+def p1665_1 : List OwnerLevel := { parameters := ["values", "factor"], properties := [] } :: p1665_0
+def p1665_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1665_1
+def p1665_3 : List OwnerLevel := { parameters := ["first", "rest"], properties := [] } :: p1665_0
+def p1665_4 : List OwnerLevel := { parameters := ["first", "rest"], properties := [] } :: p1665_0
+#guard selectOwnedDeclaration p1665_1 "values" == .parameter 0
+#guard elaboratesToParameter p1665_1 "values" == true
+#guard selectOwnedDeclaration p1665_1 "map" == .property 2
+#guard elaboratesToParameter p1665_1 "map" == false
+#guard selectOwnedDeclaration p1665_2 "n" == .parameter 0
+#guard elaboratesToParameter p1665_2 "n" == true
+#guard selectOwnedDeclaration p1665_2 "factor" == .parameter 1
+#guard elaboratesToParameter p1665_2 "factor" == true
+#guard selectOwnedDeclaration p1665_3 "first" == .parameter 0
+#guard elaboratesToParameter p1665_3 "first" == true
+#guard selectOwnedDeclaration p1665_4 "rest" == .parameter 0
+#guard elaboratesToParameter p1665_4 "rest" == true
+#guard selectOwnedDeclaration p1665_0 "Scale" == .property 0
+#guard elaboratesToParameter p1665_0 "Scale" == false
+#guard selectOwnedDeclaration p1665_0 "Head" == .property 0
+#guard elaboratesToParameter p1665_0 "Head" == false
+#guard selectOwnedDeclaration p1665_0 "Tail" == .property 0
+#guard elaboratesToParameter p1665_0 "Tail" == false
+#guard promotes p1665_0 "Scale" == some false
+#guard promotes p1665_0 "Head" == some false
+#guard promotes p1665_0 "Tail" == some false
+#guard promotes p1665_2 "n" == some true
+
+-- tutorial/fence-106: Rest((x, *others)) = others \n Items([*xs]) = xs.count \n  \n Rest((1, 2, 3)) \n Items([5, 6]) \n Items([])
+def p1666_0 : List OwnerLevel := { parameters := [], properties := ["Rest", "Items"] } :: prelude
+def p1666_1 : List OwnerLevel := { parameters := ["x", "others"], properties := [] } :: p1666_0
+def p1666_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1666_0
+#guard selectOwnedDeclaration p1666_1 "others" == .parameter 0
+#guard elaboratesToParameter p1666_1 "others" == true
+#guard selectOwnedDeclaration p1666_2 "xs" == .parameter 0
+#guard elaboratesToParameter p1666_2 "xs" == true
+#guard selectOwnedDeclaration p1666_2 "count" == .property 2
+#guard elaboratesToParameter p1666_2 "count" == false
+#guard selectOwnedDeclaration p1666_0 "Rest" == .property 0
+#guard elaboratesToParameter p1666_0 "Rest" == false
+#guard selectOwnedDeclaration p1666_0 "Items" == .property 0 -- x2
+#guard elaboratesToParameter p1666_0 "Items" == false -- x2
+#guard promotes p1666_0 "Rest" == some false
+#guard promotes p1666_0 "Items" == some false
+
+-- tutorial/fence-109: q, r = 17 div 5, 17 mod 5 \n q, r
+def p1667_0 : List OwnerLevel := { parameters := [], properties := ["$deconstruct$0", "q", "r"] } :: prelude
+def p1667_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1667_0
+def p1667_2 : List OwnerLevel := { parameters := ["q", "r"], properties := [] } :: p1667_1
+def p1667_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1667_0
+def p1667_4 : List OwnerLevel := { parameters := ["q", "r"], properties := [] } :: p1667_3
+#guard selectOwnedDeclaration p1667_2 "q" == .parameter 0
+#guard elaboratesToParameter p1667_2 "q" == true
+#guard selectOwnedDeclaration p1667_1 "$deconstruct$0" == .property 1
+#guard elaboratesToParameter p1667_1 "$deconstruct$0" == false
+#guard selectOwnedDeclaration p1667_4 "r" == .parameter 0
+#guard elaboratesToParameter p1667_4 "r" == true
+#guard selectOwnedDeclaration p1667_3 "$deconstruct$0" == .property 1
+#guard elaboratesToParameter p1667_3 "$deconstruct$0" == false
+#guard selectOwnedDeclaration p1667_0 "q" == .property 0
+#guard elaboratesToParameter p1667_0 "q" == false
+#guard selectOwnedDeclaration p1667_0 "r" == .property 0
+#guard elaboratesToParameter p1667_0 "r" == false
+#guard promotes p1667_0 "q" == some false
+#guard promotes p1667_0 "r" == some false
+#guard promotes p1667_1 "$deconstruct$0" == some false
+#guard promotes p1667_3 "$deconstruct$0" == some false
+
+-- tutorial/fence-112: Describe(0) = 'zero' \n Describe(n) = if(n > 0, 'positive', 'negative') \n  \n Describe(0) \n Describe(-4) \n Describe(7)
+def p1668_0 : List OwnerLevel := { parameters := [], properties := ["Describe"] } :: prelude
 def p1668_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1668_0
-def p1668_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1668_0
-def p1668_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1668_0
-def p1668_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1668_3
-def p1668_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1668_0
-#guard selectOwnedDeclaration p1668_2 "Data" == .property 1
-#guard elaboratesToParameter p1668_2 "Data" == false
-#guard selectOwnedDeclaration p1668_2 "avg" == .property 2
-#guard elaboratesToParameter p1668_2 "avg" == false
-#guard selectOwnedDeclaration p1668_3 "Data" == .property 1
-#guard elaboratesToParameter p1668_3 "Data" == false
-#guard selectOwnedDeclaration p1668_3 "map" == .property 2
-#guard elaboratesToParameter p1668_3 "map" == false
-#guard selectOwnedDeclaration p1668_4 "x" == .parameter 0
-#guard elaboratesToParameter p1668_4 "x" == true
-#guard selectOwnedDeclaration p1668_4 "Mean" == .property 2
-#guard elaboratesToParameter p1668_4 "Mean" == false
-#guard selectOwnedDeclaration p1668_3 "avg" == .property 2
-#guard elaboratesToParameter p1668_3 "avg" == false
-#guard selectOwnedDeclaration p1668_5 "Variance" == .property 1
-#guard elaboratesToParameter p1668_5 "Variance" == false
-#guard selectOwnedDeclaration p1668_5 "sqrt" == .property 2
-#guard elaboratesToParameter p1668_5 "sqrt" == false
-#guard selectOwnedDeclaration p1668_0 "Mean" == .property 0
-#guard elaboratesToParameter p1668_0 "Mean" == false
-#guard selectOwnedDeclaration p1668_0 "Variance" == .property 0
-#guard elaboratesToParameter p1668_0 "Variance" == false
-#guard selectOwnedDeclaration p1668_0 "Deviation" == .property 0
-#guard elaboratesToParameter p1668_0 "Deviation" == false
-#guard promotes p1668_0 "Mean" == some false
-#guard promotes p1668_0 "Variance" == some false
-#guard promotes p1668_0 "Deviation" == some false
-#guard promotes p1668_2 "Data" == some false
-#guard promotes p1668_2 "avg" == some false
-#guard promotes p1668_3 "Data" == some false
-#guard promotes p1668_3 "map" == some false
-#guard promotes p1668_3 "avg" == some false
-#guard promotes p1668_4 "x" == some true
-#guard promotes p1668_4 "Mean" == some false
-#guard promotes p1668_5 "Variance" == some false
-
--- tutorial/fence-113: Mean(*values) = values.sum / values.count \n  \n Mean(1, 2, 3, 4) \n Mean(10)
-def p1669_0 : List OwnerLevel := { parameters := [], properties := ["Mean"] } :: prelude
-def p1669_1 : List OwnerLevel := { parameters := ["values"], properties := [] } :: p1669_0
-#guard selectOwnedDeclaration p1669_1 "values" == .parameter 0 -- x2
-#guard elaboratesToParameter p1669_1 "values" == true -- x2
-#guard selectOwnedDeclaration p1669_1 "sum" == .property 2
-#guard elaboratesToParameter p1669_1 "sum" == false
-#guard selectOwnedDeclaration p1669_1 "count" == .property 2
-#guard elaboratesToParameter p1669_1 "count" == false
-#guard selectOwnedDeclaration p1669_0 "Mean" == .property 0 -- x2
-#guard elaboratesToParameter p1669_0 "Mean" == false -- x2
-#guard promotes p1669_0 "Mean" == some false
-
--- tutorial/fence-115: Roll(*bonus) = randomInt(1, 7) + bonus.sum \n Roll == Roll
-def p1670_0 : List OwnerLevel := { parameters := [], properties := ["Roll"] } :: prelude
-def p1670_1 : List OwnerLevel := { parameters := ["bonus"], properties := [] } :: p1670_0
-#guard selectOwnedDeclaration p1670_1 "randomInt" == .property 2
-#guard elaboratesToParameter p1670_1 "randomInt" == false
-#guard selectOwnedDeclaration p1670_1 "bonus" == .parameter 0
-#guard elaboratesToParameter p1670_1 "bonus" == true
-#guard selectOwnedDeclaration p1670_1 "sum" == .property 2
-#guard elaboratesToParameter p1670_1 "sum" == false
-#guard selectOwnedDeclaration p1670_0 "Roll" == .property 0 -- x2
-#guard elaboratesToParameter p1670_0 "Roll" == false -- x2
-#guard promotes p1670_0 "Roll" == some false
-
--- tutorial/fence-116: Count(*items) = items.count \n Size = Count \n Twice = Count + Count \n  \n Size, Twice, Count(7, 8, 9), Size(7, 8)
-def p1671_0 : List OwnerLevel := { parameters := [], properties := ["Size", "Twice", "Count"] } :: prelude
-def p1671_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1671_0
-def p1671_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1671_0
-def p1671_3 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1671_0
-#guard selectOwnedDeclaration p1671_1 "Count" == .property 1
-#guard elaboratesToParameter p1671_1 "Count" == false
-#guard selectOwnedDeclaration p1671_2 "Count" == .property 1 -- x2
-#guard elaboratesToParameter p1671_2 "Count" == false -- x2
-#guard selectOwnedDeclaration p1671_3 "items" == .parameter 0
-#guard elaboratesToParameter p1671_3 "items" == true
-#guard selectOwnedDeclaration p1671_3 "count" == .property 2
-#guard elaboratesToParameter p1671_3 "count" == false
-#guard selectOwnedDeclaration p1671_0 "Size" == .property 0 -- x2
-#guard elaboratesToParameter p1671_0 "Size" == false -- x2
-#guard selectOwnedDeclaration p1671_0 "Twice" == .property 0
-#guard elaboratesToParameter p1671_0 "Twice" == false
-#guard selectOwnedDeclaration p1671_0 "Count" == .property 0
-#guard elaboratesToParameter p1671_0 "Count" == false
-#guard promotes p1671_0 "Size" == some false
-#guard promotes p1671_0 "Twice" == some false
-#guard promotes p1671_0 "Count" == some false
-#guard promotes p1671_1 "Count" == some false
-#guard promotes p1671_2 "Count" == some false
-
--- tutorial/fence-117: Mean(*values) = values.sum / values.count \n Data = [2, 4, 6] \n  \n Mean(2, 4, 6) \n Mean(Data*) \n Data*.Mean
-def p1672_0 : List OwnerLevel := { parameters := [], properties := ["Data", "Mean"] } :: prelude
-def p1672_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1672_0
-def p1672_2 : List OwnerLevel := { parameters := ["values"], properties := [] } :: p1672_0
-#guard selectOwnedDeclaration p1672_2 "values" == .parameter 0 -- x2
-#guard elaboratesToParameter p1672_2 "values" == true -- x2
-#guard selectOwnedDeclaration p1672_2 "sum" == .property 2
-#guard elaboratesToParameter p1672_2 "sum" == false
-#guard selectOwnedDeclaration p1672_2 "count" == .property 2
-#guard elaboratesToParameter p1672_2 "count" == false
-#guard selectOwnedDeclaration p1672_0 "Mean" == .property 0 -- x3
-#guard elaboratesToParameter p1672_0 "Mean" == false -- x3
-#guard selectOwnedDeclaration p1672_0 "Data" == .property 0 -- x2
-#guard elaboratesToParameter p1672_0 "Data" == false -- x2
-#guard promotes p1672_0 "Mean" == some false
-#guard promotes p1672_0 "Data" == some false
-
--- tutorial/fence-118: Scale(*values, factor) = values.map{n * factor} \n Head(first, *rest) = first \n Tail(first, *rest) = rest \n  \n Scale(1, 2, 3, 10) \n Head(5, 6, 7) \n Tail(5, 6, 7)
-def p1673_0 : List OwnerLevel := { parameters := [], properties := ["Scale", "Head", "Tail"] } :: prelude
-def p1673_1 : List OwnerLevel := { parameters := ["values", "factor"], properties := [] } :: p1673_0
-def p1673_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1673_1
-def p1673_3 : List OwnerLevel := { parameters := ["first", "rest"], properties := [] } :: p1673_0
-def p1673_4 : List OwnerLevel := { parameters := ["first", "rest"], properties := [] } :: p1673_0
-#guard selectOwnedDeclaration p1673_1 "values" == .parameter 0
-#guard elaboratesToParameter p1673_1 "values" == true
-#guard selectOwnedDeclaration p1673_1 "map" == .property 2
-#guard elaboratesToParameter p1673_1 "map" == false
-#guard selectOwnedDeclaration p1673_2 "n" == .parameter 0
-#guard elaboratesToParameter p1673_2 "n" == true
-#guard selectOwnedDeclaration p1673_2 "factor" == .parameter 1
-#guard elaboratesToParameter p1673_2 "factor" == true
-#guard selectOwnedDeclaration p1673_3 "first" == .parameter 0
-#guard elaboratesToParameter p1673_3 "first" == true
-#guard selectOwnedDeclaration p1673_4 "rest" == .parameter 0
-#guard elaboratesToParameter p1673_4 "rest" == true
-#guard selectOwnedDeclaration p1673_0 "Scale" == .property 0
-#guard elaboratesToParameter p1673_0 "Scale" == false
-#guard selectOwnedDeclaration p1673_0 "Head" == .property 0
-#guard elaboratesToParameter p1673_0 "Head" == false
-#guard selectOwnedDeclaration p1673_0 "Tail" == .property 0
-#guard elaboratesToParameter p1673_0 "Tail" == false
-#guard promotes p1673_0 "Scale" == some false
-#guard promotes p1673_0 "Head" == some false
-#guard promotes p1673_0 "Tail" == some false
-#guard promotes p1673_2 "n" == some true
-
--- tutorial/fence-119: Rest((x, *others)) = others \n Items([*xs]) = xs.count \n  \n Rest((1, 2, 3)) \n Items([5, 6]) \n Items([])
-def p1674_0 : List OwnerLevel := { parameters := [], properties := ["Rest", "Items"] } :: prelude
-def p1674_1 : List OwnerLevel := { parameters := ["x", "others"], properties := [] } :: p1674_0
-def p1674_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1674_0
-#guard selectOwnedDeclaration p1674_1 "others" == .parameter 0
-#guard elaboratesToParameter p1674_1 "others" == true
-#guard selectOwnedDeclaration p1674_2 "xs" == .parameter 0
-#guard elaboratesToParameter p1674_2 "xs" == true
-#guard selectOwnedDeclaration p1674_2 "count" == .property 2
-#guard elaboratesToParameter p1674_2 "count" == false
-#guard selectOwnedDeclaration p1674_0 "Rest" == .property 0
-#guard elaboratesToParameter p1674_0 "Rest" == false
-#guard selectOwnedDeclaration p1674_0 "Items" == .property 0 -- x2
-#guard elaboratesToParameter p1674_0 "Items" == false -- x2
-#guard promotes p1674_0 "Rest" == some false
-#guard promotes p1674_0 "Items" == some false
-
--- tutorial/fence-122: q, r = 17 div 5, 17 mod 5 \n q, r
-def p1675_0 : List OwnerLevel := { parameters := [], properties := ["$deconstruct$0", "q", "r"] } :: prelude
-def p1675_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1675_0
-def p1675_2 : List OwnerLevel := { parameters := ["q", "r"], properties := [] } :: p1675_1
-def p1675_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1675_0
-def p1675_4 : List OwnerLevel := { parameters := ["q", "r"], properties := [] } :: p1675_3
-#guard selectOwnedDeclaration p1675_2 "q" == .parameter 0
-#guard elaboratesToParameter p1675_2 "q" == true
-#guard selectOwnedDeclaration p1675_1 "$deconstruct$0" == .property 1
-#guard elaboratesToParameter p1675_1 "$deconstruct$0" == false
-#guard selectOwnedDeclaration p1675_4 "r" == .parameter 0
-#guard elaboratesToParameter p1675_4 "r" == true
-#guard selectOwnedDeclaration p1675_3 "$deconstruct$0" == .property 1
-#guard elaboratesToParameter p1675_3 "$deconstruct$0" == false
-#guard selectOwnedDeclaration p1675_0 "q" == .property 0
-#guard elaboratesToParameter p1675_0 "q" == false
-#guard selectOwnedDeclaration p1675_0 "r" == .property 0
-#guard elaboratesToParameter p1675_0 "r" == false
-#guard promotes p1675_0 "q" == some false
-#guard promotes p1675_0 "r" == some false
-#guard promotes p1675_1 "$deconstruct$0" == some false
-#guard promotes p1675_3 "$deconstruct$0" == some false
-
--- tutorial/fence-125: a, b = tick(), 20 \n a, a(), a(), tick()
-def p1676_0 : List OwnerLevel := { parameters := [], properties := ["$deconstruct$0", "a", "b"] } :: prelude
-def p1676_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1676_0
-def p1676_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1676_1
-def p1676_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1676_0
-def p1676_4 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1676_3
-#guard selectOwnedDeclaration p1676_0 "tick" == .property 1 -- x2
-#guard elaboratesToParameter p1676_0 "tick" == false -- x2
-#guard selectOwnedDeclaration p1676_2 "a" == .parameter 0
-#guard elaboratesToParameter p1676_2 "a" == true
-#guard selectOwnedDeclaration p1676_1 "$deconstruct$0" == .property 1
-#guard elaboratesToParameter p1676_1 "$deconstruct$0" == false
-#guard selectOwnedDeclaration p1676_4 "b" == .parameter 0
-#guard elaboratesToParameter p1676_4 "b" == true
-#guard selectOwnedDeclaration p1676_3 "$deconstruct$0" == .property 1
-#guard elaboratesToParameter p1676_3 "$deconstruct$0" == false
-#guard selectOwnedDeclaration p1676_0 "a" == .property 0 -- x3
-#guard elaboratesToParameter p1676_0 "a" == false -- x3
-#guard promotes p1676_0 "tick" == some false
-#guard promotes p1676_0 "a" == some false
-#guard promotes p1676_1 "$deconstruct$0" == some false
-#guard promotes p1676_3 "$deconstruct$0" == some false
-
--- tutorial/fence-126: Describe(0) = 'zero' \n Describe(n) = if(n > 0, 'positive', 'negative') \n  \n Describe(0) \n Describe(-4) \n Describe(7)
-def p1677_0 : List OwnerLevel := { parameters := [], properties := ["Describe"] } :: prelude
-def p1677_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1677_0
-def p1677_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1677_0
-#guard selectOwnedDeclaration p1677_2 "if" == .property 2
-#guard elaboratesToParameter p1677_2 "if" == false
-#guard selectOwnedDeclaration p1677_2 "n" == .parameter 0
-#guard elaboratesToParameter p1677_2 "n" == true
-#guard selectOwnedDeclaration p1677_0 "Describe" == .property 0 -- x3
-#guard elaboratesToParameter p1677_0 "Describe" == false -- x3
-#guard promotes p1677_0 "Describe" == some false
+def p1668_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1668_0
+#guard selectOwnedDeclaration p1668_2 "if" == .property 2
+#guard elaboratesToParameter p1668_2 "if" == false
+#guard selectOwnedDeclaration p1668_2 "n" == .parameter 0
+#guard elaboratesToParameter p1668_2 "n" == true
+#guard selectOwnedDeclaration p1668_0 "Describe" == .property 0 -- x3
+#guard elaboratesToParameter p1668_0 "Describe" == false -- x3
+#guard promotes p1668_0 "Describe" == some false
 #guard familyLiftingSignature? [clause (.litInt 0), clause (.bind "n")] == some [.capture { name := "n" }] -- family Describe
 
--- tutorial/fence-127: Factorial(0) = 1 \n Factorial(n) = n * Factorial(n - 1) \n  \n Factorial(5)
-def p1678_0 : List OwnerLevel := { parameters := [], properties := ["Factorial"] } :: prelude
-def p1678_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1678_0
-def p1678_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1678_0
-#guard selectOwnedDeclaration p1678_2 "n" == .parameter 0 -- x2
-#guard elaboratesToParameter p1678_2 "n" == true -- x2
-#guard selectOwnedDeclaration p1678_2 "Factorial" == .property 1
-#guard elaboratesToParameter p1678_2 "Factorial" == false
-#guard selectOwnedDeclaration p1678_0 "Factorial" == .property 0
-#guard elaboratesToParameter p1678_0 "Factorial" == false
-#guard promotes p1678_0 "Factorial" == some false
+-- tutorial/fence-113: Pick(0, a, b) = a \n Pick(n, a, b) = b \n  \n Pick(0, 10, 1 / 0)
+def p1669_0 : List OwnerLevel := { parameters := [], properties := ["Pick"] } :: prelude
+def p1669_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1669_0
+def p1669_2 : List OwnerLevel := { parameters := ["n", "a", "b"], properties := [] } :: p1669_0
+#guard selectOwnedDeclaration p1669_1 "a" == .parameter 0
+#guard elaboratesToParameter p1669_1 "a" == true
+#guard selectOwnedDeclaration p1669_2 "b" == .parameter 0
+#guard elaboratesToParameter p1669_2 "b" == true
+#guard selectOwnedDeclaration p1669_0 "Pick" == .property 0
+#guard elaboratesToParameter p1669_0 "Pick" == false
+#guard promotes p1669_0 "Pick" == some false
+#guard familyLiftingSignature? [clause (.sequenceValue [.litInt 0, .bind "a", .bind "b"]), clause (.sequenceValue [.bind "n", .bind "a", .bind "b"])] == some [.capture { name := "n" }, .capture { name := "a" }, .capture { name := "b" }] -- family Pick
+
+-- tutorial/fence-114: Factorial(0) = 1 \n Factorial(n) = n * Factorial(n - 1) \n  \n Factorial(5)
+def p1670_0 : List OwnerLevel := { parameters := [], properties := ["Factorial"] } :: prelude
+def p1670_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1670_0
+def p1670_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1670_0
+#guard selectOwnedDeclaration p1670_2 "n" == .parameter 0 -- x2
+#guard elaboratesToParameter p1670_2 "n" == true -- x2
+#guard selectOwnedDeclaration p1670_2 "Factorial" == .property 1
+#guard elaboratesToParameter p1670_2 "Factorial" == false
+#guard selectOwnedDeclaration p1670_0 "Factorial" == .property 0
+#guard elaboratesToParameter p1670_0 "Factorial" == false
+#guard promotes p1670_0 "Factorial" == some false
 #guard familyLiftingSignature? [clause (.litInt 0), clause (.bind "n")] == some [.capture { name := "n" }] -- family Factorial
 
--- tutorial/fence-128: Gcd(a, 0) = a \n Gcd(a, b) = Gcd(b, a mod b) \n  \n Gcd(48, 18)
-def p1679_0 : List OwnerLevel := { parameters := [], properties := ["Gcd"] } :: prelude
-def p1679_1 : List OwnerLevel := { parameters := ["a"], properties := [] } :: p1679_0
-def p1679_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1679_0
-#guard selectOwnedDeclaration p1679_1 "a" == .parameter 0
-#guard elaboratesToParameter p1679_1 "a" == true
-#guard selectOwnedDeclaration p1679_2 "Gcd" == .property 1
-#guard elaboratesToParameter p1679_2 "Gcd" == false
-#guard selectOwnedDeclaration p1679_2 "b" == .parameter 0 -- x2
-#guard elaboratesToParameter p1679_2 "b" == true -- x2
-#guard selectOwnedDeclaration p1679_2 "a" == .parameter 0
-#guard elaboratesToParameter p1679_2 "a" == true
-#guard selectOwnedDeclaration p1679_0 "Gcd" == .property 0
-#guard elaboratesToParameter p1679_0 "Gcd" == false
-#guard promotes p1679_0 "Gcd" == some false
+-- tutorial/fence-115: Gcd(a, 0) = a \n Gcd(a, b) = Gcd(b, a mod b) \n  \n Gcd(48, 18)
+def p1671_0 : List OwnerLevel := { parameters := [], properties := ["Gcd"] } :: prelude
+def p1671_1 : List OwnerLevel := { parameters := ["a"], properties := [] } :: p1671_0
+def p1671_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1671_0
+#guard selectOwnedDeclaration p1671_1 "a" == .parameter 0
+#guard elaboratesToParameter p1671_1 "a" == true
+#guard selectOwnedDeclaration p1671_2 "Gcd" == .property 1
+#guard elaboratesToParameter p1671_2 "Gcd" == false
+#guard selectOwnedDeclaration p1671_2 "b" == .parameter 0 -- x2
+#guard elaboratesToParameter p1671_2 "b" == true -- x2
+#guard selectOwnedDeclaration p1671_2 "a" == .parameter 0
+#guard elaboratesToParameter p1671_2 "a" == true
+#guard selectOwnedDeclaration p1671_0 "Gcd" == .property 0
+#guard elaboratesToParameter p1671_0 "Gcd" == false
+#guard promotes p1671_0 "Gcd" == some false
 #guard familyLiftingSignature? [clause (.sequenceValue [.bind "a", .litInt 0]), clause (.sequenceValue [.bind "a", .bind "b"])] == some [.capture { name := "a" }, .capture { name := "b" }] -- family Gcd
 
--- tutorial/fence-129: Fact = if(n <= 1, 1, n * Fact(n - 1)) \n  \n Fact(5)
-def p1680_0 : List OwnerLevel := { parameters := [], properties := ["Fact"] } :: prelude
-def p1680_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1680_0
-#guard selectOwnedDeclaration p1680_1 "if" == .property 2
-#guard elaboratesToParameter p1680_1 "if" == false
-#guard selectOwnedDeclaration p1680_1 "n" == .parameter 0 -- x3
-#guard elaboratesToParameter p1680_1 "n" == true -- x3
-#guard selectOwnedDeclaration p1680_1 "Fact" == .property 1
-#guard elaboratesToParameter p1680_1 "Fact" == false
-#guard selectOwnedDeclaration p1680_0 "Fact" == .property 0
-#guard elaboratesToParameter p1680_0 "Fact" == false
-#guard promotes p1680_0 "Fact" == some false
-#guard promotes p1680_1 "if" == some false
-#guard promotes p1680_1 "n" == some true
-#guard promotes p1680_1 "Fact" == some false
+-- tutorial/fence-116: Fact = if(n <= 1, 1, n * Fact(n - 1)) \n  \n Fact(5)
+def p1672_0 : List OwnerLevel := { parameters := [], properties := ["Fact"] } :: prelude
+def p1672_1 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1672_0
+#guard selectOwnedDeclaration p1672_1 "if" == .property 2
+#guard elaboratesToParameter p1672_1 "if" == false
+#guard selectOwnedDeclaration p1672_1 "n" == .parameter 0 -- x3
+#guard elaboratesToParameter p1672_1 "n" == true -- x3
+#guard selectOwnedDeclaration p1672_1 "Fact" == .property 1
+#guard elaboratesToParameter p1672_1 "Fact" == false
+#guard selectOwnedDeclaration p1672_0 "Fact" == .property 0
+#guard elaboratesToParameter p1672_0 "Fact" == false
+#guard promotes p1672_0 "Fact" == some false
+#guard promotes p1672_1 "if" == some false
+#guard promotes p1672_1 "n" == some true
+#guard promotes p1672_1 "Fact" == some false
 
--- tutorial/fence-130: Price('tomatoes') = 1.20 \n Price('apples') = 0.80 \n Price(item) = 0 \n  \n Expense = Price(item) * quantity \n  \n Price('apples') \n Price('bananas') \n Expense('apples', 3)
-def p1681_0 : List OwnerLevel := { parameters := [], properties := ["Expense", "Price"] } :: prelude
-def p1681_1 : List OwnerLevel := { parameters := ["item", "quantity"], properties := [] } :: p1681_0
-def p1681_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1681_0
-def p1681_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1681_0
-def p1681_4 : List OwnerLevel := { parameters := ["item"], properties := [] } :: p1681_0
-#guard selectOwnedDeclaration p1681_1 "Price" == .property 1
-#guard elaboratesToParameter p1681_1 "Price" == false
-#guard selectOwnedDeclaration p1681_1 "item" == .parameter 0
-#guard elaboratesToParameter p1681_1 "item" == true
-#guard selectOwnedDeclaration p1681_1 "quantity" == .parameter 0
-#guard elaboratesToParameter p1681_1 "quantity" == true
-#guard selectOwnedDeclaration p1681_0 "Price" == .property 0 -- x2
-#guard elaboratesToParameter p1681_0 "Price" == false -- x2
-#guard selectOwnedDeclaration p1681_0 "Expense" == .property 0
-#guard elaboratesToParameter p1681_0 "Expense" == false
-#guard promotes p1681_0 "Price" == some false
-#guard promotes p1681_0 "Expense" == some false
-#guard promotes p1681_1 "Price" == some false
-#guard promotes p1681_1 "item" == some true
-#guard promotes p1681_1 "quantity" == some true
+-- tutorial/fence-117: Price('tomatoes') = 1.20 \n Price('apples') = 0.80 \n Price(item) = 0 \n  \n Expense = Price(item) * quantity \n  \n Price('apples') \n Price('bananas') \n Expense('apples', 3)
+def p1673_0 : List OwnerLevel := { parameters := [], properties := ["Expense", "Price"] } :: prelude
+def p1673_1 : List OwnerLevel := { parameters := ["item", "quantity"], properties := [] } :: p1673_0
+def p1673_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1673_0
+def p1673_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1673_0
+def p1673_4 : List OwnerLevel := { parameters := ["item"], properties := [] } :: p1673_0
+#guard selectOwnedDeclaration p1673_1 "Price" == .property 1
+#guard elaboratesToParameter p1673_1 "Price" == false
+#guard selectOwnedDeclaration p1673_1 "item" == .parameter 0
+#guard elaboratesToParameter p1673_1 "item" == true
+#guard selectOwnedDeclaration p1673_1 "quantity" == .parameter 0
+#guard elaboratesToParameter p1673_1 "quantity" == true
+#guard selectOwnedDeclaration p1673_0 "Price" == .property 0 -- x2
+#guard elaboratesToParameter p1673_0 "Price" == false -- x2
+#guard selectOwnedDeclaration p1673_0 "Expense" == .property 0
+#guard elaboratesToParameter p1673_0 "Expense" == false
+#guard promotes p1673_0 "Price" == some false
+#guard promotes p1673_0 "Expense" == some false
+#guard promotes p1673_1 "Price" == some false
+#guard promotes p1673_1 "item" == some true
+#guard promotes p1673_1 "quantity" == some true
 #guard familyLiftingSignature? [clause (.litString "tomatoes"), clause (.litString "apples"), clause (.bind "item")] == some [.capture { name := "item" }] -- family Price
 
--- tutorial/fence-131: Area(('circle', r)) = pi * r ^ 2 \n Area(('rect', w, h)) = w * h \n  \n Area(('rect', 3, 4)) \n Area(('circle', 1)).round(4)
-def p1682_0 : List OwnerLevel := { parameters := [], properties := ["Area"] } :: prelude
-def p1682_1 : List OwnerLevel := { parameters := ["r"], properties := [] } :: p1682_0
-def p1682_2 : List OwnerLevel := { parameters := ["w", "h"], properties := [] } :: p1682_0
-#guard selectOwnedDeclaration p1682_1 "pi" == .property 2
-#guard elaboratesToParameter p1682_1 "pi" == false
-#guard selectOwnedDeclaration p1682_1 "r" == .parameter 0
-#guard elaboratesToParameter p1682_1 "r" == true
-#guard selectOwnedDeclaration p1682_2 "w" == .parameter 0
-#guard elaboratesToParameter p1682_2 "w" == true
-#guard selectOwnedDeclaration p1682_2 "h" == .parameter 0
-#guard elaboratesToParameter p1682_2 "h" == true
-#guard selectOwnedDeclaration p1682_0 "Area" == .property 0 -- x2
-#guard elaboratesToParameter p1682_0 "Area" == false -- x2
-#guard selectOwnedDeclaration p1682_0 "round" == .property 1
-#guard elaboratesToParameter p1682_0 "round" == false
-#guard promotes p1682_0 "Area" == some false
+-- tutorial/fence-118: Area(('circle', r)) = pi * r ^ 2 \n Area(('rect', w, h)) = w * h \n  \n Area(('rect', 3, 4)) \n Area(('circle', 1)).round(4)
+def p1674_0 : List OwnerLevel := { parameters := [], properties := ["Area"] } :: prelude
+def p1674_1 : List OwnerLevel := { parameters := ["r"], properties := [] } :: p1674_0
+def p1674_2 : List OwnerLevel := { parameters := ["w", "h"], properties := [] } :: p1674_0
+#guard selectOwnedDeclaration p1674_1 "pi" == .property 2
+#guard elaboratesToParameter p1674_1 "pi" == false
+#guard selectOwnedDeclaration p1674_1 "r" == .parameter 0
+#guard elaboratesToParameter p1674_1 "r" == true
+#guard selectOwnedDeclaration p1674_2 "w" == .parameter 0
+#guard elaboratesToParameter p1674_2 "w" == true
+#guard selectOwnedDeclaration p1674_2 "h" == .parameter 0
+#guard elaboratesToParameter p1674_2 "h" == true
+#guard selectOwnedDeclaration p1674_0 "Area" == .property 0 -- x2
+#guard elaboratesToParameter p1674_0 "Area" == false -- x2
+#guard selectOwnedDeclaration p1674_0 "round" == .property 1
+#guard elaboratesToParameter p1674_0 "round" == false
+#guard promotes p1674_0 "Area" == some false
 #guard familyLiftingSignature? [clause (.sequenceValue [.sequenceValue [.litString "circle", .bind "r"]]), clause (.sequenceValue [.sequenceValue [.litString "rect", .bind "w", .bind "h"]])] == none -- family Area
 
--- tutorial/fence-132: Kind([]) = 0 \n Kind([x]) = 1 \n Kind(xs) = 2 \n  \n Kind([]) \n Kind([5]) \n Kind([5, 6])
-def p1683_0 : List OwnerLevel := { parameters := [], properties := ["Kind"] } :: prelude
-def p1683_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1683_0
-def p1683_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1683_0
-def p1683_3 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1683_0
-#guard selectOwnedDeclaration p1683_0 "Kind" == .property 0 -- x3
-#guard elaboratesToParameter p1683_0 "Kind" == false -- x3
-#guard promotes p1683_0 "Kind" == some false
+-- tutorial/fence-119: Kind([]) = 0 \n Kind([x]) = 1 \n Kind(xs) = 2 \n  \n Kind([]) \n Kind([5]) \n Kind([5, 6])
+def p1675_0 : List OwnerLevel := { parameters := [], properties := ["Kind"] } :: prelude
+def p1675_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1675_0
+def p1675_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1675_0
+def p1675_3 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1675_0
+#guard selectOwnedDeclaration p1675_0 "Kind" == .property 0 -- x3
+#guard elaboratesToParameter p1675_0 "Kind" == false -- x3
+#guard promotes p1675_0 "Kind" == some false
 #guard familyLiftingSignature? [clause (.sequenceValue [.listValue []]), clause (.sequenceValue [.listValue [.bind "x"]]), clause (.bind "xs")] == some [.capture { name := "xs" }] -- family Kind
 
--- tutorial/fence-133: Same(x, x) = true \n Same(x, y) = false \n  \n Same(3, 3) \n Same(3, 4)
-def p1684_0 : List OwnerLevel := { parameters := [], properties := ["Same"] } :: prelude
-def p1684_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1684_0
-def p1684_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1684_0
-#guard selectOwnedDeclaration p1684_0 "Same" == .property 0 -- x2
-#guard elaboratesToParameter p1684_0 "Same" == false -- x2
-#guard promotes p1684_0 "Same" == some false
+-- tutorial/fence-120: Same(x, x) = true \n Same(x, y) = false \n  \n Same(3, 3) \n Same(3, 4)
+def p1676_0 : List OwnerLevel := { parameters := [], properties := ["Same"] } :: prelude
+def p1676_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1676_0
+def p1676_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1676_0
+#guard selectOwnedDeclaration p1676_0 "Same" == .property 0 -- x2
+#guard elaboratesToParameter p1676_0 "Same" == false -- x2
+#guard promotes p1676_0 "Same" == some false
 #guard familyLiftingSignature? [clause (.sequenceValue [.bind "x", .bind "x"]), clause (.sequenceValue [.bind "x", .bind "y"])] == none -- family Same
 
--- tutorial/fence-135: Inc(y) = y + 1 \n Same(x, x) = true \n Same(x, y) = false \n  \n Check(n) = Same(Inc, n) \n Check(1)
-def p1685_0 : List OwnerLevel := { parameters := [], properties := ["Inc", "Same", "Check"] } :: prelude
-def p1685_1 : List OwnerLevel := { parameters := ["y"], properties := [] } :: p1685_0
-def p1685_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1685_0
-def p1685_3 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1685_0
-def p1685_4 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1685_0
-#guard selectOwnedDeclaration p1685_1 "y" == .parameter 0
-#guard elaboratesToParameter p1685_1 "y" == true
-#guard selectOwnedDeclaration p1685_4 "Same" == .property 1
-#guard elaboratesToParameter p1685_4 "Same" == false
-#guard selectOwnedDeclaration p1685_4 "Inc" == .property 1
-#guard elaboratesToParameter p1685_4 "Inc" == false
-#guard selectOwnedDeclaration p1685_4 "n" == .parameter 0
-#guard elaboratesToParameter p1685_4 "n" == true
-#guard selectOwnedDeclaration p1685_0 "Check" == .property 0
-#guard elaboratesToParameter p1685_0 "Check" == false
-#guard promotes p1685_0 "Check" == some false
-#guard familyLiftingSignature? [clause (.sequenceValue [.bind "x", .bind "x"]), clause (.sequenceValue [.bind "x", .bind "y"])] == none -- family Same
-
--- tutorial/fence-136: Grade(1) = 'excellent' \n Grade(2) = 'good' \n  \n Grade(3)
-def p1686_0 : List OwnerLevel := { parameters := [], properties := ["Grade"] } :: prelude
-def p1686_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1686_0
-def p1686_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1686_0
-#guard selectOwnedDeclaration p1686_0 "Grade" == .property 0
-#guard elaboratesToParameter p1686_0 "Grade" == false
-#guard promotes p1686_0 "Grade" == some false
+-- tutorial/fence-121: Grade(1) = 'excellent' \n Grade(2) = 'good' \n  \n Grade(3)
+def p1677_0 : List OwnerLevel := { parameters := [], properties := ["Grade"] } :: prelude
+def p1677_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1677_0
+def p1677_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1677_0
+#guard selectOwnedDeclaration p1677_0 "Grade" == .property 0
+#guard elaboratesToParameter p1677_0 "Grade" == false
+#guard promotes p1677_0 "Grade" == some false
 #guard familyLiftingSignature? [clause (.litInt 1), clause (.litInt 2)] == none -- family Grade
 
--- tutorial/fence-138: Sum(xs) = if(xs.count == 0, 0, xs[0] + Sum(xs.skip(1))) \n  \n Sum([1, 2, 3])
-def p1687_0 : List OwnerLevel := { parameters := [], properties := ["Sum"] } :: prelude
-def p1687_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1687_0
-#guard selectOwnedDeclaration p1687_1 "if" == .property 2
-#guard elaboratesToParameter p1687_1 "if" == false
-#guard selectOwnedDeclaration p1687_1 "xs" == .parameter 0 -- x3
-#guard elaboratesToParameter p1687_1 "xs" == true -- x3
-#guard selectOwnedDeclaration p1687_1 "count" == .property 2
-#guard elaboratesToParameter p1687_1 "count" == false
-#guard selectOwnedDeclaration p1687_1 "Sum" == .property 1
-#guard elaboratesToParameter p1687_1 "Sum" == false
-#guard selectOwnedDeclaration p1687_1 "skip" == .property 2
-#guard elaboratesToParameter p1687_1 "skip" == false
-#guard selectOwnedDeclaration p1687_0 "Sum" == .property 0
-#guard elaboratesToParameter p1687_0 "Sum" == false
-#guard promotes p1687_0 "Sum" == some false
+-- tutorial/fence-123: Sum(xs) = if(xs.count == 0, 0, xs[0] + Sum(xs.skip(1))) \n  \n Sum([1, 2, 3])
+def p1678_0 : List OwnerLevel := { parameters := [], properties := ["Sum"] } :: prelude
+def p1678_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1678_0
+#guard selectOwnedDeclaration p1678_1 "if" == .property 2
+#guard elaboratesToParameter p1678_1 "if" == false
+#guard selectOwnedDeclaration p1678_1 "xs" == .parameter 0 -- x3
+#guard elaboratesToParameter p1678_1 "xs" == true -- x3
+#guard selectOwnedDeclaration p1678_1 "count" == .property 2
+#guard elaboratesToParameter p1678_1 "count" == false
+#guard selectOwnedDeclaration p1678_1 "Sum" == .property 1
+#guard elaboratesToParameter p1678_1 "Sum" == false
+#guard selectOwnedDeclaration p1678_1 "skip" == .property 2
+#guard elaboratesToParameter p1678_1 "skip" == false
+#guard selectOwnedDeclaration p1678_0 "Sum" == .property 0
+#guard elaboratesToParameter p1678_0 "Sum" == false
+#guard promotes p1678_0 "Sum" == some false
 
--- tutorial/fence-139: Times(0, f, x) = x \n Times(n, f, x) = Times(n - 1, f, f(x)) \n  \n Times(3, {y + 1}, 0)
-def p1688_0 : List OwnerLevel := { parameters := [], properties := ["Times"] } :: prelude
-def p1688_1 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1688_0
-def p1688_2 : List OwnerLevel := { parameters := ["n", "f", "x"], properties := [] } :: p1688_0
-def p1688_3 : List OwnerLevel := { parameters := ["y"], properties := [] } :: p1688_0
-#guard selectOwnedDeclaration p1688_1 "x" == .parameter 0
-#guard elaboratesToParameter p1688_1 "x" == true
-#guard selectOwnedDeclaration p1688_2 "Times" == .property 1
-#guard elaboratesToParameter p1688_2 "Times" == false
-#guard selectOwnedDeclaration p1688_2 "n" == .parameter 0
-#guard elaboratesToParameter p1688_2 "n" == true
-#guard selectOwnedDeclaration p1688_2 "f" == .parameter 0 -- x2
-#guard elaboratesToParameter p1688_2 "f" == true -- x2
-#guard selectOwnedDeclaration p1688_2 "x" == .parameter 0
-#guard elaboratesToParameter p1688_2 "x" == true
-#guard selectOwnedDeclaration p1688_0 "Times" == .property 0
-#guard elaboratesToParameter p1688_0 "Times" == false
-#guard selectOwnedDeclaration p1688_3 "y" == .parameter 0
-#guard elaboratesToParameter p1688_3 "y" == true
-#guard promotes p1688_0 "Times" == some false
-#guard promotes p1688_3 "y" == some true
+-- tutorial/fence-124: Times(0, f, x) = x \n Times(n, f, x) = Times(n - 1, f, f(x)) \n  \n Times(3, {y + 1}, 0)
+def p1679_0 : List OwnerLevel := { parameters := [], properties := ["Times"] } :: prelude
+def p1679_1 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1679_0
+def p1679_2 : List OwnerLevel := { parameters := ["n", "f", "x"], properties := [] } :: p1679_0
+def p1679_3 : List OwnerLevel := { parameters := ["y"], properties := [] } :: p1679_0
+#guard selectOwnedDeclaration p1679_1 "x" == .parameter 0
+#guard elaboratesToParameter p1679_1 "x" == true
+#guard selectOwnedDeclaration p1679_2 "Times" == .property 1
+#guard elaboratesToParameter p1679_2 "Times" == false
+#guard selectOwnedDeclaration p1679_2 "n" == .parameter 0
+#guard elaboratesToParameter p1679_2 "n" == true
+#guard selectOwnedDeclaration p1679_2 "f" == .parameter 0 -- x2
+#guard elaboratesToParameter p1679_2 "f" == true -- x2
+#guard selectOwnedDeclaration p1679_2 "x" == .parameter 0
+#guard elaboratesToParameter p1679_2 "x" == true
+#guard selectOwnedDeclaration p1679_0 "Times" == .property 0
+#guard elaboratesToParameter p1679_0 "Times" == false
+#guard selectOwnedDeclaration p1679_3 "y" == .parameter 0
+#guard elaboratesToParameter p1679_3 "y" == true
+#guard promotes p1679_0 "Times" == some false
+#guard promotes p1679_3 "y" == some true
 #guard familyLiftingSignature? [clause (.sequenceValue [.litInt 0, .bind "f", .bind "x"]), clause (.sequenceValue [.bind "n", .bind "f", .bind "x"])] == some [.capture { name := "n" }, .capture { name := "f" }, .capture { name := "x" }] -- family Times
 
--- tutorial/fence-141: Increment = x + 1 \n Increment(0).repeat(5)
-def p1689_0 : List OwnerLevel := { parameters := [], properties := ["Increment"] } :: prelude
-def p1689_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1689_0
-#guard selectOwnedDeclaration p1689_1 "x" == .parameter 0
-#guard elaboratesToParameter p1689_1 "x" == true
-#guard selectOwnedDeclaration p1689_0 "Increment" == .property 0
-#guard elaboratesToParameter p1689_0 "Increment" == false
-#guard selectOwnedDeclaration p1689_0 "repeat" == .property 1
-#guard elaboratesToParameter p1689_0 "repeat" == false
-#guard promotes p1689_0 "Increment" == some false
-#guard promotes p1689_0 "repeat" == some false
-#guard promotes p1689_1 "x" == some true
+-- tutorial/fence-125: MinDecimalPlaces = 2 \n MaxDecimalPlaces = 2 \n  \n Price('apple') = 0.80 \n Price('bread') = 2.50 \n Price('milk') = 1.20 \n  \n Line((item, quantity)) = Price(item) * quantity \n  \n Order = [('apple', 6), ('bread', 1), ('milk', 2)] \n  \n Subtotal = Order.map(Line).sum \n Discount = if(Subtotal > 5, Subtotal * 0.1, 0) \n  \n Subtotal, Discount, Subtotal - Discount
+def p1680_0 : List OwnerLevel := { parameters := [], properties := ["MinDecimalPlaces", "MaxDecimalPlaces", "Order", "Subtotal", "Discount", "Price", "Line"] } :: prelude
+def p1680_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1680_0
+def p1680_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1680_0
+def p1680_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1680_0
+def p1680_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1680_0
+def p1680_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1680_0
+def p1680_6 : List OwnerLevel := { parameters := [], properties := [] } :: p1680_0
+def p1680_7 : List OwnerLevel := { parameters := [], properties := [] } :: p1680_0
+def p1680_8 : List OwnerLevel := { parameters := [], properties := [] } :: p1680_0
+def p1680_9 : List OwnerLevel := { parameters := ["item", "quantity"], properties := [] } :: p1680_0
+#guard selectOwnedDeclaration p1680_4 "Order" == .property 1
+#guard elaboratesToParameter p1680_4 "Order" == false
+#guard selectOwnedDeclaration p1680_4 "map" == .property 2
+#guard elaboratesToParameter p1680_4 "map" == false
+#guard selectOwnedDeclaration p1680_4 "Line" == .property 1
+#guard elaboratesToParameter p1680_4 "Line" == false
+#guard selectOwnedDeclaration p1680_4 "sum" == .property 2
+#guard elaboratesToParameter p1680_4 "sum" == false
+#guard selectOwnedDeclaration p1680_5 "if" == .property 2
+#guard elaboratesToParameter p1680_5 "if" == false
+#guard selectOwnedDeclaration p1680_5 "Subtotal" == .property 1 -- x2
+#guard elaboratesToParameter p1680_5 "Subtotal" == false -- x2
+#guard selectOwnedDeclaration p1680_9 "Price" == .property 1
+#guard elaboratesToParameter p1680_9 "Price" == false
+#guard selectOwnedDeclaration p1680_9 "item" == .parameter 0
+#guard elaboratesToParameter p1680_9 "item" == true
+#guard selectOwnedDeclaration p1680_9 "quantity" == .parameter 0
+#guard elaboratesToParameter p1680_9 "quantity" == true
+#guard selectOwnedDeclaration p1680_0 "Subtotal" == .property 0 -- x2
+#guard elaboratesToParameter p1680_0 "Subtotal" == false -- x2
+#guard selectOwnedDeclaration p1680_0 "Discount" == .property 0 -- x2
+#guard elaboratesToParameter p1680_0 "Discount" == false -- x2
+#guard promotes p1680_0 "Subtotal" == some false
+#guard promotes p1680_0 "Discount" == some false
+#guard promotes p1680_4 "Order" == some false
+#guard promotes p1680_4 "map" == some false
+#guard promotes p1680_4 "Line" == some false
+#guard promotes p1680_4 "sum" == some false
+#guard promotes p1680_5 "if" == some false
+#guard promotes p1680_5 "Subtotal" == some false
+#guard liftingSlotRole (.builtin .mapBuiltin) 1 true == .callable -- map: Line
+#guard familyLiftingSignature? [clause (.litString "apple"), clause (.litString "bread"), clause (.litString "milk")] == none -- family Price
 
--- tutorial/fence-142: Fibonacci(a, b) = b, a + b \n Final = Fibonacci(0, 1).repeat(10) \n  \n Final \n Final[0]
-def p1690_0 : List OwnerLevel := { parameters := [], properties := ["Final", "Fibonacci"] } :: prelude
-def p1690_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1690_0
-def p1690_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1690_0
-#guard selectOwnedDeclaration p1690_1 "Fibonacci" == .property 1
-#guard elaboratesToParameter p1690_1 "Fibonacci" == false
-#guard selectOwnedDeclaration p1690_1 "repeat" == .property 2
-#guard elaboratesToParameter p1690_1 "repeat" == false
-#guard selectOwnedDeclaration p1690_2 "b" == .parameter 0 -- x2
-#guard elaboratesToParameter p1690_2 "b" == true -- x2
-#guard selectOwnedDeclaration p1690_2 "a" == .parameter 0
-#guard elaboratesToParameter p1690_2 "a" == true
-#guard selectOwnedDeclaration p1690_0 "Final" == .property 0 -- x2
-#guard elaboratesToParameter p1690_0 "Final" == false -- x2
-#guard promotes p1690_0 "Final" == some false
-#guard promotes p1690_1 "Fibonacci" == some false
-#guard promotes p1690_1 "repeat" == some false
+-- tutorial/fence-126: Increment = x + 1 \n Increment(0).repeat(5)
+def p1681_0 : List OwnerLevel := { parameters := [], properties := ["Increment"] } :: prelude
+def p1681_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1681_0
+#guard selectOwnedDeclaration p1681_1 "x" == .parameter 0
+#guard elaboratesToParameter p1681_1 "x" == true
+#guard selectOwnedDeclaration p1681_0 "Increment" == .property 0
+#guard elaboratesToParameter p1681_0 "Increment" == false
+#guard selectOwnedDeclaration p1681_0 "repeat" == .property 1
+#guard elaboratesToParameter p1681_0 "repeat" == false
+#guard promotes p1681_0 "Increment" == some false
+#guard promotes p1681_0 "repeat" == some false
+#guard promotes p1681_1 "x" == some true
 
--- tutorial/fence-143: Power(base, n) = { \n     Step(x) = x * base \n     Step(1).repeat(n) \n } \n  \n Power(2, 10)
-def p1691_0 : List OwnerLevel := { parameters := [], properties := ["Power"] } :: prelude
-def p1691_1 : List OwnerLevel := { parameters := ["base", "n"], properties := ["Step"] } :: p1691_0
-def p1691_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1691_1
-#guard selectOwnedDeclaration p1691_2 "x" == .parameter 0
-#guard elaboratesToParameter p1691_2 "x" == true
-#guard selectOwnedDeclaration p1691_2 "base" == .parameter 1
-#guard elaboratesToParameter p1691_2 "base" == true
-#guard selectOwnedDeclaration p1691_1 "Step" == .property 0
-#guard elaboratesToParameter p1691_1 "Step" == false
-#guard selectOwnedDeclaration p1691_1 "repeat" == .property 2
-#guard elaboratesToParameter p1691_1 "repeat" == false
-#guard selectOwnedDeclaration p1691_1 "n" == .parameter 0
-#guard elaboratesToParameter p1691_1 "n" == true
-#guard selectOwnedDeclaration p1691_0 "Power" == .property 0
-#guard elaboratesToParameter p1691_0 "Power" == false
-#guard promotes p1691_0 "Power" == some false
-#guard ownedConflicts p1691_1 == []
-#guard validOwnedDeclarations p1691_2 == true
+-- tutorial/fence-127: Fibonacci(a, b) = b, a + b \n Final = Fibonacci(0, 1).repeat(10) \n  \n Final \n Final[0]
+def p1682_0 : List OwnerLevel := { parameters := [], properties := ["Final", "Fibonacci"] } :: prelude
+def p1682_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1682_0
+def p1682_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1682_0
+#guard selectOwnedDeclaration p1682_1 "Fibonacci" == .property 1
+#guard elaboratesToParameter p1682_1 "Fibonacci" == false
+#guard selectOwnedDeclaration p1682_1 "repeat" == .property 2
+#guard elaboratesToParameter p1682_1 "repeat" == false
+#guard selectOwnedDeclaration p1682_2 "b" == .parameter 0 -- x2
+#guard elaboratesToParameter p1682_2 "b" == true -- x2
+#guard selectOwnedDeclaration p1682_2 "a" == .parameter 0
+#guard elaboratesToParameter p1682_2 "a" == true
+#guard selectOwnedDeclaration p1682_0 "Final" == .property 0 -- x2
+#guard elaboratesToParameter p1682_0 "Final" == false -- x2
+#guard promotes p1682_0 "Final" == some false
+#guard promotes p1682_1 "Fibonacci" == some false
+#guard promotes p1682_1 "repeat" == some false
 
--- tutorial/fence-144: Countdown = x - 1, x > 1 \n Countdown(5).while
-def p1692_0 : List OwnerLevel := { parameters := [], properties := ["Countdown"] } :: prelude
-def p1692_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1692_0
-#guard selectOwnedDeclaration p1692_1 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p1692_1 "x" == true -- x2
-#guard selectOwnedDeclaration p1692_0 "Countdown" == .property 0
-#guard elaboratesToParameter p1692_0 "Countdown" == false
-#guard selectOwnedDeclaration p1692_0 "while" == .property 1
-#guard elaboratesToParameter p1692_0 "while" == false
-#guard promotes p1692_0 "Countdown" == some false
-#guard promotes p1692_0 "while" == some false
-#guard promotes p1692_1 "x" == some true
+-- tutorial/fence-128: Power(base, n) = { \n     Step(x) = x * base \n     Step(1).repeat(n) \n } \n  \n Power(2, 10)
+def p1683_0 : List OwnerLevel := { parameters := [], properties := ["Power"] } :: prelude
+def p1683_1 : List OwnerLevel := { parameters := ["base", "n"], properties := ["Step"] } :: p1683_0
+def p1683_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1683_1
+#guard selectOwnedDeclaration p1683_2 "x" == .parameter 0
+#guard elaboratesToParameter p1683_2 "x" == true
+#guard selectOwnedDeclaration p1683_2 "base" == .parameter 1
+#guard elaboratesToParameter p1683_2 "base" == true
+#guard selectOwnedDeclaration p1683_1 "Step" == .property 0
+#guard elaboratesToParameter p1683_1 "Step" == false
+#guard selectOwnedDeclaration p1683_1 "repeat" == .property 2
+#guard elaboratesToParameter p1683_1 "repeat" == false
+#guard selectOwnedDeclaration p1683_1 "n" == .parameter 0
+#guard elaboratesToParameter p1683_1 "n" == true
+#guard selectOwnedDeclaration p1683_0 "Power" == .property 0
+#guard elaboratesToParameter p1683_0 "Power" == false
+#guard promotes p1683_0 "Power" == some false
+#guard ownedConflicts p1683_1 == []
+#guard validOwnedDeclarations p1683_2 == true
 
--- tutorial/fence-146: Grow(years, balance) = years + 1, balance * 1.05, balance < 2000 \n Collatz(n, steps) = if(n mod 2 == 0, n / 2, 3 * n + 1), steps + 1, n != 1 \n  \n Grow(0, 1000).while[0] \n Collatz(27, 0).while[1]
-def p1693_0 : List OwnerLevel := { parameters := [], properties := ["Grow", "Collatz"] } :: prelude
-def p1693_1 : List OwnerLevel := { parameters := ["years", "balance"], properties := [] } :: p1693_0
-def p1693_2 : List OwnerLevel := { parameters := ["n", "steps"], properties := [] } :: p1693_0
-#guard selectOwnedDeclaration p1693_1 "years" == .parameter 0
-#guard elaboratesToParameter p1693_1 "years" == true
-#guard selectOwnedDeclaration p1693_1 "balance" == .parameter 0 -- x2
-#guard elaboratesToParameter p1693_1 "balance" == true -- x2
-#guard selectOwnedDeclaration p1693_2 "if" == .property 2
-#guard elaboratesToParameter p1693_2 "if" == false
-#guard selectOwnedDeclaration p1693_2 "n" == .parameter 0 -- x4
-#guard elaboratesToParameter p1693_2 "n" == true -- x4
-#guard selectOwnedDeclaration p1693_2 "steps" == .parameter 0
-#guard elaboratesToParameter p1693_2 "steps" == true
-#guard selectOwnedDeclaration p1693_0 "Grow" == .property 0
-#guard elaboratesToParameter p1693_0 "Grow" == false
-#guard selectOwnedDeclaration p1693_0 "while" == .property 1 -- x2
-#guard elaboratesToParameter p1693_0 "while" == false -- x2
-#guard selectOwnedDeclaration p1693_0 "Collatz" == .property 0
-#guard elaboratesToParameter p1693_0 "Collatz" == false
-#guard promotes p1693_0 "Grow" == some false
-#guard promotes p1693_0 "while" == some false
-#guard promotes p1693_0 "Collatz" == some false
+-- tutorial/fence-129: Countdown = x - 1, x > 1 \n Countdown(5).while
+def p1684_0 : List OwnerLevel := { parameters := [], properties := ["Countdown"] } :: prelude
+def p1684_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1684_0
+#guard selectOwnedDeclaration p1684_1 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1684_1 "x" == true -- x2
+#guard selectOwnedDeclaration p1684_0 "Countdown" == .property 0
+#guard elaboratesToParameter p1684_0 "Countdown" == false
+#guard selectOwnedDeclaration p1684_0 "while" == .property 1
+#guard elaboratesToParameter p1684_0 "while" == false
+#guard promotes p1684_0 "Countdown" == some false
+#guard promotes p1684_0 "while" == some false
+#guard promotes p1684_1 "x" == some true
 
--- tutorial/fence-147: Countdown = x - 1, x > 1 \n Loop(s) = s.while \n  \n Loop(Countdown(5))
-def p1694_0 : List OwnerLevel := { parameters := [], properties := ["Countdown", "Loop"] } :: prelude
-def p1694_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1694_0
-def p1694_2 : List OwnerLevel := { parameters := ["s"], properties := [] } :: p1694_0
-#guard selectOwnedDeclaration p1694_1 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p1694_1 "x" == true -- x2
-#guard selectOwnedDeclaration p1694_2 "s" == .parameter 0
-#guard elaboratesToParameter p1694_2 "s" == true
-#guard selectOwnedDeclaration p1694_2 "while" == .property 2
-#guard elaboratesToParameter p1694_2 "while" == false
-#guard selectOwnedDeclaration p1694_0 "Loop" == .property 0
-#guard elaboratesToParameter p1694_0 "Loop" == false
-#guard selectOwnedDeclaration p1694_0 "Countdown" == .property 0
-#guard elaboratesToParameter p1694_0 "Countdown" == false
-#guard promotes p1694_0 "Loop" == some false
-#guard promotes p1694_0 "Countdown" == some false
-#guard promotes p1694_1 "x" == some true
+-- tutorial/fence-131: Grow(years, balance) = years + 1, balance * 1.05, balance < 2000 \n Collatz(n, steps) = if(n mod 2 == 0, n / 2, 3 * n + 1), steps + 1, n != 1 \n  \n Grow(0, 1000).while[0] \n Collatz(27, 0).while[1]
+def p1685_0 : List OwnerLevel := { parameters := [], properties := ["Grow", "Collatz"] } :: prelude
+def p1685_1 : List OwnerLevel := { parameters := ["years", "balance"], properties := [] } :: p1685_0
+def p1685_2 : List OwnerLevel := { parameters := ["n", "steps"], properties := [] } :: p1685_0
+#guard selectOwnedDeclaration p1685_1 "years" == .parameter 0
+#guard elaboratesToParameter p1685_1 "years" == true
+#guard selectOwnedDeclaration p1685_1 "balance" == .parameter 0 -- x2
+#guard elaboratesToParameter p1685_1 "balance" == true -- x2
+#guard selectOwnedDeclaration p1685_2 "if" == .property 2
+#guard elaboratesToParameter p1685_2 "if" == false
+#guard selectOwnedDeclaration p1685_2 "n" == .parameter 0 -- x4
+#guard elaboratesToParameter p1685_2 "n" == true -- x4
+#guard selectOwnedDeclaration p1685_2 "steps" == .parameter 0
+#guard elaboratesToParameter p1685_2 "steps" == true
+#guard selectOwnedDeclaration p1685_0 "Grow" == .property 0
+#guard elaboratesToParameter p1685_0 "Grow" == false
+#guard selectOwnedDeclaration p1685_0 "while" == .property 1 -- x2
+#guard elaboratesToParameter p1685_0 "while" == false -- x2
+#guard selectOwnedDeclaration p1685_0 "Collatz" == .property 0
+#guard elaboratesToParameter p1685_0 "Collatz" == false
+#guard promotes p1685_0 "Grow" == some false
+#guard promotes p1685_0 "while" == some false
+#guard promotes p1685_0 "Collatz" == some false
 
--- tutorial/fence-148: Add = { x + 10 } \n  \n Add(0).repeat(3)
-def p1695_0 : List OwnerLevel := { parameters := [], properties := ["Add"] } :: prelude
-def p1695_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1695_0
-#guard selectOwnedDeclaration p1695_1 "x" == .parameter 0
-#guard elaboratesToParameter p1695_1 "x" == true
-#guard selectOwnedDeclaration p1695_0 "Add" == .property 0
-#guard elaboratesToParameter p1695_0 "Add" == false
-#guard selectOwnedDeclaration p1695_0 "repeat" == .property 1
-#guard elaboratesToParameter p1695_0 "repeat" == false
-#guard promotes p1695_0 "Add" == some false
-#guard promotes p1695_0 "repeat" == some false
-#guard promotes p1695_1 "x" == some true
+-- tutorial/fence-132: Countdown = x - 1, x > 1 \n Loop(s) = s.while \n  \n Loop(Countdown(5))
+def p1686_0 : List OwnerLevel := { parameters := [], properties := ["Countdown", "Loop"] } :: prelude
+def p1686_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1686_0
+def p1686_2 : List OwnerLevel := { parameters := ["s"], properties := [] } :: p1686_0
+#guard selectOwnedDeclaration p1686_1 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1686_1 "x" == true -- x2
+#guard selectOwnedDeclaration p1686_2 "s" == .parameter 0
+#guard elaboratesToParameter p1686_2 "s" == true
+#guard selectOwnedDeclaration p1686_2 "while" == .property 2
+#guard elaboratesToParameter p1686_2 "while" == false
+#guard selectOwnedDeclaration p1686_0 "Loop" == .property 0
+#guard elaboratesToParameter p1686_0 "Loop" == false
+#guard selectOwnedDeclaration p1686_0 "Countdown" == .property 0
+#guard elaboratesToParameter p1686_0 "Countdown" == false
+#guard promotes p1686_0 "Loop" == some false
+#guard promotes p1686_0 "Countdown" == some false
+#guard promotes p1686_1 "x" == some true
 
--- tutorial/fence-150: Loan(principal, rate, years) = { \n     MonthlyRate = rate / 12 \n     Months = years * 12 \n     principal * MonthlyRate / (1 - (1 + MonthlyRate) ^ -Months) \n } \n  \n Loan(200000, 0.06, 30).round(2)
-def p1696_0 : List OwnerLevel := { parameters := [], properties := ["Loan"] } :: prelude
-def p1696_1 : List OwnerLevel := { parameters := ["principal", "rate", "years"], properties := ["MonthlyRate", "Months"] } :: p1696_0
-def p1696_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1696_1
-def p1696_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1696_1
-#guard selectOwnedDeclaration p1696_2 "rate" == .parameter 1
-#guard elaboratesToParameter p1696_2 "rate" == true
-#guard selectOwnedDeclaration p1696_3 "years" == .parameter 1
-#guard elaboratesToParameter p1696_3 "years" == true
-#guard selectOwnedDeclaration p1696_1 "principal" == .parameter 0
-#guard elaboratesToParameter p1696_1 "principal" == true
-#guard selectOwnedDeclaration p1696_1 "MonthlyRate" == .property 0 -- x2
-#guard elaboratesToParameter p1696_1 "MonthlyRate" == false -- x2
-#guard selectOwnedDeclaration p1696_1 "Months" == .property 0
-#guard elaboratesToParameter p1696_1 "Months" == false
-#guard selectOwnedDeclaration p1696_0 "Loan" == .property 0
-#guard elaboratesToParameter p1696_0 "Loan" == false
-#guard selectOwnedDeclaration p1696_0 "round" == .property 1
-#guard elaboratesToParameter p1696_0 "round" == false
-#guard promotes p1696_0 "Loan" == some false
-#guard ownedConflicts p1696_1 == []
-#guard validOwnedDeclarations p1696_2 == true
-#guard validOwnedDeclarations p1696_3 == true
+-- tutorial/fence-133: AddTen = { x + 10 } \n  \n AddTen(0).repeat(3)
+def p1687_0 : List OwnerLevel := { parameters := [], properties := ["AddTen"] } :: prelude
+def p1687_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1687_0
+#guard selectOwnedDeclaration p1687_1 "x" == .parameter 0
+#guard elaboratesToParameter p1687_1 "x" == true
+#guard selectOwnedDeclaration p1687_0 "AddTen" == .property 0
+#guard elaboratesToParameter p1687_0 "AddTen" == false
+#guard selectOwnedDeclaration p1687_0 "repeat" == .property 1
+#guard elaboratesToParameter p1687_0 "repeat" == false
+#guard promotes p1687_0 "AddTen" == some false
+#guard promotes p1687_0 "repeat" == some false
+#guard promotes p1687_1 "x" == some true
 
--- tutorial/fence-151: Loan(principal, rate, years) = { \n     MonthlyRate = rate / 12 \n     Months = years * 12 \n     principal * MonthlyRate / (1 - (1 + MonthlyRate) ^ -Months) \n } \n  \n Loan.MonthlyRate
-def p1697_0 : List OwnerLevel := { parameters := [], properties := ["Loan"] } :: prelude
-def p1697_1 : List OwnerLevel := { parameters := ["principal", "rate", "years"], properties := ["MonthlyRate", "Months"] } :: p1697_0
-def p1697_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1697_1
-def p1697_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1697_1
-#guard selectOwnedDeclaration p1697_2 "rate" == .parameter 1
-#guard elaboratesToParameter p1697_2 "rate" == true
-#guard selectOwnedDeclaration p1697_3 "years" == .parameter 1
-#guard elaboratesToParameter p1697_3 "years" == true
-#guard selectOwnedDeclaration p1697_1 "principal" == .parameter 0
-#guard elaboratesToParameter p1697_1 "principal" == true
-#guard selectOwnedDeclaration p1697_1 "MonthlyRate" == .property 0 -- x2
-#guard elaboratesToParameter p1697_1 "MonthlyRate" == false -- x2
-#guard selectOwnedDeclaration p1697_1 "Months" == .property 0
-#guard elaboratesToParameter p1697_1 "Months" == false
-#guard selectOwnedDeclaration p1697_0 "Loan" == .property 0
-#guard elaboratesToParameter p1697_0 "Loan" == false
-#guard selectOwnedDeclaration p1697_0 "MonthlyRate" == .none
-#guard elaboratesToParameter p1697_0 "MonthlyRate" == false
-#guard promotes p1697_0 "Loan" == some false
-#guard ownedConflicts p1697_1 == []
-#guard validOwnedDeclarations p1697_2 == true
-#guard validOwnedDeclarations p1697_3 == true
+-- tutorial/fence-135: Loan(principal, rate, years) = { \n     MonthlyRate = rate / 12 \n     Months = years * 12 \n     principal * MonthlyRate / (1 - (1 + MonthlyRate) ^ -Months) \n } \n  \n Loan(200000, 0.06, 30).round(2)
+def p1688_0 : List OwnerLevel := { parameters := [], properties := ["Loan"] } :: prelude
+def p1688_1 : List OwnerLevel := { parameters := ["principal", "rate", "years"], properties := ["MonthlyRate", "Months"] } :: p1688_0
+def p1688_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1688_1
+def p1688_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1688_1
+#guard selectOwnedDeclaration p1688_2 "rate" == .parameter 1
+#guard elaboratesToParameter p1688_2 "rate" == true
+#guard selectOwnedDeclaration p1688_3 "years" == .parameter 1
+#guard elaboratesToParameter p1688_3 "years" == true
+#guard selectOwnedDeclaration p1688_1 "principal" == .parameter 0
+#guard elaboratesToParameter p1688_1 "principal" == true
+#guard selectOwnedDeclaration p1688_1 "MonthlyRate" == .property 0 -- x2
+#guard elaboratesToParameter p1688_1 "MonthlyRate" == false -- x2
+#guard selectOwnedDeclaration p1688_1 "Months" == .property 0
+#guard elaboratesToParameter p1688_1 "Months" == false
+#guard selectOwnedDeclaration p1688_0 "Loan" == .property 0
+#guard elaboratesToParameter p1688_0 "Loan" == false
+#guard selectOwnedDeclaration p1688_0 "round" == .property 1
+#guard elaboratesToParameter p1688_0 "round" == false
+#guard promotes p1688_0 "Loan" == some false
+#guard ownedConflicts p1688_1 == []
+#guard validOwnedDeclarations p1688_2 == true
+#guard validOwnedDeclarations p1688_3 == true
 
--- tutorial/fence-152: Fixed(i) = { \n     T = tick() \n     T + T \n } \n Fresh(i) = { \n     T = tick() \n     T() + T() \n } \n  \n [1, 2].map(Fixed) \n [1, 2].map(Fresh)
-def p1698_0 : List OwnerLevel := { parameters := [], properties := ["Fixed", "Fresh"] } :: prelude
-def p1698_1 : List OwnerLevel := { parameters := ["i"], properties := ["T"] } :: p1698_0
-def p1698_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1698_1
-def p1698_3 : List OwnerLevel := { parameters := ["i"], properties := ["T"] } :: p1698_0
-def p1698_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1698_3
-#guard selectOwnedDeclaration p1698_2 "tick" == .property 3
-#guard elaboratesToParameter p1698_2 "tick" == false
-#guard selectOwnedDeclaration p1698_1 "T" == .property 0 -- x2
-#guard elaboratesToParameter p1698_1 "T" == false -- x2
-#guard selectOwnedDeclaration p1698_4 "tick" == .property 3
-#guard elaboratesToParameter p1698_4 "tick" == false
-#guard selectOwnedDeclaration p1698_3 "T" == .property 0 -- x2
-#guard elaboratesToParameter p1698_3 "T" == false -- x2
-#guard selectOwnedDeclaration p1698_0 "map" == .property 1 -- x2
-#guard elaboratesToParameter p1698_0 "map" == false -- x2
-#guard selectOwnedDeclaration p1698_0 "Fixed" == .property 0
-#guard elaboratesToParameter p1698_0 "Fixed" == false
-#guard selectOwnedDeclaration p1698_0 "Fresh" == .property 0
-#guard elaboratesToParameter p1698_0 "Fresh" == false
-#guard promotes p1698_0 "map" == some false
-#guard promotes p1698_0 "Fixed" == some false
-#guard promotes p1698_0 "Fresh" == some false
-#guard promotes p1698_2 "tick" == some false
-#guard promotes p1698_4 "tick" == some false
+-- tutorial/fence-136: Loan(principal, rate, years) = { \n     MonthlyRate = rate / 12 \n     Months = years * 12 \n     principal * MonthlyRate / (1 - (1 + MonthlyRate) ^ -Months) \n } \n  \n Loan.MonthlyRate
+def p1689_0 : List OwnerLevel := { parameters := [], properties := ["Loan"] } :: prelude
+def p1689_1 : List OwnerLevel := { parameters := ["principal", "rate", "years"], properties := ["MonthlyRate", "Months"] } :: p1689_0
+def p1689_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1689_1
+def p1689_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1689_1
+#guard selectOwnedDeclaration p1689_2 "rate" == .parameter 1
+#guard elaboratesToParameter p1689_2 "rate" == true
+#guard selectOwnedDeclaration p1689_3 "years" == .parameter 1
+#guard elaboratesToParameter p1689_3 "years" == true
+#guard selectOwnedDeclaration p1689_1 "principal" == .parameter 0
+#guard elaboratesToParameter p1689_1 "principal" == true
+#guard selectOwnedDeclaration p1689_1 "MonthlyRate" == .property 0 -- x2
+#guard elaboratesToParameter p1689_1 "MonthlyRate" == false -- x2
+#guard selectOwnedDeclaration p1689_1 "Months" == .property 0
+#guard elaboratesToParameter p1689_1 "Months" == false
+#guard selectOwnedDeclaration p1689_0 "Loan" == .property 0
+#guard elaboratesToParameter p1689_0 "Loan" == false
+#guard selectOwnedDeclaration p1689_0 "MonthlyRate" == .none
+#guard elaboratesToParameter p1689_0 "MonthlyRate" == false
+#guard promotes p1689_0 "Loan" == some false
+#guard ownedConflicts p1689_1 == []
+#guard validOwnedDeclarations p1689_2 == true
+#guard validOwnedDeclarations p1689_3 == true
+
+-- tutorial/fence-137: Fixed(i) = { \n     T = tick() \n     T + T \n } \n Fresh(i) = { \n     T = tick() \n     T() + T() \n } \n  \n [1, 2].map(Fixed) \n [1, 2].map(Fresh)
+def p1690_0 : List OwnerLevel := { parameters := [], properties := ["Fixed", "Fresh"] } :: prelude
+def p1690_1 : List OwnerLevel := { parameters := ["i"], properties := ["T"] } :: p1690_0
+def p1690_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1690_1
+def p1690_3 : List OwnerLevel := { parameters := ["i"], properties := ["T"] } :: p1690_0
+def p1690_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1690_3
+#guard selectOwnedDeclaration p1690_2 "tick" == .property 3
+#guard elaboratesToParameter p1690_2 "tick" == false
+#guard selectOwnedDeclaration p1690_1 "T" == .property 0 -- x2
+#guard elaboratesToParameter p1690_1 "T" == false -- x2
+#guard selectOwnedDeclaration p1690_4 "tick" == .property 3
+#guard elaboratesToParameter p1690_4 "tick" == false
+#guard selectOwnedDeclaration p1690_3 "T" == .property 0 -- x2
+#guard elaboratesToParameter p1690_3 "T" == false -- x2
+#guard selectOwnedDeclaration p1690_0 "map" == .property 1 -- x2
+#guard elaboratesToParameter p1690_0 "map" == false -- x2
+#guard selectOwnedDeclaration p1690_0 "Fixed" == .property 0
+#guard elaboratesToParameter p1690_0 "Fixed" == false
+#guard selectOwnedDeclaration p1690_0 "Fresh" == .property 0
+#guard elaboratesToParameter p1690_0 "Fresh" == false
+#guard promotes p1690_0 "map" == some false
+#guard promotes p1690_0 "Fixed" == some false
+#guard promotes p1690_0 "Fresh" == some false
+#guard promotes p1690_2 "tick" == some false
+#guard promotes p1690_4 "tick" == some false
 #guard liftingSlotRole (.builtin .mapBuiltin) 1 true == .callable -- map: Fixed
 #guard liftingSlotRole (.builtin .mapBuiltin) 1 true == .callable -- map: Fresh
-#guard ownedConflicts p1698_1 == []
-#guard ownedConflicts p1698_3 == []
-#guard validOwnedDeclarations p1698_2 == true
-#guard validOwnedDeclarations p1698_4 == true
+#guard ownedConflicts p1690_1 == []
+#guard ownedConflicts p1690_3 == []
+#guard validOwnedDeclarations p1690_2 == true
+#guard validOwnedDeclarations p1690_4 == true
 
--- tutorial/fence-153: Counter(i) = { \n     T = tick() \n     T \n } \n  \n Counter(0) \n Counter(0) \n Counter.T \n Counter.T
-def p1699_0 : List OwnerLevel := { parameters := [], properties := ["Counter"] } :: prelude
-def p1699_1 : List OwnerLevel := { parameters := ["i"], properties := ["T"] } :: p1699_0
-def p1699_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1699_1
-#guard selectOwnedDeclaration p1699_2 "tick" == .property 3
-#guard elaboratesToParameter p1699_2 "tick" == false
-#guard selectOwnedDeclaration p1699_1 "T" == .property 0
-#guard elaboratesToParameter p1699_1 "T" == false
-#guard selectOwnedDeclaration p1699_0 "Counter" == .property 0 -- x4
-#guard elaboratesToParameter p1699_0 "Counter" == false -- x4
-#guard selectOwnedDeclaration p1699_0 "T" == .none -- x2
-#guard elaboratesToParameter p1699_0 "T" == false -- x2
-#guard promotes p1699_0 "Counter" == some false
-#guard promotes p1699_2 "tick" == some false
-#guard ownedConflicts p1699_1 == []
-#guard validOwnedDeclarations p1699_2 == true
+-- tutorial/fence-138: X = 10 \n Inner = { \n     X = 99 \n     X \n } \n  \n Inner \n X
+def p1691_0 : List OwnerLevel := { parameters := [], properties := ["X", "Inner"] } :: prelude
+def p1691_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1691_0
+def p1691_2 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p1691_0
+def p1691_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1691_2
+#guard selectOwnedDeclaration p1691_2 "X" == .property 0
+#guard elaboratesToParameter p1691_2 "X" == false
+#guard selectOwnedDeclaration p1691_0 "Inner" == .property 0
+#guard elaboratesToParameter p1691_0 "Inner" == false
+#guard selectOwnedDeclaration p1691_0 "X" == .property 0
+#guard elaboratesToParameter p1691_0 "X" == false
+#guard promotes p1691_0 "Inner" == some false
+#guard promotes p1691_0 "X" == some false
+#guard promotes p1691_2 "X" == some false
 
--- tutorial/fence-154: X = 10 \n Inner = { \n     X = 99 \n     X \n } \n  \n Inner \n X
-def p1700_0 : List OwnerLevel := { parameters := [], properties := ["X", "Inner"] } :: prelude
-def p1700_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1700_0
-def p1700_2 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p1700_0
-def p1700_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1700_2
-#guard selectOwnedDeclaration p1700_2 "X" == .property 0
-#guard elaboratesToParameter p1700_2 "X" == false
-#guard selectOwnedDeclaration p1700_0 "Inner" == .property 0
-#guard elaboratesToParameter p1700_0 "Inner" == false
-#guard selectOwnedDeclaration p1700_0 "X" == .property 0
-#guard elaboratesToParameter p1700_0 "X" == false
-#guard promotes p1700_0 "Inner" == some false
-#guard promotes p1700_0 "X" == some false
-#guard promotes p1700_2 "X" == some false
+-- tutorial/fence-140: Area = width * height \n Report(width, height) = { \n     Doubled = Area * 2 \n     Doubled + 1 \n } \n Report(3, 4)
+def p1692_0 : List OwnerLevel := { parameters := [], properties := ["Area", "Report"] } :: prelude
+def p1692_1 : List OwnerLevel := { parameters := ["width", "height"], properties := [] } :: p1692_0
+def p1692_2 : List OwnerLevel := { parameters := ["width", "height"], properties := ["Doubled"] } :: p1692_0
+def p1692_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1692_2
+#guard selectOwnedDeclaration p1692_1 "width" == .parameter 0
+#guard elaboratesToParameter p1692_1 "width" == true
+#guard selectOwnedDeclaration p1692_1 "height" == .parameter 0
+#guard elaboratesToParameter p1692_1 "height" == true
+#guard selectOwnedDeclaration p1692_3 "Area" == .property 2
+#guard elaboratesToParameter p1692_3 "Area" == false
+#guard selectOwnedDeclaration p1692_2 "Doubled" == .property 0
+#guard elaboratesToParameter p1692_2 "Doubled" == false
+#guard selectOwnedDeclaration p1692_0 "Report" == .property 0
+#guard elaboratesToParameter p1692_0 "Report" == false
+#guard promotes p1692_0 "Report" == some false
+#guard promotes p1692_1 "width" == some true
+#guard promotes p1692_1 "height" == some true
+#guard promotes p1692_3 "Area" == some false
+#guard forwardingSource p1692_3 true "width" == .capturedParameter 1
+#guard forwardingSource p1692_3 true "height" == .capturedParameter 1
+#guard ownedConflicts p1692_2 == []
+#guard validOwnedDeclarations p1692_3 == true
 
--- tutorial/fence-156: Area = width * height \n Report(width, height) = { \n     Doubled = Area * 2 \n     Doubled + 1 \n } \n Report(3, 4)
-def p1701_0 : List OwnerLevel := { parameters := [], properties := ["Area", "Report"] } :: prelude
-def p1701_1 : List OwnerLevel := { parameters := ["width", "height"], properties := [] } :: p1701_0
-def p1701_2 : List OwnerLevel := { parameters := ["width", "height"], properties := ["Doubled"] } :: p1701_0
-def p1701_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1701_2
-#guard selectOwnedDeclaration p1701_1 "width" == .parameter 0
-#guard elaboratesToParameter p1701_1 "width" == true
-#guard selectOwnedDeclaration p1701_1 "height" == .parameter 0
-#guard elaboratesToParameter p1701_1 "height" == true
-#guard selectOwnedDeclaration p1701_3 "Area" == .property 2
-#guard elaboratesToParameter p1701_3 "Area" == false
-#guard selectOwnedDeclaration p1701_2 "Doubled" == .property 0
-#guard elaboratesToParameter p1701_2 "Doubled" == false
-#guard selectOwnedDeclaration p1701_0 "Report" == .property 0
-#guard elaboratesToParameter p1701_0 "Report" == false
-#guard promotes p1701_0 "Report" == some false
-#guard promotes p1701_1 "width" == some true
-#guard promotes p1701_1 "height" == some true
-#guard promotes p1701_3 "Area" == some false
-#guard forwardingSource p1701_3 true "width" == .capturedParameter 1
-#guard forwardingSource p1701_3 true "height" == .capturedParameter 1
-#guard ownedConflicts p1701_2 == []
-#guard validOwnedDeclarations p1701_3 == true
+-- tutorial/fence-141: Physics = { \n     G = 9.81 \n     FallTime(h) = sqrt(2 * h / G) \n } \n  \n Physics.G \n Physics.FallTime(20).round(3)
+def p1693_0 : List OwnerLevel := { parameters := [], properties := ["Physics"] } :: prelude
+def p1693_1 : List OwnerLevel := { parameters := [], properties := ["G", "FallTime"] } :: p1693_0
+def p1693_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1693_1
+def p1693_3 : List OwnerLevel := { parameters := ["h"], properties := [] } :: p1693_1
+#guard selectOwnedDeclaration p1693_3 "sqrt" == .property 3
+#guard elaboratesToParameter p1693_3 "sqrt" == false
+#guard selectOwnedDeclaration p1693_3 "h" == .parameter 0
+#guard elaboratesToParameter p1693_3 "h" == true
+#guard selectOwnedDeclaration p1693_3 "G" == .property 1
+#guard elaboratesToParameter p1693_3 "G" == false
+#guard selectOwnedDeclaration p1693_0 "Physics" == .property 0 -- x2
+#guard elaboratesToParameter p1693_0 "Physics" == false -- x2
+#guard selectOwnedDeclaration p1693_0 "G" == .none
+#guard elaboratesToParameter p1693_0 "G" == false
+#guard selectOwnedDeclaration p1693_0 "FallTime" == .none
+#guard elaboratesToParameter p1693_0 "FallTime" == false
+#guard selectOwnedDeclaration p1693_0 "round" == .property 1
+#guard elaboratesToParameter p1693_0 "round" == false
+#guard promotes p1693_0 "Physics" == some false
 
--- tutorial/fence-157: [1, 2].map{ \n     Sq = n * n \n     Sq + Sq \n }
-def p1702_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-def p1702_1 : List OwnerLevel := { parameters := [], properties := ["Sq"], forwarded := ["n"] } :: p1702_0
-def p1702_2 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p1702_1
-#guard selectOwnedDeclaration p1702_0 "map" == .property 1
-#guard elaboratesToParameter p1702_0 "map" == false
-#guard selectOwnedDeclaration p1702_2 "n" == .parameter 0 -- x2
-#guard elaboratesToParameter p1702_2 "n" == true -- x2
-#guard selectOwnedDeclaration p1702_1 "Sq" == .property 0 -- x2
-#guard elaboratesToParameter p1702_1 "Sq" == false -- x2
-#guard promotes p1702_0 "map" == some false
-#guard promotes p1702_1 "Sq" == some false
-#guard forwardingSource p1702_1 true "n" == .forwardedParameter -- x2
-#guard promotes p1702_2 "n" == some true
-#guard ownedConflicts p1702_1 == []
-#guard validOwnedDeclarations p1702_2 == true
-
--- tutorial/fence-158: Physics = { \n     public G = 9.81 \n     public FallTime(h) = sqrt(2 * h / G) \n } \n  \n Physics.G \n Physics.FallTime(20).round(3)
-def p1703_0 : List OwnerLevel := { parameters := [], properties := ["Physics"] } :: prelude
-def p1703_1 : List OwnerLevel := { parameters := [], properties := ["G", "FallTime"] } :: p1703_0
-def p1703_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1703_1
-def p1703_3 : List OwnerLevel := { parameters := ["h"], properties := [] } :: p1703_1
-#guard selectOwnedDeclaration p1703_3 "sqrt" == .property 3
-#guard elaboratesToParameter p1703_3 "sqrt" == false
-#guard selectOwnedDeclaration p1703_3 "h" == .parameter 0
-#guard elaboratesToParameter p1703_3 "h" == true
-#guard selectOwnedDeclaration p1703_3 "G" == .property 1
-#guard elaboratesToParameter p1703_3 "G" == false
-#guard selectOwnedDeclaration p1703_0 "Physics" == .property 0 -- x2
-#guard elaboratesToParameter p1703_0 "Physics" == false -- x2
-#guard selectOwnedDeclaration p1703_0 "G" == .none
-#guard elaboratesToParameter p1703_0 "G" == false
-#guard selectOwnedDeclaration p1703_0 "FallTime" == .none
-#guard elaboratesToParameter p1703_0 "FallTime" == false
-#guard selectOwnedDeclaration p1703_0 "round" == .property 1
-#guard elaboratesToParameter p1703_0 "round" == false
-#guard promotes p1703_0 "Physics" == some false
-
--- tutorial/fence-160: open Physics \n Physics = { \n     public G = 9.81 \n     public FallTime(h) = sqrt(2 * h / G) \n } \n  \n FallTime(20).round(3)
-def p1704_0 : List OwnerLevel := { parameters := [], properties := ["Physics"] } :: prelude
-def p1704_1 : List OwnerLevel := { parameters := [], properties := ["G", "FallTime"] } :: p1704_0
-def p1704_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1704_1
-def p1704_3 : List OwnerLevel := { parameters := ["h"], properties := [] } :: p1704_1
-#guard selectOwnedDeclaration p1704_0 "Physics" == .property 0
-#guard openHead? (elaborateOpenHead p1704_0 "Physics") == some (false, "Physics")
-#guard selectOwnedDeclaration p1704_3 "sqrt" == .property 3
-#guard elaboratesToParameter p1704_3 "sqrt" == false
-#guard selectOwnedDeclaration p1704_3 "h" == .parameter 0
-#guard elaboratesToParameter p1704_3 "h" == true
-#guard selectOwnedDeclaration p1704_3 "G" == .property 1
-#guard elaboratesToParameter p1704_3 "G" == false
-#guard selectOwnedDeclaration p1704_0 "FallTime" == .none
-#guard elaboratesToParameter p1704_0 "FallTime" == false
-#guard selectOwnedDeclaration p1704_0 "round" == .property 1
-#guard elaboratesToParameter p1704_0 "round" == false
+-- tutorial/fence-143: open Physics \n Physics = { \n     public G = 9.81 \n     public FallTime(h) = sqrt(2 * h / G) \n } \n  \n FallTime(20).round(3)
+def p1694_0 : List OwnerLevel := { parameters := [], properties := ["Physics"] } :: prelude
+def p1694_1 : List OwnerLevel := { parameters := [], properties := ["G", "FallTime"] } :: p1694_0
+def p1694_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1694_1
+def p1694_3 : List OwnerLevel := { parameters := ["h"], properties := [] } :: p1694_1
+#guard selectOwnedDeclaration p1694_0 "Physics" == .property 0
+#guard openHead? (elaborateOpenHead p1694_0 "Physics") == some (false, "Physics")
+#guard selectOwnedDeclaration p1694_3 "sqrt" == .property 3
+#guard elaboratesToParameter p1694_3 "sqrt" == false
+#guard selectOwnedDeclaration p1694_3 "h" == .parameter 0
+#guard elaboratesToParameter p1694_3 "h" == true
+#guard selectOwnedDeclaration p1694_3 "G" == .property 1
+#guard elaboratesToParameter p1694_3 "G" == false
+#guard selectOwnedDeclaration p1694_0 "FallTime" == .none
+#guard elaboratesToParameter p1694_0 "FallTime" == false
+#guard selectOwnedDeclaration p1694_0 "round" == .property 1
+#guard elaboratesToParameter p1694_0 "round" == false
 -- promotion at level 0 of "FallTime" omitted (the program holds a literal the Lean core cannot spell)
 
--- tutorial/fence-162: open A, B \n A = { \n     public X = 1 \n     public P = 10 \n } \n B = { \n     public X = 2 \n     public Q = 20 \n } \n  \n P + Q + A.X + B.X
-def p1705_0 : List OwnerLevel := { parameters := [], properties := ["A", "B"] } :: prelude
-def p1705_1 : List OwnerLevel := { parameters := [], properties := ["X", "P"] } :: p1705_0
-def p1705_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1705_1
-def p1705_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1705_1
-def p1705_4 : List OwnerLevel := { parameters := [], properties := ["X", "Q"] } :: p1705_0
-def p1705_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1705_4
-def p1705_6 : List OwnerLevel := { parameters := [], properties := [] } :: p1705_4
-def p1705_tree : Expr :=
+-- tutorial/fence-145: open A, B \n A = { \n     public X = 1 \n     public P = 10 \n } \n B = { \n     public X = 2 \n     public Q = 20 \n } \n  \n P + Q + A.X + B.X
+def p1695_0 : List OwnerLevel := { parameters := [], properties := ["A", "B"] } :: prelude
+def p1695_1 : List OwnerLevel := { parameters := [], properties := ["X", "P"] } :: p1695_0
+def p1695_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1695_1
+def p1695_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1695_1
+def p1695_4 : List OwnerLevel := { parameters := [], properties := ["X", "Q"] } :: p1695_0
+def p1695_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1695_4
+def p1695_6 : List OwnerLevel := { parameters := [], properties := [] } :: p1695_4
+def p1695_tree : Expr :=
   .algorithmExpr (alg [] [.resolve "A", .resolve "B"] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1]), publicProp "P" (alg [] [] [] [.num 10])] []), privateProp "B" (alg [] [] [publicProp "X" (alg [] [] [] [.num 2]), publicProp "Q" (alg [] [] [] [.num 20])] [])] [(.binary .add (.binary .add (.binary .add (.resolve "P") (.resolve "Q")) (.dotCall (.resolve "A") "X" none)) (.dotCall (.resolve "B") "X" none))])
-def p1705_s0 : Option (Algorithm × EvalCtx) := treeSite p1705_tree []
-#guard selectOwnedDeclaration p1705_0 "A" == .property 0 -- x2
-#guard openHead? (elaborateOpenHead p1705_0 "A") == some (false, "A")
-#guard selectOwnedDeclaration p1705_0 "B" == .property 0 -- x2
-#guard openHead? (elaborateOpenHead p1705_0 "B") == some (false, "B")
-#guard selectOwnedDeclaration p1705_0 "P" == .none
-#guard elaboratesToParameter p1705_0 "P" == false
-#guard selectOwnedDeclaration p1705_0 "Q" == .none
-#guard elaboratesToParameter p1705_0 "Q" == false
-#guard elaboratesToParameter p1705_0 "A" == false
-#guard selectOwnedDeclaration p1705_0 "X" == .none -- x2
-#guard elaboratesToParameter p1705_0 "X" == false -- x2
-#guard elaboratesToParameter p1705_0 "B" == false
-#guard promotesIn p1705_s0 "P" == some false
-#guard promotesIn p1705_s0 "Q" == some false
-#guard promotesIn p1705_s0 "A" == some false
-#guard ambiguousAt p1705_s0 "X"
-#guard promotesIn p1705_s0 "B" == some false
+def p1695_s0 : Option (Algorithm × EvalCtx) := treeSite p1695_tree []
+#guard selectOwnedDeclaration p1695_0 "A" == .property 0 -- x2
+#guard openHead? (elaborateOpenHead p1695_0 "A") == some (false, "A")
+#guard selectOwnedDeclaration p1695_0 "B" == .property 0 -- x2
+#guard openHead? (elaborateOpenHead p1695_0 "B") == some (false, "B")
+#guard selectOwnedDeclaration p1695_0 "P" == .none
+#guard elaboratesToParameter p1695_0 "P" == false
+#guard selectOwnedDeclaration p1695_0 "Q" == .none
+#guard elaboratesToParameter p1695_0 "Q" == false
+#guard elaboratesToParameter p1695_0 "A" == false
+#guard selectOwnedDeclaration p1695_0 "X" == .none -- x2
+#guard elaboratesToParameter p1695_0 "X" == false -- x2
+#guard elaboratesToParameter p1695_0 "B" == false
+#guard promotesIn p1695_s0 "P" == some false
+#guard promotesIn p1695_s0 "Q" == some false
+#guard promotesIn p1695_s0 "A" == some false
+#guard ambiguousAt p1695_s0 "X"
+#guard promotesIn p1695_s0 "B" == some false
 
--- tutorial/fence-171: Box = { \n     public G = { \n         public K = 7 \n         n * 2 \n     } \n } \n Use(b) = { \n     A = b.G \n     A(9), A.K \n } \n  \n Use(Box)
-def p1706_0 : List OwnerLevel := { parameters := [], properties := ["Box", "Use"] } :: prelude
-def p1706_1 : List OwnerLevel := { parameters := [], properties := ["G"] } :: p1706_0
-def p1706_2 : List OwnerLevel := { parameters := ["n"], properties := ["K"] } :: p1706_1
-def p1706_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1706_2
-def p1706_4 : List OwnerLevel := { parameters := ["b"], properties := ["A"] } :: p1706_0
-def p1706_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1706_4
-#guard selectOwnedDeclaration p1706_2 "n" == .parameter 0
-#guard elaboratesToParameter p1706_2 "n" == true
-#guard selectOwnedDeclaration p1706_5 "b" == .parameter 1
-#guard elaboratesToParameter p1706_5 "b" == true
-#guard selectOwnedDeclaration p1706_5 "G" == .none
-#guard elaboratesToParameter p1706_5 "G" == false
-#guard selectOwnedDeclaration p1706_4 "A" == .property 0 -- x2
-#guard elaboratesToParameter p1706_4 "A" == false -- x2
-#guard selectOwnedDeclaration p1706_4 "K" == .none
-#guard elaboratesToParameter p1706_4 "K" == false
-#guard selectOwnedDeclaration p1706_0 "Use" == .property 0
-#guard elaboratesToParameter p1706_0 "Use" == false
-#guard selectOwnedDeclaration p1706_0 "Box" == .property 0
-#guard elaboratesToParameter p1706_0 "Box" == false
-#guard promotes p1706_0 "Use" == some false
-#guard promotes p1706_0 "Box" == some false
-#guard promotes p1706_2 "n" == some true
-#guard ownedConflicts p1706_2 == []
-#guard ownedConflicts p1706_4 == []
-#guard validOwnedDeclarations p1706_3 == true
-#guard validOwnedDeclarations p1706_5 == true
+-- tutorial/fence-149: Sub(y, x) = y - x \n ByName(x, y) = Sub \n Written(x, y) = Sub(x, y) \n  \n ByName(10, 3) \n Written(10, 3)
+def p1696_0 : List OwnerLevel := { parameters := [], properties := ["Sub", "ByName", "Written"] } :: prelude
+def p1696_1 : List OwnerLevel := { parameters := ["y", "x"], properties := [] } :: p1696_0
+def p1696_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1696_0
+def p1696_3 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1696_0
+#guard selectOwnedDeclaration p1696_1 "y" == .parameter 0
+#guard elaboratesToParameter p1696_1 "y" == true
+#guard selectOwnedDeclaration p1696_1 "x" == .parameter 0
+#guard elaboratesToParameter p1696_1 "x" == true
+#guard selectOwnedDeclaration p1696_2 "Sub" == .property 1
+#guard elaboratesToParameter p1696_2 "Sub" == false
+#guard selectOwnedDeclaration p1696_3 "Sub" == .property 1
+#guard elaboratesToParameter p1696_3 "Sub" == false
+#guard selectOwnedDeclaration p1696_3 "x" == .parameter 0
+#guard elaboratesToParameter p1696_3 "x" == true
+#guard selectOwnedDeclaration p1696_3 "y" == .parameter 0
+#guard elaboratesToParameter p1696_3 "y" == true
+#guard selectOwnedDeclaration p1696_0 "ByName" == .property 0
+#guard elaboratesToParameter p1696_0 "ByName" == false
+#guard selectOwnedDeclaration p1696_0 "Written" == .property 0
+#guard elaboratesToParameter p1696_0 "Written" == false
+#guard promotes p1696_0 "ByName" == some false
+#guard promotes p1696_0 "Written" == some false
+#guard forwardingSource p1696_2 false "y" == .ownParameter
+#guard forwardingSource p1696_2 false "x" == .ownParameter
 
--- tutorial/fence-172: Count = if(tick() > 3, start, Count + 1) \n  \n Count(10)
-def p1707_0 : List OwnerLevel := { parameters := [], properties := ["Count"] } :: prelude
-def p1707_1 : List OwnerLevel := { parameters := ["start"], properties := [] } :: p1707_0
-#guard selectOwnedDeclaration p1707_1 "if" == .property 2
-#guard elaboratesToParameter p1707_1 "if" == false
-#guard selectOwnedDeclaration p1707_1 "tick" == .property 2
-#guard elaboratesToParameter p1707_1 "tick" == false
-#guard selectOwnedDeclaration p1707_1 "start" == .parameter 0
-#guard elaboratesToParameter p1707_1 "start" == true
-#guard selectOwnedDeclaration p1707_1 "Count" == .property 1
-#guard elaboratesToParameter p1707_1 "Count" == false
-#guard selectOwnedDeclaration p1707_0 "Count" == .property 0
-#guard elaboratesToParameter p1707_0 "Count" == false
-#guard promotes p1707_0 "Count" == some false
-#guard promotes p1707_1 "if" == some false
-#guard promotes p1707_1 "tick" == some false
-#guard promotes p1707_1 "start" == some true
-#guard promotes p1707_1 "Count" == some false
-#guard forwardingSource p1707_1 true "start" == .ownParameter
+-- tutorial/fence-154: Prefixed = s * 100 + ~x * 10 + ~y \n Prefixed(1, 2, 3)
+def p1697_0 : List OwnerLevel := { parameters := [], properties := ["Prefixed"] } :: prelude
+def p1697_1 : List OwnerLevel := { parameters := ["x", "y", "s"], properties := [] } :: p1697_0
+#guard selectOwnedDeclaration p1697_1 "s" == .parameter 0
+#guard elaboratesToParameter p1697_1 "s" == true
+#guard selectOwnedDeclaration p1697_1 "x" == .parameter 0
+#guard elaboratesToParameter p1697_1 "x" == true
+#guard selectOwnedDeclaration p1697_1 "y" == .parameter 0
+#guard elaboratesToParameter p1697_1 "y" == true
+#guard selectOwnedDeclaration p1697_0 "Prefixed" == .property 0
+#guard elaboratesToParameter p1697_0 "Prefixed" == false
+#guard promotes p1697_0 "Prefixed" == some false
+#guard promotes p1697_1 "s" == some true
+#guard promotes p1697_1 "x" == some true
+#guard promotes p1697_1 "y" == some true
 
--- tutorial/fence-174: Prefixed = s * 100 + ~x * 10 + ~y \n Prefixed(1, 2, 3)
-def p1708_0 : List OwnerLevel := { parameters := [], properties := ["Prefixed"] } :: prelude
-def p1708_1 : List OwnerLevel := { parameters := ["x", "y", "s"], properties := [] } :: p1708_0
-#guard selectOwnedDeclaration p1708_1 "s" == .parameter 0
-#guard elaboratesToParameter p1708_1 "s" == true
-#guard selectOwnedDeclaration p1708_1 "x" == .parameter 0
-#guard elaboratesToParameter p1708_1 "x" == true
-#guard selectOwnedDeclaration p1708_1 "y" == .parameter 0
-#guard elaboratesToParameter p1708_1 "y" == true
-#guard selectOwnedDeclaration p1708_0 "Prefixed" == .property 0
-#guard elaboratesToParameter p1708_0 "Prefixed" == false
-#guard promotes p1708_0 "Prefixed" == some false
-#guard promotes p1708_1 "s" == some true
-#guard promotes p1708_1 "x" == some true
-#guard promotes p1708_1 "y" == some true
+-- tutorial/fence-155: Postfixed = s~ * 100 + x~ * 10 + y \n Postfixed(1, 2, 3)
+def p1698_0 : List OwnerLevel := { parameters := [], properties := ["Postfixed"] } :: prelude
+def p1698_1 : List OwnerLevel := { parameters := ["y", "s", "x"], properties := [] } :: p1698_0
+#guard selectOwnedDeclaration p1698_1 "s" == .parameter 0
+#guard elaboratesToParameter p1698_1 "s" == true
+#guard selectOwnedDeclaration p1698_1 "x" == .parameter 0
+#guard elaboratesToParameter p1698_1 "x" == true
+#guard selectOwnedDeclaration p1698_1 "y" == .parameter 0
+#guard elaboratesToParameter p1698_1 "y" == true
+#guard selectOwnedDeclaration p1698_0 "Postfixed" == .property 0
+#guard elaboratesToParameter p1698_0 "Postfixed" == false
+#guard promotes p1698_0 "Postfixed" == some false
+#guard promotes p1698_1 "s" == some true
+#guard promotes p1698_1 "x" == some true
+#guard promotes p1698_1 "y" == some true
 
--- tutorial/fence-175: Postfixed = s~ * 100 + x~ * 10 + y \n Postfixed(1, 2, 3)
-def p1709_0 : List OwnerLevel := { parameters := [], properties := ["Postfixed"] } :: prelude
-def p1709_1 : List OwnerLevel := { parameters := ["y", "s", "x"], properties := [] } :: p1709_0
-#guard selectOwnedDeclaration p1709_1 "s" == .parameter 0
-#guard elaboratesToParameter p1709_1 "s" == true
-#guard selectOwnedDeclaration p1709_1 "x" == .parameter 0
-#guard elaboratesToParameter p1709_1 "x" == true
-#guard selectOwnedDeclaration p1709_1 "y" == .parameter 0
-#guard elaboratesToParameter p1709_1 "y" == true
-#guard selectOwnedDeclaration p1709_0 "Postfixed" == .property 0
-#guard elaboratesToParameter p1709_0 "Postfixed" == false
-#guard promotes p1709_0 "Postfixed" == some false
-#guard promotes p1709_1 "s" == some true
-#guard promotes p1709_1 "x" == some true
-#guard promotes p1709_1 "y" == some true
+-- tutorial/fence-156: K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d \n K(1, 2, 3, 4)
+def p1699_0 : List OwnerLevel := { parameters := [], properties := ["K"] } :: prelude
+def p1699_1 : List OwnerLevel := { parameters := ["c", "a", "d", "b"], properties := [] } :: p1699_0
+#guard selectOwnedDeclaration p1699_1 "a" == .parameter 0
+#guard elaboratesToParameter p1699_1 "a" == true
+#guard selectOwnedDeclaration p1699_1 "b" == .parameter 0
+#guard elaboratesToParameter p1699_1 "b" == true
+#guard selectOwnedDeclaration p1699_1 "c" == .parameter 0
+#guard elaboratesToParameter p1699_1 "c" == true
+#guard selectOwnedDeclaration p1699_1 "d" == .parameter 0
+#guard elaboratesToParameter p1699_1 "d" == true
+#guard selectOwnedDeclaration p1699_0 "K" == .property 0
+#guard elaboratesToParameter p1699_0 "K" == false
+#guard promotes p1699_0 "K" == some false
+#guard promotes p1699_1 "a" == some true
+#guard promotes p1699_1 "b" == some true
+#guard promotes p1699_1 "c" == some true
+#guard promotes p1699_1 "d" == some true
 
--- tutorial/fence-176: K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d \n K(1, 2, 3, 4)
-def p1710_0 : List OwnerLevel := { parameters := [], properties := ["K"] } :: prelude
-def p1710_1 : List OwnerLevel := { parameters := ["c", "a", "d", "b"], properties := [] } :: p1710_0
-#guard selectOwnedDeclaration p1710_1 "a" == .parameter 0
-#guard elaboratesToParameter p1710_1 "a" == true
-#guard selectOwnedDeclaration p1710_1 "b" == .parameter 0
-#guard elaboratesToParameter p1710_1 "b" == true
-#guard selectOwnedDeclaration p1710_1 "c" == .parameter 0
-#guard elaboratesToParameter p1710_1 "c" == true
-#guard selectOwnedDeclaration p1710_1 "d" == .parameter 0
-#guard elaboratesToParameter p1710_1 "d" == true
-#guard selectOwnedDeclaration p1710_0 "K" == .property 0
-#guard elaboratesToParameter p1710_0 "K" == false
-#guard promotes p1710_0 "K" == some false
-#guard promotes p1710_1 "a" == some true
-#guard promotes p1710_1 "b" == some true
-#guard promotes p1710_1 "c" == some true
-#guard promotes p1710_1 "d" == some true
+-- tutorial/fence-157: Point(x, y)* = x, y \n Add(x, y) = x + y \n  \n Point(1, 2) \n Add(Point(3, 4)) \n [Point(5, 6), Point(7, 8)]
+def p1700_0 : List OwnerLevel := { parameters := [], properties := ["Point", "Add"] } :: prelude
+def p1700_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1700_0
+def p1700_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1700_0
+#guard selectOwnedDeclaration p1700_1 "x" == .parameter 0
+#guard elaboratesToParameter p1700_1 "x" == true
+#guard selectOwnedDeclaration p1700_1 "y" == .parameter 0
+#guard elaboratesToParameter p1700_1 "y" == true
+#guard selectOwnedDeclaration p1700_2 "x" == .parameter 0
+#guard elaboratesToParameter p1700_2 "x" == true
+#guard selectOwnedDeclaration p1700_2 "y" == .parameter 0
+#guard elaboratesToParameter p1700_2 "y" == true
+#guard selectOwnedDeclaration p1700_0 "Point" == .property 0 -- x4
+#guard elaboratesToParameter p1700_0 "Point" == false -- x4
+#guard selectOwnedDeclaration p1700_0 "Add" == .property 0
+#guard elaboratesToParameter p1700_0 "Add" == false
+#guard promotes p1700_0 "Point" == some false
+#guard promotes p1700_0 "Add" == some false
 
--- tutorial/fence-177: Square(x) = x * x \n Capture(meta operation) = operation \n  \n R = Capture(Square(5)) \n R.Invoke()
-def p1711_0 : List OwnerLevel := { parameters := [], properties := ["R", "Square", "Capture"] } :: prelude
-def p1711_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1711_0
-def p1711_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1711_0
-def p1711_3 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1711_0
-#guard selectOwnedDeclaration p1711_1 "Capture" == .property 1
-#guard elaboratesToParameter p1711_1 "Capture" == false
-#guard selectOwnedDeclaration p1711_1 "Square" == .property 1
-#guard elaboratesToParameter p1711_1 "Square" == false
-#guard selectOwnedDeclaration p1711_2 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p1711_2 "x" == true -- x2
-#guard selectOwnedDeclaration p1711_3 "operation" == .parameter 0
-#guard elaboratesToParameter p1711_3 "operation" == true
-#guard selectOwnedDeclaration p1711_0 "R" == .property 0
-#guard elaboratesToParameter p1711_0 "R" == false
-#guard selectOwnedDeclaration p1711_0 "Invoke" == .none
-#guard elaboratesToParameter p1711_0 "Invoke" == false
-#guard promotes p1711_0 "R" == some false
-#guard promotes p1711_1 "Capture" == some false
-#guard promotes p1711_1 "Square" == some false
+-- tutorial/fence-158: Point(x, y)* = x, y \n  \n Point(1, 2)[0] \n count({ Point(1, 2) })
+def p1701_0 : List OwnerLevel := { parameters := [], properties := ["Point"] } :: prelude
+def p1701_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1701_0
+def p1701_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1701_0
+#guard selectOwnedDeclaration p1701_1 "x" == .parameter 0
+#guard elaboratesToParameter p1701_1 "x" == true
+#guard selectOwnedDeclaration p1701_1 "y" == .parameter 0
+#guard elaboratesToParameter p1701_1 "y" == true
+#guard selectOwnedDeclaration p1701_0 "Point" == .property 0
+#guard elaboratesToParameter p1701_0 "Point" == false
+#guard selectOwnedDeclaration p1701_0 "count" == .property 1
+#guard elaboratesToParameter p1701_0 "count" == false
+#guard selectOwnedDeclaration p1701_2 "Point" == .property 1
+#guard elaboratesToParameter p1701_2 "Point" == false
+#guard promotes p1701_0 "Point" == some false
+#guard promotes p1701_0 "count" == some false
+#guard promotes p1701_2 "Point" == some false
 
--- tutorial/fence-178: Square(x) = x * x \n Capture(meta operation) = operation \n Twice(r) = r.Invoke() + r.Invoke() \n  \n Twice(Capture(Square(3)))
-def p1712_0 : List OwnerLevel := { parameters := [], properties := ["Square", "Capture", "Twice"] } :: prelude
-def p1712_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1712_0
-def p1712_2 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1712_0
-def p1712_3 : List OwnerLevel := { parameters := ["r"], properties := [] } :: p1712_0
-#guard selectOwnedDeclaration p1712_1 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p1712_1 "x" == true -- x2
-#guard selectOwnedDeclaration p1712_2 "operation" == .parameter 0
-#guard elaboratesToParameter p1712_2 "operation" == true
-#guard selectOwnedDeclaration p1712_3 "r" == .parameter 0 -- x2
-#guard elaboratesToParameter p1712_3 "r" == true -- x2
-#guard selectOwnedDeclaration p1712_3 "Invoke" == .none -- x2
-#guard elaboratesToParameter p1712_3 "Invoke" == false -- x2
-#guard selectOwnedDeclaration p1712_0 "Twice" == .property 0
-#guard elaboratesToParameter p1712_0 "Twice" == false
-#guard selectOwnedDeclaration p1712_0 "Capture" == .property 0
-#guard elaboratesToParameter p1712_0 "Capture" == false
-#guard selectOwnedDeclaration p1712_0 "Square" == .property 0
-#guard elaboratesToParameter p1712_0 "Square" == false
-#guard promotes p1712_0 "Twice" == some false
-#guard promotes p1712_0 "Capture" == some false
-#guard promotes p1712_0 "Square" == some false
+-- tutorial/fence-159: Point(x, y)* = x, y \n Apply(f) = [f(1, 2)] \n Also = Point \n  \n Apply(Point) \n [Also(3, 4)]
+def p1702_0 : List OwnerLevel := { parameters := [], properties := ["Also", "Point", "Apply"] } :: prelude
+def p1702_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1702_0
+def p1702_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1702_0
+def p1702_3 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1702_0
+#guard selectOwnedDeclaration p1702_1 "Point" == .property 1
+#guard elaboratesToParameter p1702_1 "Point" == false
+#guard selectOwnedDeclaration p1702_2 "x" == .parameter 0
+#guard elaboratesToParameter p1702_2 "x" == true
+#guard selectOwnedDeclaration p1702_2 "y" == .parameter 0
+#guard elaboratesToParameter p1702_2 "y" == true
+#guard selectOwnedDeclaration p1702_3 "f" == .parameter 0
+#guard elaboratesToParameter p1702_3 "f" == true
+#guard selectOwnedDeclaration p1702_0 "Apply" == .property 0
+#guard elaboratesToParameter p1702_0 "Apply" == false
+#guard selectOwnedDeclaration p1702_0 "Point" == .property 0
+#guard elaboratesToParameter p1702_0 "Point" == false
+#guard selectOwnedDeclaration p1702_0 "Also" == .property 0
+#guard elaboratesToParameter p1702_0 "Also" == false
+#guard promotes p1702_0 "Apply" == some false
+#guard promotes p1702_0 "Point" == some false
+#guard promotes p1702_0 "Also" == some false
+#guard promotes p1702_1 "Point" == some false
+#guard liftingSlotRole .user 0 true == .callable -- Apply: Point
 
--- tutorial/fence-179: Square(x) = x * x \n Capture(meta operation) = operation \n  \n Capture(Square(5))
-def p1713_0 : List OwnerLevel := { parameters := [], properties := ["Square", "Capture"] } :: prelude
-def p1713_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1713_0
-def p1713_2 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1713_0
-#guard selectOwnedDeclaration p1713_1 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p1713_1 "x" == true -- x2
-#guard selectOwnedDeclaration p1713_2 "operation" == .parameter 0
-#guard elaboratesToParameter p1713_2 "operation" == true
-#guard selectOwnedDeclaration p1713_0 "Capture" == .property 0
-#guard elaboratesToParameter p1713_0 "Capture" == false
-#guard selectOwnedDeclaration p1713_0 "Square" == .property 0
-#guard elaboratesToParameter p1713_0 "Square" == false
-#guard promotes p1713_0 "Capture" == some false
-#guard promotes p1713_0 "Square" == some false
+-- tutorial/fence-160: Fib(a, b)* = b, a + b \n Step(a, b) = Fib(a, b) \n  \n Fib(0, 1) \n Step(0, 1).repeat(10)
+def p1703_0 : List OwnerLevel := { parameters := [], properties := ["Fib", "Step"] } :: prelude
+def p1703_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1703_0
+def p1703_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1703_0
+#guard selectOwnedDeclaration p1703_1 "b" == .parameter 0 -- x2
+#guard elaboratesToParameter p1703_1 "b" == true -- x2
+#guard selectOwnedDeclaration p1703_1 "a" == .parameter 0
+#guard elaboratesToParameter p1703_1 "a" == true
+#guard selectOwnedDeclaration p1703_2 "Fib" == .property 1
+#guard elaboratesToParameter p1703_2 "Fib" == false
+#guard selectOwnedDeclaration p1703_2 "a" == .parameter 0
+#guard elaboratesToParameter p1703_2 "a" == true
+#guard selectOwnedDeclaration p1703_2 "b" == .parameter 0
+#guard elaboratesToParameter p1703_2 "b" == true
+#guard selectOwnedDeclaration p1703_0 "Fib" == .property 0
+#guard elaboratesToParameter p1703_0 "Fib" == false
+#guard selectOwnedDeclaration p1703_0 "Step" == .property 0
+#guard elaboratesToParameter p1703_0 "Step" == false
+#guard selectOwnedDeclaration p1703_0 "repeat" == .property 1
+#guard elaboratesToParameter p1703_0 "repeat" == false
+#guard promotes p1703_0 "Fib" == some false
+#guard promotes p1703_0 "Step" == some false
+#guard promotes p1703_0 "repeat" == some false
 
--- tutorial/fence-180: Add(x, y) = x + y \n Capture(meta operation) = operation \n  \n R = Capture(Add(10, 20)) \n R.Arguments.count, R.Arguments[0], R.Arguments[1]
-def p1714_0 : List OwnerLevel := { parameters := [], properties := ["R", "Add", "Capture"] } :: prelude
-def p1714_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1714_0
-def p1714_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1714_0
-def p1714_3 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1714_0
-#guard selectOwnedDeclaration p1714_1 "Capture" == .property 1
-#guard elaboratesToParameter p1714_1 "Capture" == false
-#guard selectOwnedDeclaration p1714_1 "Add" == .property 1
-#guard elaboratesToParameter p1714_1 "Add" == false
-#guard selectOwnedDeclaration p1714_2 "x" == .parameter 0
-#guard elaboratesToParameter p1714_2 "x" == true
-#guard selectOwnedDeclaration p1714_2 "y" == .parameter 0
-#guard elaboratesToParameter p1714_2 "y" == true
-#guard selectOwnedDeclaration p1714_3 "operation" == .parameter 0
-#guard elaboratesToParameter p1714_3 "operation" == true
-#guard selectOwnedDeclaration p1714_0 "R" == .property 0 -- x3
-#guard elaboratesToParameter p1714_0 "R" == false -- x3
-#guard selectOwnedDeclaration p1714_0 "Arguments" == .none -- x3
-#guard elaboratesToParameter p1714_0 "Arguments" == false -- x3
-#guard selectOwnedDeclaration p1714_0 "count" == .property 1
-#guard elaboratesToParameter p1714_0 "count" == false
-#guard promotes p1714_0 "R" == some false
-#guard promotes p1714_0 "count" == some false
-#guard promotes p1714_1 "Capture" == some false
-#guard promotes p1714_1 "Add" == some false
+-- tutorial/fence-161: Square(x) = x * x \n Capture(meta operation) = operation \n  \n R = Capture(Square(5)) \n R.Invoke()
+def p1704_0 : List OwnerLevel := { parameters := [], properties := ["R", "Square", "Capture"] } :: prelude
+def p1704_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1704_0
+def p1704_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1704_0
+def p1704_3 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1704_0
+#guard selectOwnedDeclaration p1704_1 "Capture" == .property 1
+#guard elaboratesToParameter p1704_1 "Capture" == false
+#guard selectOwnedDeclaration p1704_1 "Square" == .property 1
+#guard elaboratesToParameter p1704_1 "Square" == false
+#guard selectOwnedDeclaration p1704_2 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1704_2 "x" == true -- x2
+#guard selectOwnedDeclaration p1704_3 "operation" == .parameter 0
+#guard elaboratesToParameter p1704_3 "operation" == true
+#guard selectOwnedDeclaration p1704_0 "R" == .property 0
+#guard elaboratesToParameter p1704_0 "R" == false
+#guard selectOwnedDeclaration p1704_0 "Invoke" == .none
+#guard elaboratesToParameter p1704_0 "Invoke" == false
+#guard promotes p1704_0 "R" == some false
+#guard promotes p1704_1 "Capture" == some false
+#guard promotes p1704_1 "Square" == some false
 
--- tutorial/fence-181: Add(x, y) = x + y \n First(x, y) = x \n Capture(meta operation) = operation \n  \n R = Capture(Add(5, 1 / 0)) \n R.Arguments.count, First(R.Arguments*)
-def p1715_0 : List OwnerLevel := { parameters := [], properties := ["R", "Add", "First", "Capture"] } :: prelude
-def p1715_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1715_0
-def p1715_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1715_0
-def p1715_3 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1715_0
-def p1715_4 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1715_0
-#guard selectOwnedDeclaration p1715_1 "Capture" == .property 1
-#guard elaboratesToParameter p1715_1 "Capture" == false
-#guard selectOwnedDeclaration p1715_1 "Add" == .property 1
-#guard elaboratesToParameter p1715_1 "Add" == false
-#guard selectOwnedDeclaration p1715_2 "x" == .parameter 0
-#guard elaboratesToParameter p1715_2 "x" == true
-#guard selectOwnedDeclaration p1715_2 "y" == .parameter 0
-#guard elaboratesToParameter p1715_2 "y" == true
-#guard selectOwnedDeclaration p1715_3 "x" == .parameter 0
-#guard elaboratesToParameter p1715_3 "x" == true
-#guard selectOwnedDeclaration p1715_4 "operation" == .parameter 0
-#guard elaboratesToParameter p1715_4 "operation" == true
-#guard selectOwnedDeclaration p1715_0 "R" == .property 0 -- x2
-#guard elaboratesToParameter p1715_0 "R" == false -- x2
-#guard selectOwnedDeclaration p1715_0 "Arguments" == .none -- x2
-#guard elaboratesToParameter p1715_0 "Arguments" == false -- x2
-#guard selectOwnedDeclaration p1715_0 "count" == .property 1
-#guard elaboratesToParameter p1715_0 "count" == false
-#guard selectOwnedDeclaration p1715_0 "First" == .property 0
-#guard elaboratesToParameter p1715_0 "First" == false
-#guard promotes p1715_0 "R" == some false
-#guard promotes p1715_0 "count" == some false
-#guard promotes p1715_0 "First" == some false
-#guard promotes p1715_1 "Capture" == some false
-#guard promotes p1715_1 "Add" == some false
+-- tutorial/fence-162: Square(x) = x * x \n Capture(meta operation) = operation \n RunTwice(r) = r.Invoke() + r.Invoke() \n  \n RunTwice(Capture(Square(3)))
+def p1705_0 : List OwnerLevel := { parameters := [], properties := ["Square", "Capture", "RunTwice"] } :: prelude
+def p1705_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1705_0
+def p1705_2 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1705_0
+def p1705_3 : List OwnerLevel := { parameters := ["r"], properties := [] } :: p1705_0
+#guard selectOwnedDeclaration p1705_1 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1705_1 "x" == true -- x2
+#guard selectOwnedDeclaration p1705_2 "operation" == .parameter 0
+#guard elaboratesToParameter p1705_2 "operation" == true
+#guard selectOwnedDeclaration p1705_3 "r" == .parameter 0 -- x2
+#guard elaboratesToParameter p1705_3 "r" == true -- x2
+#guard selectOwnedDeclaration p1705_3 "Invoke" == .none -- x2
+#guard elaboratesToParameter p1705_3 "Invoke" == false -- x2
+#guard selectOwnedDeclaration p1705_0 "RunTwice" == .property 0
+#guard elaboratesToParameter p1705_0 "RunTwice" == false
+#guard selectOwnedDeclaration p1705_0 "Capture" == .property 0
+#guard elaboratesToParameter p1705_0 "Capture" == false
+#guard selectOwnedDeclaration p1705_0 "Square" == .property 0
+#guard elaboratesToParameter p1705_0 "Square" == false
+#guard promotes p1705_0 "RunTwice" == some false
+#guard promotes p1705_0 "Capture" == some false
+#guard promotes p1705_0 "Square" == some false
 
--- tutorial/fence-182: Square(x) = x * x \n Capture(meta operation) = operation \n  \n R = Capture(Square(5)) \n R.Algorithm(8), R.Invoke()
-def p1716_0 : List OwnerLevel := { parameters := [], properties := ["R", "Square", "Capture"] } :: prelude
-def p1716_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1716_0
-def p1716_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1716_0
-def p1716_3 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1716_0
-#guard selectOwnedDeclaration p1716_1 "Capture" == .property 1
-#guard elaboratesToParameter p1716_1 "Capture" == false
-#guard selectOwnedDeclaration p1716_1 "Square" == .property 1
-#guard elaboratesToParameter p1716_1 "Square" == false
-#guard selectOwnedDeclaration p1716_2 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p1716_2 "x" == true -- x2
-#guard selectOwnedDeclaration p1716_3 "operation" == .parameter 0
-#guard elaboratesToParameter p1716_3 "operation" == true
-#guard selectOwnedDeclaration p1716_0 "R" == .property 0 -- x2
-#guard elaboratesToParameter p1716_0 "R" == false -- x2
-#guard selectOwnedDeclaration p1716_0 "Algorithm" == .none
-#guard elaboratesToParameter p1716_0 "Algorithm" == false
-#guard selectOwnedDeclaration p1716_0 "Invoke" == .none
-#guard elaboratesToParameter p1716_0 "Invoke" == false
-#guard promotes p1716_0 "R" == some false
-#guard promotes p1716_1 "Capture" == some false
-#guard promotes p1716_1 "Square" == some false
+-- tutorial/fence-163: Square(x) = x * x \n Capture(meta operation) = operation \n  \n Capture(Square(5))
+def p1706_0 : List OwnerLevel := { parameters := [], properties := ["Square", "Capture"] } :: prelude
+def p1706_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1706_0
+def p1706_2 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1706_0
+#guard selectOwnedDeclaration p1706_1 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1706_1 "x" == true -- x2
+#guard selectOwnedDeclaration p1706_2 "operation" == .parameter 0
+#guard elaboratesToParameter p1706_2 "operation" == true
+#guard selectOwnedDeclaration p1706_0 "Capture" == .property 0
+#guard elaboratesToParameter p1706_0 "Capture" == false
+#guard selectOwnedDeclaration p1706_0 "Square" == .property 0
+#guard elaboratesToParameter p1706_0 "Square" == false
+#guard promotes p1706_0 "Capture" == some false
+#guard promotes p1706_0 "Square" == some false
 
--- tutorial/fence-183: Square(x) = x * x \n Apply(f, x) = f(x) \n Capture(meta operation) = operation \n  \n R = Capture(Square(5)) \n Apply(R.Algorithm, 7), [1, 2, 3].map(R.Algorithm), R.Algorithm(R.Arguments*)
-def p1717_0 : List OwnerLevel := { parameters := [], properties := ["R", "Square", "Apply", "Capture"] } :: prelude
-def p1717_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1717_0
-def p1717_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1717_0
-def p1717_3 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1717_0
-def p1717_4 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1717_0
-#guard selectOwnedDeclaration p1717_1 "Capture" == .property 1
-#guard elaboratesToParameter p1717_1 "Capture" == false
-#guard selectOwnedDeclaration p1717_1 "Square" == .property 1
-#guard elaboratesToParameter p1717_1 "Square" == false
-#guard selectOwnedDeclaration p1717_2 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p1717_2 "x" == true -- x2
-#guard selectOwnedDeclaration p1717_3 "f" == .parameter 0
-#guard elaboratesToParameter p1717_3 "f" == true
-#guard selectOwnedDeclaration p1717_3 "x" == .parameter 0
-#guard elaboratesToParameter p1717_3 "x" == true
-#guard selectOwnedDeclaration p1717_4 "operation" == .parameter 0
-#guard elaboratesToParameter p1717_4 "operation" == true
-#guard selectOwnedDeclaration p1717_0 "Apply" == .property 0
-#guard elaboratesToParameter p1717_0 "Apply" == false
-#guard selectOwnedDeclaration p1717_0 "R" == .property 0 -- x4
-#guard elaboratesToParameter p1717_0 "R" == false -- x4
-#guard selectOwnedDeclaration p1717_0 "Algorithm" == .none -- x3
-#guard elaboratesToParameter p1717_0 "Algorithm" == false -- x3
-#guard selectOwnedDeclaration p1717_0 "map" == .property 1
-#guard elaboratesToParameter p1717_0 "map" == false
-#guard selectOwnedDeclaration p1717_0 "Arguments" == .none
-#guard elaboratesToParameter p1717_0 "Arguments" == false
-#guard promotes p1717_0 "Apply" == some false
-#guard promotes p1717_0 "R" == some false
-#guard promotes p1717_0 "map" == some false
-#guard promotes p1717_1 "Capture" == some false
-#guard promotes p1717_1 "Square" == some false
+-- tutorial/fence-164: Add(x, y) = x + y \n Capture(meta operation) = operation \n  \n R = Capture(Add(10, 20)) \n R.Arguments.count, R.Arguments[0], R.Arguments[1]
+def p1707_0 : List OwnerLevel := { parameters := [], properties := ["R", "Add", "Capture"] } :: prelude
+def p1707_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1707_0
+def p1707_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1707_0
+def p1707_3 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1707_0
+#guard selectOwnedDeclaration p1707_1 "Capture" == .property 1
+#guard elaboratesToParameter p1707_1 "Capture" == false
+#guard selectOwnedDeclaration p1707_1 "Add" == .property 1
+#guard elaboratesToParameter p1707_1 "Add" == false
+#guard selectOwnedDeclaration p1707_2 "x" == .parameter 0
+#guard elaboratesToParameter p1707_2 "x" == true
+#guard selectOwnedDeclaration p1707_2 "y" == .parameter 0
+#guard elaboratesToParameter p1707_2 "y" == true
+#guard selectOwnedDeclaration p1707_3 "operation" == .parameter 0
+#guard elaboratesToParameter p1707_3 "operation" == true
+#guard selectOwnedDeclaration p1707_0 "R" == .property 0 -- x3
+#guard elaboratesToParameter p1707_0 "R" == false -- x3
+#guard selectOwnedDeclaration p1707_0 "Arguments" == .none -- x3
+#guard elaboratesToParameter p1707_0 "Arguments" == false -- x3
+#guard selectOwnedDeclaration p1707_0 "count" == .property 1
+#guard elaboratesToParameter p1707_0 "count" == false
+#guard promotes p1707_0 "R" == some false
+#guard promotes p1707_0 "count" == some false
+#guard promotes p1707_1 "Capture" == some false
+#guard promotes p1707_1 "Add" == some false
 
--- tutorial/fence-185: Ignore(*xs) = 10 \n Ignore(1 / 0, 2)
-def p1718_0 : List OwnerLevel := { parameters := [], properties := ["Ignore"] } :: prelude
-def p1718_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1718_0
-#guard selectOwnedDeclaration p1718_0 "Ignore" == .property 0
-#guard elaboratesToParameter p1718_0 "Ignore" == false
-#guard promotes p1718_0 "Ignore" == some false
+-- tutorial/fence-165: Add(x, y) = x + y \n First(x, y) = x \n Capture(meta operation) = operation \n  \n R = Capture(Add(5, 1 / 0)) \n R.Arguments.count, First(R.Arguments*)
+def p1708_0 : List OwnerLevel := { parameters := [], properties := ["R", "Add", "First", "Capture"] } :: prelude
+def p1708_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1708_0
+def p1708_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1708_0
+def p1708_3 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p1708_0
+def p1708_4 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1708_0
+#guard selectOwnedDeclaration p1708_1 "Capture" == .property 1
+#guard elaboratesToParameter p1708_1 "Capture" == false
+#guard selectOwnedDeclaration p1708_1 "Add" == .property 1
+#guard elaboratesToParameter p1708_1 "Add" == false
+#guard selectOwnedDeclaration p1708_2 "x" == .parameter 0
+#guard elaboratesToParameter p1708_2 "x" == true
+#guard selectOwnedDeclaration p1708_2 "y" == .parameter 0
+#guard elaboratesToParameter p1708_2 "y" == true
+#guard selectOwnedDeclaration p1708_3 "x" == .parameter 0
+#guard elaboratesToParameter p1708_3 "x" == true
+#guard selectOwnedDeclaration p1708_4 "operation" == .parameter 0
+#guard elaboratesToParameter p1708_4 "operation" == true
+#guard selectOwnedDeclaration p1708_0 "R" == .property 0 -- x2
+#guard elaboratesToParameter p1708_0 "R" == false -- x2
+#guard selectOwnedDeclaration p1708_0 "Arguments" == .none -- x2
+#guard elaboratesToParameter p1708_0 "Arguments" == false -- x2
+#guard selectOwnedDeclaration p1708_0 "count" == .property 1
+#guard elaboratesToParameter p1708_0 "count" == false
+#guard selectOwnedDeclaration p1708_0 "First" == .property 0
+#guard elaboratesToParameter p1708_0 "First" == false
+#guard promotes p1708_0 "R" == some false
+#guard promotes p1708_0 "count" == some false
+#guard promotes p1708_0 "First" == some false
+#guard promotes p1708_1 "Capture" == some false
+#guard promotes p1708_1 "Add" == some false
 
--- tutorial/fence-187: First(0, a, b) = a \n First(n, a, b) = b \n  \n First(0, 10, 1 / 0)
-def p1719_0 : List OwnerLevel := { parameters := [], properties := ["First"] } :: prelude
-def p1719_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1719_0
-def p1719_2 : List OwnerLevel := { parameters := ["n", "a", "b"], properties := [] } :: p1719_0
-#guard selectOwnedDeclaration p1719_1 "a" == .parameter 0
-#guard elaboratesToParameter p1719_1 "a" == true
-#guard selectOwnedDeclaration p1719_2 "b" == .parameter 0
-#guard elaboratesToParameter p1719_2 "b" == true
-#guard selectOwnedDeclaration p1719_0 "First" == .property 0
-#guard elaboratesToParameter p1719_0 "First" == false
-#guard promotes p1719_0 "First" == some false
-#guard familyLiftingSignature? [clause (.sequenceValue [.litInt 0, .bind "a", .bind "b"]), clause (.sequenceValue [.bind "n", .bind "a", .bind "b"])] == some [.capture { name := "n" }, .capture { name := "a" }, .capture { name := "b" }] -- family First
+-- tutorial/fence-166: Square(x) = x * x \n Capture(meta operation) = operation \n  \n R = Capture(Square(5)) \n R.Algorithm(8), R.Invoke()
+def p1709_0 : List OwnerLevel := { parameters := [], properties := ["R", "Square", "Capture"] } :: prelude
+def p1709_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1709_0
+def p1709_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1709_0
+def p1709_3 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1709_0
+#guard selectOwnedDeclaration p1709_1 "Capture" == .property 1
+#guard elaboratesToParameter p1709_1 "Capture" == false
+#guard selectOwnedDeclaration p1709_1 "Square" == .property 1
+#guard elaboratesToParameter p1709_1 "Square" == false
+#guard selectOwnedDeclaration p1709_2 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1709_2 "x" == true -- x2
+#guard selectOwnedDeclaration p1709_3 "operation" == .parameter 0
+#guard elaboratesToParameter p1709_3 "operation" == true
+#guard selectOwnedDeclaration p1709_0 "R" == .property 0 -- x2
+#guard elaboratesToParameter p1709_0 "R" == false -- x2
+#guard selectOwnedDeclaration p1709_0 "Algorithm" == .none
+#guard elaboratesToParameter p1709_0 "Algorithm" == false
+#guard selectOwnedDeclaration p1709_0 "Invoke" == .none
+#guard elaboratesToParameter p1709_0 "Invoke" == false
+#guard promotes p1709_0 "R" == some false
+#guard promotes p1709_1 "Capture" == some false
+#guard promotes p1709_1 "Square" == some false
 
--- tutorial/fence-188: Show(x, x) = x.string \n  \n Show(1.5, 1.50) \n Show(1.50, 1.5)
-def p1720_0 : List OwnerLevel := { parameters := [], properties := ["Show"] } :: prelude
-def p1720_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1720_0
-#guard selectOwnedDeclaration p1720_1 "x" == .parameter 0
-#guard elaboratesToParameter p1720_1 "x" == true
-#guard selectOwnedDeclaration p1720_1 "string" == .none
-#guard elaboratesToParameter p1720_1 "string" == false
-#guard selectOwnedDeclaration p1720_0 "Show" == .property 0 -- x2
-#guard elaboratesToParameter p1720_0 "Show" == false -- x2
-#guard promotes p1720_0 "Show" == some false
+-- tutorial/fence-167: Square(x) = x * x \n Apply(f, x) = f(x) \n Capture(meta operation) = operation \n  \n R = Capture(Square(5)) \n Apply(R.Algorithm, 7), [1, 2, 3].map(R.Algorithm), R.Algorithm(R.Arguments*)
+def p1710_0 : List OwnerLevel := { parameters := [], properties := ["R", "Square", "Apply", "Capture"] } :: prelude
+def p1710_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1710_0
+def p1710_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1710_0
+def p1710_3 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1710_0
+def p1710_4 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1710_0
+#guard selectOwnedDeclaration p1710_1 "Capture" == .property 1
+#guard elaboratesToParameter p1710_1 "Capture" == false
+#guard selectOwnedDeclaration p1710_1 "Square" == .property 1
+#guard elaboratesToParameter p1710_1 "Square" == false
+#guard selectOwnedDeclaration p1710_2 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1710_2 "x" == true -- x2
+#guard selectOwnedDeclaration p1710_3 "f" == .parameter 0
+#guard elaboratesToParameter p1710_3 "f" == true
+#guard selectOwnedDeclaration p1710_3 "x" == .parameter 0
+#guard elaboratesToParameter p1710_3 "x" == true
+#guard selectOwnedDeclaration p1710_4 "operation" == .parameter 0
+#guard elaboratesToParameter p1710_4 "operation" == true
+#guard selectOwnedDeclaration p1710_0 "Apply" == .property 0
+#guard elaboratesToParameter p1710_0 "Apply" == false
+#guard selectOwnedDeclaration p1710_0 "R" == .property 0 -- x4
+#guard elaboratesToParameter p1710_0 "R" == false -- x4
+#guard selectOwnedDeclaration p1710_0 "Algorithm" == .none -- x3
+#guard elaboratesToParameter p1710_0 "Algorithm" == false -- x3
+#guard selectOwnedDeclaration p1710_0 "map" == .property 1
+#guard elaboratesToParameter p1710_0 "map" == false
+#guard selectOwnedDeclaration p1710_0 "Arguments" == .none
+#guard elaboratesToParameter p1710_0 "Arguments" == false
+#guard promotes p1710_0 "Apply" == some false
+#guard promotes p1710_0 "R" == some false
+#guard promotes p1710_0 "map" == some false
+#guard promotes p1710_1 "Capture" == some false
+#guard promotes p1710_1 "Square" == some false
 
--- tutorial/fence-189: Inc(x) = x + 1 \n Safe(z) = if(false, abs(Inc), z) \n  \n Safe(7)
-def p1721_0 : List OwnerLevel := { parameters := [], properties := ["Inc", "Safe"] } :: prelude
-def p1721_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1721_0
-def p1721_2 : List OwnerLevel := { parameters := ["z"], properties := [] } :: p1721_0
-#guard selectOwnedDeclaration p1721_1 "x" == .parameter 0
-#guard elaboratesToParameter p1721_1 "x" == true
-#guard selectOwnedDeclaration p1721_2 "if" == .property 2
-#guard elaboratesToParameter p1721_2 "if" == false
-#guard selectOwnedDeclaration p1721_2 "abs" == .property 2
-#guard elaboratesToParameter p1721_2 "abs" == false
-#guard selectOwnedDeclaration p1721_2 "Inc" == .property 1
-#guard elaboratesToParameter p1721_2 "Inc" == false
-#guard selectOwnedDeclaration p1721_2 "z" == .parameter 0
-#guard elaboratesToParameter p1721_2 "z" == true
-#guard selectOwnedDeclaration p1721_0 "Safe" == .property 0
-#guard elaboratesToParameter p1721_0 "Safe" == false
-#guard promotes p1721_0 "Safe" == some false
+-- tutorial/fence-168: Step(x) = x + 1, x < 3 \n RunIfPositive(meta operation) = if( \n     operation.Arguments[0] > 0, \n     operation.Algorithm(operation.Arguments*).while, \n     0 \n ) \n  \n Step(0).RunIfPositive \n Step(1).RunIfPositive
+def p1711_0 : List OwnerLevel := { parameters := [], properties := ["Step", "RunIfPositive"] } :: prelude
+def p1711_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1711_0
+def p1711_2 : List OwnerLevel := { parameters := ["operation"], properties := [] } :: p1711_0
+#guard selectOwnedDeclaration p1711_1 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p1711_1 "x" == true -- x2
+#guard selectOwnedDeclaration p1711_2 "if" == .property 2
+#guard elaboratesToParameter p1711_2 "if" == false
+#guard selectOwnedDeclaration p1711_2 "operation" == .parameter 0 -- x3
+#guard elaboratesToParameter p1711_2 "operation" == true -- x3
+#guard selectOwnedDeclaration p1711_2 "Arguments" == .none -- x2
+#guard elaboratesToParameter p1711_2 "Arguments" == false -- x2
+#guard selectOwnedDeclaration p1711_2 "Algorithm" == .none
+#guard elaboratesToParameter p1711_2 "Algorithm" == false
+#guard selectOwnedDeclaration p1711_2 "while" == .property 2
+#guard elaboratesToParameter p1711_2 "while" == false
+#guard selectOwnedDeclaration p1711_0 "Step" == .property 0 -- x2
+#guard elaboratesToParameter p1711_0 "Step" == false -- x2
+#guard selectOwnedDeclaration p1711_0 "RunIfPositive" == .property 0 -- x2
+#guard elaboratesToParameter p1711_0 "RunIfPositive" == false -- x2
+#guard promotes p1711_0 "Step" == some false
+#guard promotes p1711_0 "RunIfPositive" == some false
 
--- tutorial/fence-191: Total = 1 + \n     2 \n Values = [ \n     10 \n     20 \n ] \n  \n Total, Values.sum
-def p1722_0 : List OwnerLevel := { parameters := [], properties := ["Total", "Values"] } :: prelude
-def p1722_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1722_0
-def p1722_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1722_0
-#guard selectOwnedDeclaration p1722_0 "Total" == .property 0
-#guard elaboratesToParameter p1722_0 "Total" == false
-#guard selectOwnedDeclaration p1722_0 "Values" == .property 0
-#guard elaboratesToParameter p1722_0 "Values" == false
-#guard selectOwnedDeclaration p1722_0 "sum" == .property 1
-#guard elaboratesToParameter p1722_0 "sum" == false
-#guard promotes p1722_0 "Total" == some false
-#guard promotes p1722_0 "Values" == some false
-#guard promotes p1722_0 "sum" == some false
+-- tutorial/fence-170: Total = 1 + \n     2 \n Values = [ \n     10 \n     20 \n ] \n  \n Total, Values.sum
+def p1712_0 : List OwnerLevel := { parameters := [], properties := ["Total", "Values"] } :: prelude
+def p1712_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1712_0
+def p1712_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1712_0
+#guard selectOwnedDeclaration p1712_0 "Total" == .property 0
+#guard elaboratesToParameter p1712_0 "Total" == false
+#guard selectOwnedDeclaration p1712_0 "Values" == .property 0
+#guard elaboratesToParameter p1712_0 "Values" == false
+#guard selectOwnedDeclaration p1712_0 "sum" == .property 1
+#guard elaboratesToParameter p1712_0 "sum" == false
+#guard promotes p1712_0 "Total" == some false
+#guard promotes p1712_0 "Values" == some false
+#guard promotes p1712_0 "sum" == some false
 
 -- witness/family-argument-is-a-value: Inc(x) = x + 1 \n Pick(0, v) = 0 \n Pick(n, v) = v \n Use = Pick(1, Inc) \n Use(4)
-def p1723_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Inc", "Pick"] } :: prelude
-def p1723_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1723_0
-def p1723_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1723_0
-def p1723_3 : List OwnerLevel := { parameters := ["v"], properties := [] } :: p1723_0
-def p1723_4 : List OwnerLevel := { parameters := ["n", "v"], properties := [] } :: p1723_0
-#guard selectOwnedDeclaration p1723_1 "Pick" == .property 1
-#guard elaboratesToParameter p1723_1 "Pick" == false
-#guard selectOwnedDeclaration p1723_1 "Inc" == .property 1
-#guard elaboratesToParameter p1723_1 "Inc" == false
-#guard selectOwnedDeclaration p1723_2 "x" == .parameter 0
-#guard elaboratesToParameter p1723_2 "x" == true
-#guard selectOwnedDeclaration p1723_4 "v" == .parameter 0
-#guard elaboratesToParameter p1723_4 "v" == true
-#guard selectOwnedDeclaration p1723_0 "Use" == .property 0
-#guard elaboratesToParameter p1723_0 "Use" == false
-#guard promotes p1723_0 "Use" == some false
-#guard promotes p1723_1 "Pick" == some false
-#guard promotes p1723_1 "Inc" == some false
-#guard forwardingSource p1723_1 true "x" == .forwardedParameter
+def p1713_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Inc", "Pick"] } :: prelude
+def p1713_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1713_0
+def p1713_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1713_0
+def p1713_3 : List OwnerLevel := { parameters := ["v"], properties := [] } :: p1713_0
+def p1713_4 : List OwnerLevel := { parameters := ["n", "v"], properties := [] } :: p1713_0
+#guard selectOwnedDeclaration p1713_1 "Pick" == .property 1
+#guard elaboratesToParameter p1713_1 "Pick" == false
+#guard selectOwnedDeclaration p1713_1 "Inc" == .property 1
+#guard elaboratesToParameter p1713_1 "Inc" == false
+#guard selectOwnedDeclaration p1713_2 "x" == .parameter 0
+#guard elaboratesToParameter p1713_2 "x" == true
+#guard selectOwnedDeclaration p1713_4 "v" == .parameter 0
+#guard elaboratesToParameter p1713_4 "v" == true
+#guard selectOwnedDeclaration p1713_0 "Use" == .property 0
+#guard elaboratesToParameter p1713_0 "Use" == false
+#guard promotes p1713_0 "Use" == some false
+#guard promotes p1713_1 "Pick" == some false
+#guard promotes p1713_1 "Inc" == some false
+#guard forwardingSource p1713_1 true "x" == .forwardedParameter
 #guard liftingSlotRole .family 1 true == .value -- Pick: Inc
 #guard familyLiftingSignature? [clause (.sequenceValue [.litInt 0, .bind "v"]), clause (.sequenceValue [.bind "n", .bind "v"])] == some [.capture { name := "n" }, .capture { name := "v" }] -- family Pick
 
 -- witness/family-argument-is-a-value/alpha-rename: w1(w2) = w2 + 1 \n w3(0, w4) = 0 \n w3(w5, w4) = w4 \n w6 = w3(1, w1) \n w6(4)
-def p1724_0 : List OwnerLevel := { parameters := [], properties := ["w6", "w1", "w3"] } :: prelude
-def p1724_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1724_0
-def p1724_2 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1724_0
-def p1724_3 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1724_0
-def p1724_4 : List OwnerLevel := { parameters := ["w5", "w4"], properties := [] } :: p1724_0
-#guard selectOwnedDeclaration p1724_1 "w3" == .property 1
-#guard elaboratesToParameter p1724_1 "w3" == false
-#guard selectOwnedDeclaration p1724_1 "w1" == .property 1
-#guard elaboratesToParameter p1724_1 "w1" == false
-#guard selectOwnedDeclaration p1724_2 "w2" == .parameter 0
-#guard elaboratesToParameter p1724_2 "w2" == true
-#guard selectOwnedDeclaration p1724_4 "w4" == .parameter 0
-#guard elaboratesToParameter p1724_4 "w4" == true
-#guard selectOwnedDeclaration p1724_0 "w6" == .property 0
-#guard elaboratesToParameter p1724_0 "w6" == false
-#guard promotes p1724_0 "w6" == some false
-#guard promotes p1724_1 "w3" == some false
-#guard promotes p1724_1 "w1" == some false
-#guard forwardingSource p1724_1 true "w2" == .forwardedParameter
+def p1714_0 : List OwnerLevel := { parameters := [], properties := ["w6", "w1", "w3"] } :: prelude
+def p1714_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1714_0
+def p1714_2 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1714_0
+def p1714_3 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1714_0
+def p1714_4 : List OwnerLevel := { parameters := ["w5", "w4"], properties := [] } :: p1714_0
+#guard selectOwnedDeclaration p1714_1 "w3" == .property 1
+#guard elaboratesToParameter p1714_1 "w3" == false
+#guard selectOwnedDeclaration p1714_1 "w1" == .property 1
+#guard elaboratesToParameter p1714_1 "w1" == false
+#guard selectOwnedDeclaration p1714_2 "w2" == .parameter 0
+#guard elaboratesToParameter p1714_2 "w2" == true
+#guard selectOwnedDeclaration p1714_4 "w4" == .parameter 0
+#guard elaboratesToParameter p1714_4 "w4" == true
+#guard selectOwnedDeclaration p1714_0 "w6" == .property 0
+#guard elaboratesToParameter p1714_0 "w6" == false
+#guard promotes p1714_0 "w6" == some false
+#guard promotes p1714_1 "w3" == some false
+#guard promotes p1714_1 "w1" == some false
+#guard forwardingSource p1714_1 true "w2" == .forwardedParameter
 #guard liftingSlotRole .family 1 true == .value -- w3: w1
 #guard familyLiftingSignature? [clause (.sequenceValue [.litInt 0, .bind "w4"]), clause (.sequenceValue [.bind "w5", .bind "w4"])] == some [.capture { name := "w5" }, .capture { name := "w4" }] -- family w3
 
 -- witness/family-argument-is-a-value/declaration-reorder: Use = Pick(1, Inc) \n Pick(0, v) = 0 \n Pick(n, v) = v \n Inc(x) = x + 1 \n Use(4)
-def p1725_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Pick", "Inc"] } :: prelude
-def p1725_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1725_0
-def p1725_2 : List OwnerLevel := { parameters := ["v"], properties := [] } :: p1725_0
-def p1725_3 : List OwnerLevel := { parameters := ["n", "v"], properties := [] } :: p1725_0
-def p1725_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1725_0
-#guard selectOwnedDeclaration p1725_1 "Pick" == .property 1
-#guard elaboratesToParameter p1725_1 "Pick" == false
-#guard selectOwnedDeclaration p1725_1 "Inc" == .property 1
-#guard elaboratesToParameter p1725_1 "Inc" == false
-#guard selectOwnedDeclaration p1725_3 "v" == .parameter 0
-#guard elaboratesToParameter p1725_3 "v" == true
-#guard selectOwnedDeclaration p1725_4 "x" == .parameter 0
-#guard elaboratesToParameter p1725_4 "x" == true
-#guard selectOwnedDeclaration p1725_0 "Use" == .property 0
-#guard elaboratesToParameter p1725_0 "Use" == false
-#guard promotes p1725_0 "Use" == some false
-#guard promotes p1725_1 "Pick" == some false
-#guard promotes p1725_1 "Inc" == some false
-#guard forwardingSource p1725_1 true "x" == .forwardedParameter
+def p1715_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Pick", "Inc"] } :: prelude
+def p1715_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1715_0
+def p1715_2 : List OwnerLevel := { parameters := ["v"], properties := [] } :: p1715_0
+def p1715_3 : List OwnerLevel := { parameters := ["n", "v"], properties := [] } :: p1715_0
+def p1715_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1715_0
+#guard selectOwnedDeclaration p1715_1 "Pick" == .property 1
+#guard elaboratesToParameter p1715_1 "Pick" == false
+#guard selectOwnedDeclaration p1715_1 "Inc" == .property 1
+#guard elaboratesToParameter p1715_1 "Inc" == false
+#guard selectOwnedDeclaration p1715_3 "v" == .parameter 0
+#guard elaboratesToParameter p1715_3 "v" == true
+#guard selectOwnedDeclaration p1715_4 "x" == .parameter 0
+#guard elaboratesToParameter p1715_4 "x" == true
+#guard selectOwnedDeclaration p1715_0 "Use" == .property 0
+#guard elaboratesToParameter p1715_0 "Use" == false
+#guard promotes p1715_0 "Use" == some false
+#guard promotes p1715_1 "Pick" == some false
+#guard promotes p1715_1 "Inc" == some false
+#guard forwardingSource p1715_1 true "x" == .forwardedParameter
 #guard liftingSlotRole .family 1 true == .value -- Pick: Inc
 #guard familyLiftingSignature? [clause (.sequenceValue [.litInt 0, .bind "v"]), clause (.sequenceValue [.bind "n", .bind "v"])] == some [.capture { name := "n" }, .capture { name := "v" }] -- family Pick
 
 -- witness/user-argument-keeps-the-callable: Inc(x) = x + 1 \n Apply(f, v) = f(v) \n Use = Apply(Inc, 4) \n ViaOpen = { \n     open { public Keep(f) = f(1) } \n     Keep(Inc) \n } \n Use
-def p1726_0 : List OwnerLevel := { parameters := [], properties := ["Use", "ViaOpen", "Inc", "Apply"] } :: prelude
-def p1726_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1726_0
-def p1726_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1726_0
-def p1726_3 : List OwnerLevel := { parameters := [], properties := ["Keep"] } :: prelude
-def p1726_4 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1726_3
-def p1726_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1726_0
-def p1726_6 : List OwnerLevel := { parameters := ["f", "v"], properties := [] } :: p1726_0
-def p1726_tree : Expr :=
+def p1716_0 : List OwnerLevel := { parameters := [], properties := ["Use", "ViaOpen", "Inc", "Apply"] } :: prelude
+def p1716_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1716_0
+def p1716_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1716_0
+def p1716_3 : List OwnerLevel := { parameters := [], properties := ["Keep"] } :: prelude
+def p1716_4 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1716_3
+def p1716_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1716_0
+def p1716_6 : List OwnerLevel := { parameters := ["f", "v"], properties := [] } :: p1716_0
+def p1716_tree : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Use" (alg [] [] [] [(.call (.resolve "Apply") [.resolve "Inc", .num 4])]), privateProp "ViaOpen" (alg [] [(.algorithmExpr (alg [] [] [publicProp "Keep" (alg ["f"] [] [] [(.call (.param "f") [.num 1])])] []))] [] [(.call (.resolve "Keep") [.resolve "Inc"])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])])] [.resolve "Use"])
-def p1726_s2 : Option (Algorithm × EvalCtx) := treeSite p1726_tree [.property "ViaOpen"]
-#guard selectOwnedDeclaration p1726_1 "Apply" == .property 1
-#guard elaboratesToParameter p1726_1 "Apply" == false
-#guard selectOwnedDeclaration p1726_1 "Inc" == .property 1
-#guard elaboratesToParameter p1726_1 "Inc" == false
-#guard selectOwnedDeclaration p1726_4 "f" == .parameter 0
-#guard elaboratesToParameter p1726_4 "f" == true
-#guard selectOwnedDeclaration p1726_2 "Keep" == .none
-#guard elaboratesToParameter p1726_2 "Keep" == false
-#guard selectOwnedDeclaration p1726_2 "Inc" == .property 1
-#guard elaboratesToParameter p1726_2 "Inc" == false
-#guard selectOwnedDeclaration p1726_5 "x" == .parameter 0
-#guard elaboratesToParameter p1726_5 "x" == true
-#guard selectOwnedDeclaration p1726_6 "f" == .parameter 0
-#guard elaboratesToParameter p1726_6 "f" == true
-#guard selectOwnedDeclaration p1726_6 "v" == .parameter 0
-#guard elaboratesToParameter p1726_6 "v" == true
-#guard selectOwnedDeclaration p1726_0 "Use" == .property 0
-#guard elaboratesToParameter p1726_0 "Use" == false
-#guard promotes p1726_0 "Use" == some false
-#guard promotes p1726_1 "Apply" == some false
-#guard promotes p1726_1 "Inc" == some false
-#guard promotesIn p1726_s2 "Keep" == some false
-#guard promotesIn p1726_s2 "Inc" == some false
+def p1716_s2 : Option (Algorithm × EvalCtx) := treeSite p1716_tree [.property "ViaOpen"]
+#guard selectOwnedDeclaration p1716_1 "Apply" == .property 1
+#guard elaboratesToParameter p1716_1 "Apply" == false
+#guard selectOwnedDeclaration p1716_1 "Inc" == .property 1
+#guard elaboratesToParameter p1716_1 "Inc" == false
+#guard selectOwnedDeclaration p1716_4 "f" == .parameter 0
+#guard elaboratesToParameter p1716_4 "f" == true
+#guard selectOwnedDeclaration p1716_2 "Keep" == .none
+#guard elaboratesToParameter p1716_2 "Keep" == false
+#guard selectOwnedDeclaration p1716_2 "Inc" == .property 1
+#guard elaboratesToParameter p1716_2 "Inc" == false
+#guard selectOwnedDeclaration p1716_5 "x" == .parameter 0
+#guard elaboratesToParameter p1716_5 "x" == true
+#guard selectOwnedDeclaration p1716_6 "f" == .parameter 0
+#guard elaboratesToParameter p1716_6 "f" == true
+#guard selectOwnedDeclaration p1716_6 "v" == .parameter 0
+#guard elaboratesToParameter p1716_6 "v" == true
+#guard selectOwnedDeclaration p1716_0 "Use" == .property 0
+#guard elaboratesToParameter p1716_0 "Use" == false
+#guard promotes p1716_0 "Use" == some false
+#guard promotes p1716_1 "Apply" == some false
+#guard promotes p1716_1 "Inc" == some false
+#guard promotesIn p1716_s2 "Keep" == some false
+#guard promotesIn p1716_s2 "Inc" == some false
 #guard liftingSlotRole .user 0 true == .callable -- Apply: Inc
 #guard liftingSlotRole .user 0 true == .callable -- Keep: Inc
 
 -- witness/user-argument-keeps-the-callable/alpha-rename: w1(w2) = w2 + 1 \n w3(w4, w5) = w4(w5) \n w6 = w3(w1, 4) \n w7 = { \n     open { public w8(w4) = w4(1) } \n     w8(w1) \n } \n w6
-def p1727_0 : List OwnerLevel := { parameters := [], properties := ["w6", "w7", "w1", "w3"] } :: prelude
-def p1727_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1727_0
-def p1727_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1727_0
-def p1727_3 : List OwnerLevel := { parameters := [], properties := ["w8"] } :: prelude
-def p1727_4 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1727_3
-def p1727_5 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1727_0
-def p1727_6 : List OwnerLevel := { parameters := ["w4", "w5"], properties := [] } :: p1727_0
-def p1727_tree : Expr :=
+def p1717_0 : List OwnerLevel := { parameters := [], properties := ["w6", "w7", "w1", "w3"] } :: prelude
+def p1717_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1717_0
+def p1717_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1717_0
+def p1717_3 : List OwnerLevel := { parameters := [], properties := ["w8"] } :: prelude
+def p1717_4 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1717_3
+def p1717_5 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1717_0
+def p1717_6 : List OwnerLevel := { parameters := ["w4", "w5"], properties := [] } :: p1717_0
+def p1717_tree : Expr :=
   .algorithmExpr (alg [] [] [privateProp "w6" (alg [] [] [] [(.call (.resolve "w3") [.resolve "w1", .num 4])]), privateProp "w7" (alg [] [(.algorithmExpr (alg [] [] [publicProp "w8" (alg ["w4"] [] [] [(.call (.param "w4") [.num 1])])] []))] [] [(.call (.resolve "w8") [.resolve "w1"])]), privateProp "w1" (alg ["w2"] [] [] [(.binary .add (.param "w2") (.num 1))]), privateProp "w3" (alg ["w4", "w5"] [] [] [(.call (.param "w4") [.param "w5"])])] [.resolve "w6"])
-def p1727_s2 : Option (Algorithm × EvalCtx) := treeSite p1727_tree [.property "w7"]
-#guard selectOwnedDeclaration p1727_1 "w3" == .property 1
-#guard elaboratesToParameter p1727_1 "w3" == false
-#guard selectOwnedDeclaration p1727_1 "w1" == .property 1
-#guard elaboratesToParameter p1727_1 "w1" == false
-#guard selectOwnedDeclaration p1727_4 "w4" == .parameter 0
-#guard elaboratesToParameter p1727_4 "w4" == true
-#guard selectOwnedDeclaration p1727_2 "w8" == .none
-#guard elaboratesToParameter p1727_2 "w8" == false
-#guard selectOwnedDeclaration p1727_2 "w1" == .property 1
-#guard elaboratesToParameter p1727_2 "w1" == false
-#guard selectOwnedDeclaration p1727_5 "w2" == .parameter 0
-#guard elaboratesToParameter p1727_5 "w2" == true
-#guard selectOwnedDeclaration p1727_6 "w4" == .parameter 0
-#guard elaboratesToParameter p1727_6 "w4" == true
-#guard selectOwnedDeclaration p1727_6 "w5" == .parameter 0
-#guard elaboratesToParameter p1727_6 "w5" == true
-#guard selectOwnedDeclaration p1727_0 "w6" == .property 0
-#guard elaboratesToParameter p1727_0 "w6" == false
-#guard promotes p1727_0 "w6" == some false
-#guard promotes p1727_1 "w3" == some false
-#guard promotes p1727_1 "w1" == some false
-#guard promotesIn p1727_s2 "w8" == some false
-#guard promotesIn p1727_s2 "w1" == some false
+def p1717_s2 : Option (Algorithm × EvalCtx) := treeSite p1717_tree [.property "w7"]
+#guard selectOwnedDeclaration p1717_1 "w3" == .property 1
+#guard elaboratesToParameter p1717_1 "w3" == false
+#guard selectOwnedDeclaration p1717_1 "w1" == .property 1
+#guard elaboratesToParameter p1717_1 "w1" == false
+#guard selectOwnedDeclaration p1717_4 "w4" == .parameter 0
+#guard elaboratesToParameter p1717_4 "w4" == true
+#guard selectOwnedDeclaration p1717_2 "w8" == .none
+#guard elaboratesToParameter p1717_2 "w8" == false
+#guard selectOwnedDeclaration p1717_2 "w1" == .property 1
+#guard elaboratesToParameter p1717_2 "w1" == false
+#guard selectOwnedDeclaration p1717_5 "w2" == .parameter 0
+#guard elaboratesToParameter p1717_5 "w2" == true
+#guard selectOwnedDeclaration p1717_6 "w4" == .parameter 0
+#guard elaboratesToParameter p1717_6 "w4" == true
+#guard selectOwnedDeclaration p1717_6 "w5" == .parameter 0
+#guard elaboratesToParameter p1717_6 "w5" == true
+#guard selectOwnedDeclaration p1717_0 "w6" == .property 0
+#guard elaboratesToParameter p1717_0 "w6" == false
+#guard promotes p1717_0 "w6" == some false
+#guard promotes p1717_1 "w3" == some false
+#guard promotes p1717_1 "w1" == some false
+#guard promotesIn p1717_s2 "w8" == some false
+#guard promotesIn p1717_s2 "w1" == some false
 #guard liftingSlotRole .user 0 true == .callable -- w3: w1
 #guard liftingSlotRole .user 0 true == .callable -- w8: w1
 
 -- witness/user-argument-keeps-the-callable/declaration-reorder: ViaOpen = { \n     open { public Keep(f) = f(1) } \n     Keep(Inc) \n } \n Use = Apply(Inc, 4) \n Apply(f, v) = f(v) \n Inc(x) = x + 1 \n Use
-def p1728_0 : List OwnerLevel := { parameters := [], properties := ["ViaOpen", "Use", "Apply", "Inc"] } :: prelude
-def p1728_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1728_0
-def p1728_2 : List OwnerLevel := { parameters := [], properties := ["Keep"] } :: prelude
-def p1728_3 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1728_2
-def p1728_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1728_0
-def p1728_5 : List OwnerLevel := { parameters := ["f", "v"], properties := [] } :: p1728_0
-def p1728_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1728_0
-def p1728_tree : Expr :=
+def p1718_0 : List OwnerLevel := { parameters := [], properties := ["ViaOpen", "Use", "Apply", "Inc"] } :: prelude
+def p1718_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1718_0
+def p1718_2 : List OwnerLevel := { parameters := [], properties := ["Keep"] } :: prelude
+def p1718_3 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1718_2
+def p1718_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1718_0
+def p1718_5 : List OwnerLevel := { parameters := ["f", "v"], properties := [] } :: p1718_0
+def p1718_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1718_0
+def p1718_tree : Expr :=
   .algorithmExpr (alg [] [] [privateProp "ViaOpen" (alg [] [(.algorithmExpr (alg [] [] [publicProp "Keep" (alg ["f"] [] [] [(.call (.param "f") [.num 1])])] []))] [] [(.call (.resolve "Keep") [.resolve "Inc"])]), privateProp "Use" (alg [] [] [] [(.call (.resolve "Apply") [.resolve "Inc", .num 4])]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [.resolve "Use"])
-def p1728_s1 : Option (Algorithm × EvalCtx) := treeSite p1728_tree [.property "ViaOpen"]
-#guard selectOwnedDeclaration p1728_3 "f" == .parameter 0
-#guard elaboratesToParameter p1728_3 "f" == true
-#guard selectOwnedDeclaration p1728_1 "Keep" == .none
-#guard elaboratesToParameter p1728_1 "Keep" == false
-#guard selectOwnedDeclaration p1728_1 "Inc" == .property 1
-#guard elaboratesToParameter p1728_1 "Inc" == false
-#guard selectOwnedDeclaration p1728_4 "Apply" == .property 1
-#guard elaboratesToParameter p1728_4 "Apply" == false
-#guard selectOwnedDeclaration p1728_4 "Inc" == .property 1
-#guard elaboratesToParameter p1728_4 "Inc" == false
-#guard selectOwnedDeclaration p1728_5 "f" == .parameter 0
-#guard elaboratesToParameter p1728_5 "f" == true
-#guard selectOwnedDeclaration p1728_5 "v" == .parameter 0
-#guard elaboratesToParameter p1728_5 "v" == true
-#guard selectOwnedDeclaration p1728_6 "x" == .parameter 0
-#guard elaboratesToParameter p1728_6 "x" == true
-#guard selectOwnedDeclaration p1728_0 "Use" == .property 0
-#guard elaboratesToParameter p1728_0 "Use" == false
-#guard promotes p1728_0 "Use" == some false
-#guard promotesIn p1728_s1 "Keep" == some false
-#guard promotesIn p1728_s1 "Inc" == some false
-#guard promotes p1728_4 "Apply" == some false
-#guard promotes p1728_4 "Inc" == some false
+def p1718_s1 : Option (Algorithm × EvalCtx) := treeSite p1718_tree [.property "ViaOpen"]
+#guard selectOwnedDeclaration p1718_3 "f" == .parameter 0
+#guard elaboratesToParameter p1718_3 "f" == true
+#guard selectOwnedDeclaration p1718_1 "Keep" == .none
+#guard elaboratesToParameter p1718_1 "Keep" == false
+#guard selectOwnedDeclaration p1718_1 "Inc" == .property 1
+#guard elaboratesToParameter p1718_1 "Inc" == false
+#guard selectOwnedDeclaration p1718_4 "Apply" == .property 1
+#guard elaboratesToParameter p1718_4 "Apply" == false
+#guard selectOwnedDeclaration p1718_4 "Inc" == .property 1
+#guard elaboratesToParameter p1718_4 "Inc" == false
+#guard selectOwnedDeclaration p1718_5 "f" == .parameter 0
+#guard elaboratesToParameter p1718_5 "f" == true
+#guard selectOwnedDeclaration p1718_5 "v" == .parameter 0
+#guard elaboratesToParameter p1718_5 "v" == true
+#guard selectOwnedDeclaration p1718_6 "x" == .parameter 0
+#guard elaboratesToParameter p1718_6 "x" == true
+#guard selectOwnedDeclaration p1718_0 "Use" == .property 0
+#guard elaboratesToParameter p1718_0 "Use" == false
+#guard promotes p1718_0 "Use" == some false
+#guard promotesIn p1718_s1 "Keep" == some false
+#guard promotesIn p1718_s1 "Inc" == some false
+#guard promotes p1718_4 "Apply" == some false
+#guard promotes p1718_4 "Inc" == some false
 #guard liftingSlotRole .user 0 true == .callable -- Keep: Inc
 #guard liftingSlotRole .user 0 true == .callable -- Apply: Inc
 
 -- witness/dynamic-callee-keeps-the-callable: Inc(x) = x + 1 \n Run(g) = g(5) \n Twice(f, x) = f(Inc) \n Twice(Run, 3)
-def p1729_0 : List OwnerLevel := { parameters := [], properties := ["Inc", "Run", "Twice"] } :: prelude
-def p1729_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1729_0
-def p1729_2 : List OwnerLevel := { parameters := ["g"], properties := [] } :: p1729_0
-def p1729_3 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1729_0
-#guard selectOwnedDeclaration p1729_1 "x" == .parameter 0
-#guard elaboratesToParameter p1729_1 "x" == true
-#guard selectOwnedDeclaration p1729_2 "g" == .parameter 0
-#guard elaboratesToParameter p1729_2 "g" == true
-#guard selectOwnedDeclaration p1729_3 "f" == .parameter 0
-#guard elaboratesToParameter p1729_3 "f" == true
-#guard selectOwnedDeclaration p1729_3 "Inc" == .property 1
-#guard elaboratesToParameter p1729_3 "Inc" == false
-#guard selectOwnedDeclaration p1729_0 "Twice" == .property 0
-#guard elaboratesToParameter p1729_0 "Twice" == false
-#guard selectOwnedDeclaration p1729_0 "Run" == .property 0
-#guard elaboratesToParameter p1729_0 "Run" == false
-#guard promotes p1729_0 "Twice" == some false
-#guard promotes p1729_0 "Run" == some false
+def p1719_0 : List OwnerLevel := { parameters := [], properties := ["Inc", "Run", "Twice"] } :: prelude
+def p1719_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1719_0
+def p1719_2 : List OwnerLevel := { parameters := ["g"], properties := [] } :: p1719_0
+def p1719_3 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1719_0
+#guard selectOwnedDeclaration p1719_1 "x" == .parameter 0
+#guard elaboratesToParameter p1719_1 "x" == true
+#guard selectOwnedDeclaration p1719_2 "g" == .parameter 0
+#guard elaboratesToParameter p1719_2 "g" == true
+#guard selectOwnedDeclaration p1719_3 "f" == .parameter 0
+#guard elaboratesToParameter p1719_3 "f" == true
+#guard selectOwnedDeclaration p1719_3 "Inc" == .property 1
+#guard elaboratesToParameter p1719_3 "Inc" == false
+#guard selectOwnedDeclaration p1719_0 "Twice" == .property 0
+#guard elaboratesToParameter p1719_0 "Twice" == false
+#guard selectOwnedDeclaration p1719_0 "Run" == .property 0
+#guard elaboratesToParameter p1719_0 "Run" == false
+#guard promotes p1719_0 "Twice" == some false
+#guard promotes p1719_0 "Run" == some false
 #guard liftingSlotRole .dynamic 0 true == .callable -- f: Inc
 #guard liftingSlotRole .user 0 true == .callable -- Twice: Run
 
 -- witness/dynamic-callee-keeps-the-callable/alpha-rename: w1(w2) = w2 + 1 \n w3(w4) = w4(5) \n w5(w6, w2) = w6(w1) \n w5(w3, 3)
-def p1730_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3", "w5"] } :: prelude
-def p1730_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1730_0
-def p1730_2 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1730_0
-def p1730_3 : List OwnerLevel := { parameters := ["w6", "w2"], properties := [] } :: p1730_0
-#guard selectOwnedDeclaration p1730_1 "w2" == .parameter 0
-#guard elaboratesToParameter p1730_1 "w2" == true
-#guard selectOwnedDeclaration p1730_2 "w4" == .parameter 0
-#guard elaboratesToParameter p1730_2 "w4" == true
-#guard selectOwnedDeclaration p1730_3 "w6" == .parameter 0
-#guard elaboratesToParameter p1730_3 "w6" == true
-#guard selectOwnedDeclaration p1730_3 "w1" == .property 1
-#guard elaboratesToParameter p1730_3 "w1" == false
-#guard selectOwnedDeclaration p1730_0 "w5" == .property 0
-#guard elaboratesToParameter p1730_0 "w5" == false
-#guard selectOwnedDeclaration p1730_0 "w3" == .property 0
-#guard elaboratesToParameter p1730_0 "w3" == false
-#guard promotes p1730_0 "w5" == some false
-#guard promotes p1730_0 "w3" == some false
+def p1720_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3", "w5"] } :: prelude
+def p1720_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1720_0
+def p1720_2 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1720_0
+def p1720_3 : List OwnerLevel := { parameters := ["w6", "w2"], properties := [] } :: p1720_0
+#guard selectOwnedDeclaration p1720_1 "w2" == .parameter 0
+#guard elaboratesToParameter p1720_1 "w2" == true
+#guard selectOwnedDeclaration p1720_2 "w4" == .parameter 0
+#guard elaboratesToParameter p1720_2 "w4" == true
+#guard selectOwnedDeclaration p1720_3 "w6" == .parameter 0
+#guard elaboratesToParameter p1720_3 "w6" == true
+#guard selectOwnedDeclaration p1720_3 "w1" == .property 1
+#guard elaboratesToParameter p1720_3 "w1" == false
+#guard selectOwnedDeclaration p1720_0 "w5" == .property 0
+#guard elaboratesToParameter p1720_0 "w5" == false
+#guard selectOwnedDeclaration p1720_0 "w3" == .property 0
+#guard elaboratesToParameter p1720_0 "w3" == false
+#guard promotes p1720_0 "w5" == some false
+#guard promotes p1720_0 "w3" == some false
 #guard liftingSlotRole .dynamic 0 true == .callable -- w6: w1
 #guard liftingSlotRole .user 0 true == .callable -- w5: w3
 
 -- witness/dynamic-callee-keeps-the-callable/declaration-reorder: Twice(f, x) = f(Inc) \n Run(g) = g(5) \n Inc(x) = x + 1 \n Twice(Run, 3)
-def p1731_0 : List OwnerLevel := { parameters := [], properties := ["Twice", "Run", "Inc"] } :: prelude
-def p1731_1 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1731_0
-def p1731_2 : List OwnerLevel := { parameters := ["g"], properties := [] } :: p1731_0
-def p1731_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1731_0
-#guard selectOwnedDeclaration p1731_1 "f" == .parameter 0
-#guard elaboratesToParameter p1731_1 "f" == true
-#guard selectOwnedDeclaration p1731_1 "Inc" == .property 1
-#guard elaboratesToParameter p1731_1 "Inc" == false
-#guard selectOwnedDeclaration p1731_2 "g" == .parameter 0
-#guard elaboratesToParameter p1731_2 "g" == true
-#guard selectOwnedDeclaration p1731_3 "x" == .parameter 0
-#guard elaboratesToParameter p1731_3 "x" == true
-#guard selectOwnedDeclaration p1731_0 "Twice" == .property 0
-#guard elaboratesToParameter p1731_0 "Twice" == false
-#guard selectOwnedDeclaration p1731_0 "Run" == .property 0
-#guard elaboratesToParameter p1731_0 "Run" == false
-#guard promotes p1731_0 "Twice" == some false
-#guard promotes p1731_0 "Run" == some false
+def p1721_0 : List OwnerLevel := { parameters := [], properties := ["Twice", "Run", "Inc"] } :: prelude
+def p1721_1 : List OwnerLevel := { parameters := ["f", "x"], properties := [] } :: p1721_0
+def p1721_2 : List OwnerLevel := { parameters := ["g"], properties := [] } :: p1721_0
+def p1721_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1721_0
+#guard selectOwnedDeclaration p1721_1 "f" == .parameter 0
+#guard elaboratesToParameter p1721_1 "f" == true
+#guard selectOwnedDeclaration p1721_1 "Inc" == .property 1
+#guard elaboratesToParameter p1721_1 "Inc" == false
+#guard selectOwnedDeclaration p1721_2 "g" == .parameter 0
+#guard elaboratesToParameter p1721_2 "g" == true
+#guard selectOwnedDeclaration p1721_3 "x" == .parameter 0
+#guard elaboratesToParameter p1721_3 "x" == true
+#guard selectOwnedDeclaration p1721_0 "Twice" == .property 0
+#guard elaboratesToParameter p1721_0 "Twice" == false
+#guard selectOwnedDeclaration p1721_0 "Run" == .property 0
+#guard elaboratesToParameter p1721_0 "Run" == false
+#guard promotes p1721_0 "Twice" == some false
+#guard promotes p1721_0 "Run" == some false
 #guard liftingSlotRole .dynamic 0 true == .callable -- f: Inc
 #guard liftingSlotRole .user 0 true == .callable -- Twice: Run
 
 -- witness/strict-value-argument-is-a-value: Inc(x) = x + 1 \n Lit(0) = 0 \n Lit(1) = 1 \n Use = abs(Inc) \n Rejected = abs(Lit) \n Use(-5)
-def p1732_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Rejected", "Inc", "Lit"] } :: prelude
-def p1732_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1732_0
-def p1732_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1732_0
-def p1732_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1732_0
-def p1732_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1732_0
-def p1732_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1732_0
-#guard selectOwnedDeclaration p1732_1 "abs" == .property 2
-#guard elaboratesToParameter p1732_1 "abs" == false
-#guard selectOwnedDeclaration p1732_1 "Inc" == .property 1
-#guard elaboratesToParameter p1732_1 "Inc" == false
-#guard selectOwnedDeclaration p1732_2 "abs" == .property 2
-#guard elaboratesToParameter p1732_2 "abs" == false
-#guard selectOwnedDeclaration p1732_2 "Lit" == .property 1
-#guard elaboratesToParameter p1732_2 "Lit" == false
-#guard selectOwnedDeclaration p1732_3 "x" == .parameter 0
-#guard elaboratesToParameter p1732_3 "x" == true
-#guard selectOwnedDeclaration p1732_0 "Use" == .property 0
-#guard elaboratesToParameter p1732_0 "Use" == false
-#guard promotes p1732_0 "Use" == some false
-#guard promotes p1732_1 "Inc" == some false
-#guard forwardingSource p1732_1 true "x" == .forwardedParameter
-#guard promotes p1732_2 "Lit" == some false
+def p1722_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Rejected", "Inc", "Lit"] } :: prelude
+def p1722_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1722_0
+def p1722_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1722_0
+def p1722_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1722_0
+def p1722_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1722_0
+def p1722_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1722_0
+#guard selectOwnedDeclaration p1722_1 "abs" == .property 2
+#guard elaboratesToParameter p1722_1 "abs" == false
+#guard selectOwnedDeclaration p1722_1 "Inc" == .property 1
+#guard elaboratesToParameter p1722_1 "Inc" == false
+#guard selectOwnedDeclaration p1722_2 "abs" == .property 2
+#guard elaboratesToParameter p1722_2 "abs" == false
+#guard selectOwnedDeclaration p1722_2 "Lit" == .property 1
+#guard elaboratesToParameter p1722_2 "Lit" == false
+#guard selectOwnedDeclaration p1722_3 "x" == .parameter 0
+#guard elaboratesToParameter p1722_3 "x" == true
+#guard selectOwnedDeclaration p1722_0 "Use" == .property 0
+#guard elaboratesToParameter p1722_0 "Use" == false
+#guard promotes p1722_0 "Use" == some false
+#guard promotes p1722_1 "Inc" == some false
+#guard forwardingSource p1722_1 true "x" == .forwardedParameter
+#guard promotes p1722_2 "Lit" == some false
 #guard liftingSlotRole .strictValue 0 true == .value -- abs: Inc
 #guard liftingSlotRole .strictValue 0 true == .value -- abs: Lit
 #guard familyLiftingSignature? [clause (.litInt 0), clause (.litInt 1)] == none -- family Lit
 
 -- witness/strict-value-argument-is-a-value/alpha-rename: w1(w2) = w2 + 1 \n w3(0) = 0 \n w3(1) = 1 \n w4 = abs(w1) \n w5 = abs(w3) \n w4(-5)
-def p1733_0 : List OwnerLevel := { parameters := [], properties := ["w4", "w5", "w1", "w3"] } :: prelude
-def p1733_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1733_0
-def p1733_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1733_0
-def p1733_3 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1733_0
-def p1733_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1733_0
-def p1733_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1733_0
-#guard selectOwnedDeclaration p1733_1 "abs" == .property 2
-#guard elaboratesToParameter p1733_1 "abs" == false
-#guard selectOwnedDeclaration p1733_1 "w1" == .property 1
-#guard elaboratesToParameter p1733_1 "w1" == false
-#guard selectOwnedDeclaration p1733_2 "abs" == .property 2
-#guard elaboratesToParameter p1733_2 "abs" == false
-#guard selectOwnedDeclaration p1733_2 "w3" == .property 1
-#guard elaboratesToParameter p1733_2 "w3" == false
-#guard selectOwnedDeclaration p1733_3 "w2" == .parameter 0
-#guard elaboratesToParameter p1733_3 "w2" == true
-#guard selectOwnedDeclaration p1733_0 "w4" == .property 0
-#guard elaboratesToParameter p1733_0 "w4" == false
-#guard promotes p1733_0 "w4" == some false
-#guard promotes p1733_1 "w1" == some false
-#guard forwardingSource p1733_1 true "w2" == .forwardedParameter
-#guard promotes p1733_2 "w3" == some false
+def p1723_0 : List OwnerLevel := { parameters := [], properties := ["w4", "w5", "w1", "w3"] } :: prelude
+def p1723_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1723_0
+def p1723_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1723_0
+def p1723_3 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1723_0
+def p1723_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1723_0
+def p1723_5 : List OwnerLevel := { parameters := [], properties := [] } :: p1723_0
+#guard selectOwnedDeclaration p1723_1 "abs" == .property 2
+#guard elaboratesToParameter p1723_1 "abs" == false
+#guard selectOwnedDeclaration p1723_1 "w1" == .property 1
+#guard elaboratesToParameter p1723_1 "w1" == false
+#guard selectOwnedDeclaration p1723_2 "abs" == .property 2
+#guard elaboratesToParameter p1723_2 "abs" == false
+#guard selectOwnedDeclaration p1723_2 "w3" == .property 1
+#guard elaboratesToParameter p1723_2 "w3" == false
+#guard selectOwnedDeclaration p1723_3 "w2" == .parameter 0
+#guard elaboratesToParameter p1723_3 "w2" == true
+#guard selectOwnedDeclaration p1723_0 "w4" == .property 0
+#guard elaboratesToParameter p1723_0 "w4" == false
+#guard promotes p1723_0 "w4" == some false
+#guard promotes p1723_1 "w1" == some false
+#guard forwardingSource p1723_1 true "w2" == .forwardedParameter
+#guard promotes p1723_2 "w3" == some false
 #guard liftingSlotRole .strictValue 0 true == .value -- abs: w1
 #guard liftingSlotRole .strictValue 0 true == .value -- abs: w3
 #guard familyLiftingSignature? [clause (.litInt 0), clause (.litInt 1)] == none -- family w3
 
 -- witness/strict-value-argument-is-a-value/declaration-reorder: Rejected = abs(Lit) \n Use = abs(Inc) \n Lit(0) = 0 \n Lit(1) = 1 \n Inc(x) = x + 1 \n Use(-5)
-def p1734_0 : List OwnerLevel := { parameters := [], properties := ["Rejected", "Use", "Lit", "Inc"] } :: prelude
-def p1734_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1734_0
-def p1734_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1734_0
-def p1734_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1734_0
-def p1734_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1734_0
-def p1734_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1734_0
-#guard selectOwnedDeclaration p1734_1 "abs" == .property 2
-#guard elaboratesToParameter p1734_1 "abs" == false
-#guard selectOwnedDeclaration p1734_1 "Lit" == .property 1
-#guard elaboratesToParameter p1734_1 "Lit" == false
-#guard selectOwnedDeclaration p1734_2 "abs" == .property 2
-#guard elaboratesToParameter p1734_2 "abs" == false
-#guard selectOwnedDeclaration p1734_2 "Inc" == .property 1
-#guard elaboratesToParameter p1734_2 "Inc" == false
-#guard selectOwnedDeclaration p1734_5 "x" == .parameter 0
-#guard elaboratesToParameter p1734_5 "x" == true
-#guard selectOwnedDeclaration p1734_0 "Use" == .property 0
-#guard elaboratesToParameter p1734_0 "Use" == false
-#guard promotes p1734_0 "Use" == some false
-#guard promotes p1734_1 "Lit" == some false
-#guard promotes p1734_2 "Inc" == some false
-#guard forwardingSource p1734_2 true "x" == .forwardedParameter
+def p1724_0 : List OwnerLevel := { parameters := [], properties := ["Rejected", "Use", "Lit", "Inc"] } :: prelude
+def p1724_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1724_0
+def p1724_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1724_0
+def p1724_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1724_0
+def p1724_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1724_0
+def p1724_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1724_0
+#guard selectOwnedDeclaration p1724_1 "abs" == .property 2
+#guard elaboratesToParameter p1724_1 "abs" == false
+#guard selectOwnedDeclaration p1724_1 "Lit" == .property 1
+#guard elaboratesToParameter p1724_1 "Lit" == false
+#guard selectOwnedDeclaration p1724_2 "abs" == .property 2
+#guard elaboratesToParameter p1724_2 "abs" == false
+#guard selectOwnedDeclaration p1724_2 "Inc" == .property 1
+#guard elaboratesToParameter p1724_2 "Inc" == false
+#guard selectOwnedDeclaration p1724_5 "x" == .parameter 0
+#guard elaboratesToParameter p1724_5 "x" == true
+#guard selectOwnedDeclaration p1724_0 "Use" == .property 0
+#guard elaboratesToParameter p1724_0 "Use" == false
+#guard promotes p1724_0 "Use" == some false
+#guard promotes p1724_1 "Lit" == some false
+#guard promotes p1724_2 "Inc" == some false
+#guard forwardingSource p1724_2 true "x" == .forwardedParameter
 #guard liftingSlotRole .strictValue 0 true == .value -- abs: Lit
 #guard liftingSlotRole .strictValue 0 true == .value -- abs: Inc
 #guard familyLiftingSignature? [clause (.litInt 0), clause (.litInt 1)] == none -- family Lit
 
 -- witness/alias-takes-its-targets-kind: Inc(x) = x + 1 \n Keep(f) = f(1) \n Abs = abs \n Held = Keep \n Lifted = Abs(Inc) \n Kept = Held(Inc) \n Lifted(-9), Kept
-def p1735_0 : List OwnerLevel := { parameters := [], properties := ["Abs", "Held", "Lifted", "Kept", "Inc", "Keep"] } :: prelude
-def p1735_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1735_0
-def p1735_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1735_0
-def p1735_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1735_0
-def p1735_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1735_0
-def p1735_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1735_0
-def p1735_6 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1735_0
-#guard selectOwnedDeclaration p1735_1 "abs" == .property 2
-#guard elaboratesToParameter p1735_1 "abs" == false
-#guard selectOwnedDeclaration p1735_2 "Keep" == .property 1
-#guard elaboratesToParameter p1735_2 "Keep" == false
-#guard selectOwnedDeclaration p1735_3 "Abs" == .property 1
-#guard elaboratesToParameter p1735_3 "Abs" == false
-#guard selectOwnedDeclaration p1735_3 "Inc" == .property 1
-#guard elaboratesToParameter p1735_3 "Inc" == false
-#guard selectOwnedDeclaration p1735_4 "Held" == .property 1
-#guard elaboratesToParameter p1735_4 "Held" == false
-#guard selectOwnedDeclaration p1735_4 "Inc" == .property 1
-#guard elaboratesToParameter p1735_4 "Inc" == false
-#guard selectOwnedDeclaration p1735_5 "x" == .parameter 0
-#guard elaboratesToParameter p1735_5 "x" == true
-#guard selectOwnedDeclaration p1735_6 "f" == .parameter 0
-#guard elaboratesToParameter p1735_6 "f" == true
-#guard selectOwnedDeclaration p1735_0 "Lifted" == .property 0
-#guard elaboratesToParameter p1735_0 "Lifted" == false
-#guard selectOwnedDeclaration p1735_0 "Kept" == .property 0
-#guard elaboratesToParameter p1735_0 "Kept" == false
-#guard promotes p1735_0 "Lifted" == some false
-#guard promotes p1735_0 "Kept" == some false
-#guard promotes p1735_2 "Keep" == some false
-#guard promotes p1735_3 "Abs" == some false
-#guard promotes p1735_3 "Inc" == some false
-#guard forwardingSource p1735_3 true "x" == .forwardedParameter
-#guard promotes p1735_4 "Held" == some false
-#guard promotes p1735_4 "Inc" == some false
+def p1725_0 : List OwnerLevel := { parameters := [], properties := ["Abs", "Held", "Lifted", "Kept", "Inc", "Keep"] } :: prelude
+def p1725_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1725_0
+def p1725_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1725_0
+def p1725_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1725_0
+def p1725_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1725_0
+def p1725_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1725_0
+def p1725_6 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1725_0
+#guard selectOwnedDeclaration p1725_1 "abs" == .property 2
+#guard elaboratesToParameter p1725_1 "abs" == false
+#guard selectOwnedDeclaration p1725_2 "Keep" == .property 1
+#guard elaboratesToParameter p1725_2 "Keep" == false
+#guard selectOwnedDeclaration p1725_3 "Abs" == .property 1
+#guard elaboratesToParameter p1725_3 "Abs" == false
+#guard selectOwnedDeclaration p1725_3 "Inc" == .property 1
+#guard elaboratesToParameter p1725_3 "Inc" == false
+#guard selectOwnedDeclaration p1725_4 "Held" == .property 1
+#guard elaboratesToParameter p1725_4 "Held" == false
+#guard selectOwnedDeclaration p1725_4 "Inc" == .property 1
+#guard elaboratesToParameter p1725_4 "Inc" == false
+#guard selectOwnedDeclaration p1725_5 "x" == .parameter 0
+#guard elaboratesToParameter p1725_5 "x" == true
+#guard selectOwnedDeclaration p1725_6 "f" == .parameter 0
+#guard elaboratesToParameter p1725_6 "f" == true
+#guard selectOwnedDeclaration p1725_0 "Lifted" == .property 0
+#guard elaboratesToParameter p1725_0 "Lifted" == false
+#guard selectOwnedDeclaration p1725_0 "Kept" == .property 0
+#guard elaboratesToParameter p1725_0 "Kept" == false
+#guard promotes p1725_0 "Lifted" == some false
+#guard promotes p1725_0 "Kept" == some false
+#guard promotes p1725_2 "Keep" == some false
+#guard promotes p1725_3 "Abs" == some false
+#guard promotes p1725_3 "Inc" == some false
+#guard forwardingSource p1725_3 true "x" == .forwardedParameter
+#guard promotes p1725_4 "Held" == some false
+#guard promotes p1725_4 "Inc" == some false
 #guard liftingSlotRole .strictValue 0 true == .value -- Abs: Inc
 #guard liftingSlotRole .user 0 true == .callable -- Held: Inc
 
 -- witness/alias-takes-its-targets-kind/alpha-rename: w1(w2) = w2 + 1 \n w3(w4) = w4(1) \n w5 = abs \n w6 = w3 \n w7 = w5(w1) \n w8 = w6(w1) \n w7(-9), w8
-def p1736_0 : List OwnerLevel := { parameters := [], properties := ["w5", "w6", "w7", "w8", "w1", "w3"] } :: prelude
-def p1736_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1736_0
-def p1736_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1736_0
-def p1736_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1736_0
-def p1736_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1736_0
-def p1736_5 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1736_0
-def p1736_6 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1736_0
-#guard selectOwnedDeclaration p1736_1 "abs" == .property 2
-#guard elaboratesToParameter p1736_1 "abs" == false
-#guard selectOwnedDeclaration p1736_2 "w3" == .property 1
-#guard elaboratesToParameter p1736_2 "w3" == false
-#guard selectOwnedDeclaration p1736_3 "w5" == .property 1
-#guard elaboratesToParameter p1736_3 "w5" == false
-#guard selectOwnedDeclaration p1736_3 "w1" == .property 1
-#guard elaboratesToParameter p1736_3 "w1" == false
-#guard selectOwnedDeclaration p1736_4 "w6" == .property 1
-#guard elaboratesToParameter p1736_4 "w6" == false
-#guard selectOwnedDeclaration p1736_4 "w1" == .property 1
-#guard elaboratesToParameter p1736_4 "w1" == false
-#guard selectOwnedDeclaration p1736_5 "w2" == .parameter 0
-#guard elaboratesToParameter p1736_5 "w2" == true
-#guard selectOwnedDeclaration p1736_6 "w4" == .parameter 0
-#guard elaboratesToParameter p1736_6 "w4" == true
-#guard selectOwnedDeclaration p1736_0 "w7" == .property 0
-#guard elaboratesToParameter p1736_0 "w7" == false
-#guard selectOwnedDeclaration p1736_0 "w8" == .property 0
-#guard elaboratesToParameter p1736_0 "w8" == false
-#guard promotes p1736_0 "w7" == some false
-#guard promotes p1736_0 "w8" == some false
-#guard promotes p1736_2 "w3" == some false
-#guard promotes p1736_3 "w5" == some false
-#guard promotes p1736_3 "w1" == some false
-#guard forwardingSource p1736_3 true "w2" == .forwardedParameter
-#guard promotes p1736_4 "w6" == some false
-#guard promotes p1736_4 "w1" == some false
+def p1726_0 : List OwnerLevel := { parameters := [], properties := ["w5", "w6", "w7", "w8", "w1", "w3"] } :: prelude
+def p1726_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1726_0
+def p1726_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1726_0
+def p1726_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1726_0
+def p1726_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1726_0
+def p1726_5 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1726_0
+def p1726_6 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1726_0
+#guard selectOwnedDeclaration p1726_1 "abs" == .property 2
+#guard elaboratesToParameter p1726_1 "abs" == false
+#guard selectOwnedDeclaration p1726_2 "w3" == .property 1
+#guard elaboratesToParameter p1726_2 "w3" == false
+#guard selectOwnedDeclaration p1726_3 "w5" == .property 1
+#guard elaboratesToParameter p1726_3 "w5" == false
+#guard selectOwnedDeclaration p1726_3 "w1" == .property 1
+#guard elaboratesToParameter p1726_3 "w1" == false
+#guard selectOwnedDeclaration p1726_4 "w6" == .property 1
+#guard elaboratesToParameter p1726_4 "w6" == false
+#guard selectOwnedDeclaration p1726_4 "w1" == .property 1
+#guard elaboratesToParameter p1726_4 "w1" == false
+#guard selectOwnedDeclaration p1726_5 "w2" == .parameter 0
+#guard elaboratesToParameter p1726_5 "w2" == true
+#guard selectOwnedDeclaration p1726_6 "w4" == .parameter 0
+#guard elaboratesToParameter p1726_6 "w4" == true
+#guard selectOwnedDeclaration p1726_0 "w7" == .property 0
+#guard elaboratesToParameter p1726_0 "w7" == false
+#guard selectOwnedDeclaration p1726_0 "w8" == .property 0
+#guard elaboratesToParameter p1726_0 "w8" == false
+#guard promotes p1726_0 "w7" == some false
+#guard promotes p1726_0 "w8" == some false
+#guard promotes p1726_2 "w3" == some false
+#guard promotes p1726_3 "w5" == some false
+#guard promotes p1726_3 "w1" == some false
+#guard forwardingSource p1726_3 true "w2" == .forwardedParameter
+#guard promotes p1726_4 "w6" == some false
+#guard promotes p1726_4 "w1" == some false
 #guard liftingSlotRole .strictValue 0 true == .value -- w5: w1
 #guard liftingSlotRole .user 0 true == .callable -- w6: w1
 
 -- witness/alias-takes-its-targets-kind/declaration-reorder: Kept = Held(Inc) \n Lifted = Abs(Inc) \n Held = Keep \n Abs = abs \n Keep(f) = f(1) \n Inc(x) = x + 1 \n Lifted(-9), Kept
-def p1737_0 : List OwnerLevel := { parameters := [], properties := ["Kept", "Lifted", "Held", "Abs", "Keep", "Inc"] } :: prelude
-def p1737_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1737_0
-def p1737_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1737_0
-def p1737_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1737_0
-def p1737_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1737_0
-def p1737_5 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1737_0
-def p1737_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1737_0
-#guard selectOwnedDeclaration p1737_1 "Held" == .property 1
-#guard elaboratesToParameter p1737_1 "Held" == false
-#guard selectOwnedDeclaration p1737_1 "Inc" == .property 1
-#guard elaboratesToParameter p1737_1 "Inc" == false
-#guard selectOwnedDeclaration p1737_2 "Abs" == .property 1
-#guard elaboratesToParameter p1737_2 "Abs" == false
-#guard selectOwnedDeclaration p1737_2 "Inc" == .property 1
-#guard elaboratesToParameter p1737_2 "Inc" == false
-#guard selectOwnedDeclaration p1737_3 "Keep" == .property 1
-#guard elaboratesToParameter p1737_3 "Keep" == false
-#guard selectOwnedDeclaration p1737_4 "abs" == .property 2
-#guard elaboratesToParameter p1737_4 "abs" == false
-#guard selectOwnedDeclaration p1737_5 "f" == .parameter 0
-#guard elaboratesToParameter p1737_5 "f" == true
-#guard selectOwnedDeclaration p1737_6 "x" == .parameter 0
-#guard elaboratesToParameter p1737_6 "x" == true
-#guard selectOwnedDeclaration p1737_0 "Lifted" == .property 0
-#guard elaboratesToParameter p1737_0 "Lifted" == false
-#guard selectOwnedDeclaration p1737_0 "Kept" == .property 0
-#guard elaboratesToParameter p1737_0 "Kept" == false
-#guard promotes p1737_0 "Lifted" == some false
-#guard promotes p1737_0 "Kept" == some false
-#guard promotes p1737_1 "Held" == some false
-#guard promotes p1737_1 "Inc" == some false
-#guard promotes p1737_2 "Abs" == some false
-#guard promotes p1737_2 "Inc" == some false
-#guard forwardingSource p1737_2 true "x" == .forwardedParameter
-#guard promotes p1737_3 "Keep" == some false
+def p1727_0 : List OwnerLevel := { parameters := [], properties := ["Kept", "Lifted", "Held", "Abs", "Keep", "Inc"] } :: prelude
+def p1727_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1727_0
+def p1727_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1727_0
+def p1727_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1727_0
+def p1727_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1727_0
+def p1727_5 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1727_0
+def p1727_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1727_0
+#guard selectOwnedDeclaration p1727_1 "Held" == .property 1
+#guard elaboratesToParameter p1727_1 "Held" == false
+#guard selectOwnedDeclaration p1727_1 "Inc" == .property 1
+#guard elaboratesToParameter p1727_1 "Inc" == false
+#guard selectOwnedDeclaration p1727_2 "Abs" == .property 1
+#guard elaboratesToParameter p1727_2 "Abs" == false
+#guard selectOwnedDeclaration p1727_2 "Inc" == .property 1
+#guard elaboratesToParameter p1727_2 "Inc" == false
+#guard selectOwnedDeclaration p1727_3 "Keep" == .property 1
+#guard elaboratesToParameter p1727_3 "Keep" == false
+#guard selectOwnedDeclaration p1727_4 "abs" == .property 2
+#guard elaboratesToParameter p1727_4 "abs" == false
+#guard selectOwnedDeclaration p1727_5 "f" == .parameter 0
+#guard elaboratesToParameter p1727_5 "f" == true
+#guard selectOwnedDeclaration p1727_6 "x" == .parameter 0
+#guard elaboratesToParameter p1727_6 "x" == true
+#guard selectOwnedDeclaration p1727_0 "Lifted" == .property 0
+#guard elaboratesToParameter p1727_0 "Lifted" == false
+#guard selectOwnedDeclaration p1727_0 "Kept" == .property 0
+#guard elaboratesToParameter p1727_0 "Kept" == false
+#guard promotes p1727_0 "Lifted" == some false
+#guard promotes p1727_0 "Kept" == some false
+#guard promotes p1727_1 "Held" == some false
+#guard promotes p1727_1 "Inc" == some false
+#guard promotes p1727_2 "Abs" == some false
+#guard promotes p1727_2 "Inc" == some false
+#guard forwardingSource p1727_2 true "x" == .forwardedParameter
+#guard promotes p1727_3 "Keep" == some false
 #guard liftingSlotRole .user 0 true == .callable -- Held: Inc
 #guard liftingSlotRole .strictValue 0 true == .value -- Abs: Inc
 
 -- witness/spread-ends-known-positions: Add(a, b) = a + b \n Inc(x) = x + 1 \n Items = 1, 2, 3 \n Late = reduce(Items*, Add, Inc) \n Wide = take(Items*, Inc) \n Early = reduce(Items, Add, Inc) \n Early(0)
-def p1738_0 : List OwnerLevel := { parameters := [], properties := ["Items", "Late", "Wide", "Early", "Add", "Inc"] } :: prelude
-def p1738_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1738_0
-def p1738_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1738_0
-def p1738_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1738_0
-def p1738_4 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1738_0
-def p1738_5 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1738_0
-def p1738_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1738_0
-#guard selectOwnedDeclaration p1738_2 "reduce" == .property 2
-#guard elaboratesToParameter p1738_2 "reduce" == false
-#guard selectOwnedDeclaration p1738_2 "Items" == .property 1
-#guard elaboratesToParameter p1738_2 "Items" == false
-#guard selectOwnedDeclaration p1738_2 "Add" == .property 1
-#guard elaboratesToParameter p1738_2 "Add" == false
-#guard selectOwnedDeclaration p1738_2 "Inc" == .property 1
-#guard elaboratesToParameter p1738_2 "Inc" == false
-#guard selectOwnedDeclaration p1738_3 "take" == .property 2
-#guard elaboratesToParameter p1738_3 "take" == false
-#guard selectOwnedDeclaration p1738_3 "Items" == .property 1
-#guard elaboratesToParameter p1738_3 "Items" == false
-#guard selectOwnedDeclaration p1738_3 "Inc" == .property 1
-#guard elaboratesToParameter p1738_3 "Inc" == false
-#guard selectOwnedDeclaration p1738_4 "reduce" == .property 2
-#guard elaboratesToParameter p1738_4 "reduce" == false
-#guard selectOwnedDeclaration p1738_4 "Items" == .property 1
-#guard elaboratesToParameter p1738_4 "Items" == false
-#guard selectOwnedDeclaration p1738_4 "Add" == .property 1
-#guard elaboratesToParameter p1738_4 "Add" == false
-#guard selectOwnedDeclaration p1738_4 "Inc" == .property 1
-#guard elaboratesToParameter p1738_4 "Inc" == false
-#guard selectOwnedDeclaration p1738_5 "a" == .parameter 0
-#guard elaboratesToParameter p1738_5 "a" == true
-#guard selectOwnedDeclaration p1738_5 "b" == .parameter 0
-#guard elaboratesToParameter p1738_5 "b" == true
-#guard selectOwnedDeclaration p1738_6 "x" == .parameter 0
-#guard elaboratesToParameter p1738_6 "x" == true
-#guard selectOwnedDeclaration p1738_0 "Early" == .property 0
-#guard elaboratesToParameter p1738_0 "Early" == false
-#guard promotes p1738_0 "Early" == some false
-#guard promotes p1738_2 "reduce" == some false
-#guard promotes p1738_2 "Items" == some false
-#guard promotes p1738_2 "Add" == some false
-#guard promotes p1738_2 "Inc" == some false
-#guard promotes p1738_3 "take" == some false
-#guard promotes p1738_3 "Items" == some false
-#guard promotes p1738_3 "Inc" == some false
-#guard forwardingSource p1738_3 true "x" == .forwardedParameter
-#guard promotes p1738_4 "reduce" == some false
-#guard promotes p1738_4 "Items" == some false
-#guard promotes p1738_4 "Add" == some false
-#guard promotes p1738_4 "Inc" == some false
-#guard forwardingSource p1738_4 true "x" == .forwardedParameter
+def p1728_0 : List OwnerLevel := { parameters := [], properties := ["Items", "Late", "Wide", "Early", "Add", "Inc"] } :: prelude
+def p1728_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1728_0
+def p1728_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1728_0
+def p1728_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1728_0
+def p1728_4 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1728_0
+def p1728_5 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1728_0
+def p1728_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1728_0
+#guard selectOwnedDeclaration p1728_2 "reduce" == .property 2
+#guard elaboratesToParameter p1728_2 "reduce" == false
+#guard selectOwnedDeclaration p1728_2 "Items" == .property 1
+#guard elaboratesToParameter p1728_2 "Items" == false
+#guard selectOwnedDeclaration p1728_2 "Add" == .property 1
+#guard elaboratesToParameter p1728_2 "Add" == false
+#guard selectOwnedDeclaration p1728_2 "Inc" == .property 1
+#guard elaboratesToParameter p1728_2 "Inc" == false
+#guard selectOwnedDeclaration p1728_3 "take" == .property 2
+#guard elaboratesToParameter p1728_3 "take" == false
+#guard selectOwnedDeclaration p1728_3 "Items" == .property 1
+#guard elaboratesToParameter p1728_3 "Items" == false
+#guard selectOwnedDeclaration p1728_3 "Inc" == .property 1
+#guard elaboratesToParameter p1728_3 "Inc" == false
+#guard selectOwnedDeclaration p1728_4 "reduce" == .property 2
+#guard elaboratesToParameter p1728_4 "reduce" == false
+#guard selectOwnedDeclaration p1728_4 "Items" == .property 1
+#guard elaboratesToParameter p1728_4 "Items" == false
+#guard selectOwnedDeclaration p1728_4 "Add" == .property 1
+#guard elaboratesToParameter p1728_4 "Add" == false
+#guard selectOwnedDeclaration p1728_4 "Inc" == .property 1
+#guard elaboratesToParameter p1728_4 "Inc" == false
+#guard selectOwnedDeclaration p1728_5 "a" == .parameter 0
+#guard elaboratesToParameter p1728_5 "a" == true
+#guard selectOwnedDeclaration p1728_5 "b" == .parameter 0
+#guard elaboratesToParameter p1728_5 "b" == true
+#guard selectOwnedDeclaration p1728_6 "x" == .parameter 0
+#guard elaboratesToParameter p1728_6 "x" == true
+#guard selectOwnedDeclaration p1728_0 "Early" == .property 0
+#guard elaboratesToParameter p1728_0 "Early" == false
+#guard promotes p1728_0 "Early" == some false
+#guard promotes p1728_2 "reduce" == some false
+#guard promotes p1728_2 "Items" == some false
+#guard promotes p1728_2 "Add" == some false
+#guard promotes p1728_2 "Inc" == some false
+#guard promotes p1728_3 "take" == some false
+#guard promotes p1728_3 "Items" == some false
+#guard promotes p1728_3 "Inc" == some false
+#guard forwardingSource p1728_3 true "x" == .forwardedParameter
+#guard promotes p1728_4 "reduce" == some false
+#guard promotes p1728_4 "Items" == some false
+#guard promotes p1728_4 "Add" == some false
+#guard promotes p1728_4 "Inc" == some false
+#guard forwardingSource p1728_4 true "x" == .forwardedParameter
 #guard liftingSlotRole (.builtin .reduceBuiltin) 1 false == .callable -- reduce: Add
 #guard liftingSlotRole (.builtin .reduceBuiltin) 2 false == .callable -- reduce: Inc
 #guard liftingSlotRole (.builtin .takeBuiltin) 1 false == .value -- take: Inc
@@ -48808,57 +48683,57 @@ def p1738_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1
 #guard liftingSlotRole (.builtin .reduceBuiltin) 2 true == .value -- reduce: Inc
 
 -- witness/spread-ends-known-positions/alpha-rename: w1(w2, w3) = w2 + w3 \n w4(w5) = w5 + 1 \n w6 = 1, 2, 3 \n w7 = reduce(w6*, w1, w4) \n w8 = take(w6*, w4) \n w9 = reduce(w6, w1, w4) \n w9(0)
-def p1739_0 : List OwnerLevel := { parameters := [], properties := ["w6", "w7", "w8", "w9", "w1", "w4"] } :: prelude
-def p1739_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1739_0
-def p1739_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1739_0
-def p1739_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w5"] } :: p1739_0
-def p1739_4 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w5"] } :: p1739_0
-def p1739_5 : List OwnerLevel := { parameters := ["w2", "w3"], properties := [] } :: p1739_0
-def p1739_6 : List OwnerLevel := { parameters := ["w5"], properties := [] } :: p1739_0
-#guard selectOwnedDeclaration p1739_2 "reduce" == .property 2
-#guard elaboratesToParameter p1739_2 "reduce" == false
-#guard selectOwnedDeclaration p1739_2 "w6" == .property 1
-#guard elaboratesToParameter p1739_2 "w6" == false
-#guard selectOwnedDeclaration p1739_2 "w1" == .property 1
-#guard elaboratesToParameter p1739_2 "w1" == false
-#guard selectOwnedDeclaration p1739_2 "w4" == .property 1
-#guard elaboratesToParameter p1739_2 "w4" == false
-#guard selectOwnedDeclaration p1739_3 "take" == .property 2
-#guard elaboratesToParameter p1739_3 "take" == false
-#guard selectOwnedDeclaration p1739_3 "w6" == .property 1
-#guard elaboratesToParameter p1739_3 "w6" == false
-#guard selectOwnedDeclaration p1739_3 "w4" == .property 1
-#guard elaboratesToParameter p1739_3 "w4" == false
-#guard selectOwnedDeclaration p1739_4 "reduce" == .property 2
-#guard elaboratesToParameter p1739_4 "reduce" == false
-#guard selectOwnedDeclaration p1739_4 "w6" == .property 1
-#guard elaboratesToParameter p1739_4 "w6" == false
-#guard selectOwnedDeclaration p1739_4 "w1" == .property 1
-#guard elaboratesToParameter p1739_4 "w1" == false
-#guard selectOwnedDeclaration p1739_4 "w4" == .property 1
-#guard elaboratesToParameter p1739_4 "w4" == false
-#guard selectOwnedDeclaration p1739_5 "w2" == .parameter 0
-#guard elaboratesToParameter p1739_5 "w2" == true
-#guard selectOwnedDeclaration p1739_5 "w3" == .parameter 0
-#guard elaboratesToParameter p1739_5 "w3" == true
-#guard selectOwnedDeclaration p1739_6 "w5" == .parameter 0
-#guard elaboratesToParameter p1739_6 "w5" == true
-#guard selectOwnedDeclaration p1739_0 "w9" == .property 0
-#guard elaboratesToParameter p1739_0 "w9" == false
-#guard promotes p1739_0 "w9" == some false
-#guard promotes p1739_2 "reduce" == some false
-#guard promotes p1739_2 "w6" == some false
-#guard promotes p1739_2 "w1" == some false
-#guard promotes p1739_2 "w4" == some false
-#guard promotes p1739_3 "take" == some false
-#guard promotes p1739_3 "w6" == some false
-#guard promotes p1739_3 "w4" == some false
-#guard forwardingSource p1739_3 true "w5" == .forwardedParameter
-#guard promotes p1739_4 "reduce" == some false
-#guard promotes p1739_4 "w6" == some false
-#guard promotes p1739_4 "w1" == some false
-#guard promotes p1739_4 "w4" == some false
-#guard forwardingSource p1739_4 true "w5" == .forwardedParameter
+def p1729_0 : List OwnerLevel := { parameters := [], properties := ["w6", "w7", "w8", "w9", "w1", "w4"] } :: prelude
+def p1729_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1729_0
+def p1729_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1729_0
+def p1729_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w5"] } :: p1729_0
+def p1729_4 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w5"] } :: p1729_0
+def p1729_5 : List OwnerLevel := { parameters := ["w2", "w3"], properties := [] } :: p1729_0
+def p1729_6 : List OwnerLevel := { parameters := ["w5"], properties := [] } :: p1729_0
+#guard selectOwnedDeclaration p1729_2 "reduce" == .property 2
+#guard elaboratesToParameter p1729_2 "reduce" == false
+#guard selectOwnedDeclaration p1729_2 "w6" == .property 1
+#guard elaboratesToParameter p1729_2 "w6" == false
+#guard selectOwnedDeclaration p1729_2 "w1" == .property 1
+#guard elaboratesToParameter p1729_2 "w1" == false
+#guard selectOwnedDeclaration p1729_2 "w4" == .property 1
+#guard elaboratesToParameter p1729_2 "w4" == false
+#guard selectOwnedDeclaration p1729_3 "take" == .property 2
+#guard elaboratesToParameter p1729_3 "take" == false
+#guard selectOwnedDeclaration p1729_3 "w6" == .property 1
+#guard elaboratesToParameter p1729_3 "w6" == false
+#guard selectOwnedDeclaration p1729_3 "w4" == .property 1
+#guard elaboratesToParameter p1729_3 "w4" == false
+#guard selectOwnedDeclaration p1729_4 "reduce" == .property 2
+#guard elaboratesToParameter p1729_4 "reduce" == false
+#guard selectOwnedDeclaration p1729_4 "w6" == .property 1
+#guard elaboratesToParameter p1729_4 "w6" == false
+#guard selectOwnedDeclaration p1729_4 "w1" == .property 1
+#guard elaboratesToParameter p1729_4 "w1" == false
+#guard selectOwnedDeclaration p1729_4 "w4" == .property 1
+#guard elaboratesToParameter p1729_4 "w4" == false
+#guard selectOwnedDeclaration p1729_5 "w2" == .parameter 0
+#guard elaboratesToParameter p1729_5 "w2" == true
+#guard selectOwnedDeclaration p1729_5 "w3" == .parameter 0
+#guard elaboratesToParameter p1729_5 "w3" == true
+#guard selectOwnedDeclaration p1729_6 "w5" == .parameter 0
+#guard elaboratesToParameter p1729_6 "w5" == true
+#guard selectOwnedDeclaration p1729_0 "w9" == .property 0
+#guard elaboratesToParameter p1729_0 "w9" == false
+#guard promotes p1729_0 "w9" == some false
+#guard promotes p1729_2 "reduce" == some false
+#guard promotes p1729_2 "w6" == some false
+#guard promotes p1729_2 "w1" == some false
+#guard promotes p1729_2 "w4" == some false
+#guard promotes p1729_3 "take" == some false
+#guard promotes p1729_3 "w6" == some false
+#guard promotes p1729_3 "w4" == some false
+#guard forwardingSource p1729_3 true "w5" == .forwardedParameter
+#guard promotes p1729_4 "reduce" == some false
+#guard promotes p1729_4 "w6" == some false
+#guard promotes p1729_4 "w1" == some false
+#guard promotes p1729_4 "w4" == some false
+#guard forwardingSource p1729_4 true "w5" == .forwardedParameter
 #guard liftingSlotRole (.builtin .reduceBuiltin) 1 false == .callable -- reduce: w1
 #guard liftingSlotRole (.builtin .reduceBuiltin) 2 false == .callable -- reduce: w4
 #guard liftingSlotRole (.builtin .takeBuiltin) 1 false == .value -- take: w4
@@ -48866,57 +48741,57 @@ def p1739_6 : List OwnerLevel := { parameters := ["w5"], properties := [] } :: p
 #guard liftingSlotRole (.builtin .reduceBuiltin) 2 true == .value -- reduce: w4
 
 -- witness/spread-ends-known-positions/declaration-reorder: Early = reduce(Items, Add, Inc) \n Wide = take(Items*, Inc) \n Late = reduce(Items*, Add, Inc) \n Items = 1, 2, 3 \n Inc(x) = x + 1 \n Add(a, b) = a + b \n Early(0)
-def p1740_0 : List OwnerLevel := { parameters := [], properties := ["Early", "Wide", "Late", "Items", "Inc", "Add"] } :: prelude
-def p1740_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1740_0
-def p1740_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1740_0
-def p1740_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1740_0
-def p1740_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1740_0
-def p1740_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1740_0
-def p1740_6 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1740_0
-#guard selectOwnedDeclaration p1740_1 "reduce" == .property 2
-#guard elaboratesToParameter p1740_1 "reduce" == false
-#guard selectOwnedDeclaration p1740_1 "Items" == .property 1
-#guard elaboratesToParameter p1740_1 "Items" == false
-#guard selectOwnedDeclaration p1740_1 "Add" == .property 1
-#guard elaboratesToParameter p1740_1 "Add" == false
-#guard selectOwnedDeclaration p1740_1 "Inc" == .property 1
-#guard elaboratesToParameter p1740_1 "Inc" == false
-#guard selectOwnedDeclaration p1740_2 "take" == .property 2
-#guard elaboratesToParameter p1740_2 "take" == false
-#guard selectOwnedDeclaration p1740_2 "Items" == .property 1
-#guard elaboratesToParameter p1740_2 "Items" == false
-#guard selectOwnedDeclaration p1740_2 "Inc" == .property 1
-#guard elaboratesToParameter p1740_2 "Inc" == false
-#guard selectOwnedDeclaration p1740_3 "reduce" == .property 2
-#guard elaboratesToParameter p1740_3 "reduce" == false
-#guard selectOwnedDeclaration p1740_3 "Items" == .property 1
-#guard elaboratesToParameter p1740_3 "Items" == false
-#guard selectOwnedDeclaration p1740_3 "Add" == .property 1
-#guard elaboratesToParameter p1740_3 "Add" == false
-#guard selectOwnedDeclaration p1740_3 "Inc" == .property 1
-#guard elaboratesToParameter p1740_3 "Inc" == false
-#guard selectOwnedDeclaration p1740_5 "x" == .parameter 0
-#guard elaboratesToParameter p1740_5 "x" == true
-#guard selectOwnedDeclaration p1740_6 "a" == .parameter 0
-#guard elaboratesToParameter p1740_6 "a" == true
-#guard selectOwnedDeclaration p1740_6 "b" == .parameter 0
-#guard elaboratesToParameter p1740_6 "b" == true
-#guard selectOwnedDeclaration p1740_0 "Early" == .property 0
-#guard elaboratesToParameter p1740_0 "Early" == false
-#guard promotes p1740_0 "Early" == some false
-#guard promotes p1740_1 "reduce" == some false
-#guard promotes p1740_1 "Items" == some false
-#guard promotes p1740_1 "Add" == some false
-#guard promotes p1740_1 "Inc" == some false
-#guard forwardingSource p1740_1 true "x" == .forwardedParameter
-#guard promotes p1740_2 "take" == some false
-#guard promotes p1740_2 "Items" == some false
-#guard promotes p1740_2 "Inc" == some false
-#guard forwardingSource p1740_2 true "x" == .forwardedParameter
-#guard promotes p1740_3 "reduce" == some false
-#guard promotes p1740_3 "Items" == some false
-#guard promotes p1740_3 "Add" == some false
-#guard promotes p1740_3 "Inc" == some false
+def p1730_0 : List OwnerLevel := { parameters := [], properties := ["Early", "Wide", "Late", "Items", "Inc", "Add"] } :: prelude
+def p1730_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1730_0
+def p1730_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1730_0
+def p1730_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1730_0
+def p1730_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1730_0
+def p1730_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1730_0
+def p1730_6 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p1730_0
+#guard selectOwnedDeclaration p1730_1 "reduce" == .property 2
+#guard elaboratesToParameter p1730_1 "reduce" == false
+#guard selectOwnedDeclaration p1730_1 "Items" == .property 1
+#guard elaboratesToParameter p1730_1 "Items" == false
+#guard selectOwnedDeclaration p1730_1 "Add" == .property 1
+#guard elaboratesToParameter p1730_1 "Add" == false
+#guard selectOwnedDeclaration p1730_1 "Inc" == .property 1
+#guard elaboratesToParameter p1730_1 "Inc" == false
+#guard selectOwnedDeclaration p1730_2 "take" == .property 2
+#guard elaboratesToParameter p1730_2 "take" == false
+#guard selectOwnedDeclaration p1730_2 "Items" == .property 1
+#guard elaboratesToParameter p1730_2 "Items" == false
+#guard selectOwnedDeclaration p1730_2 "Inc" == .property 1
+#guard elaboratesToParameter p1730_2 "Inc" == false
+#guard selectOwnedDeclaration p1730_3 "reduce" == .property 2
+#guard elaboratesToParameter p1730_3 "reduce" == false
+#guard selectOwnedDeclaration p1730_3 "Items" == .property 1
+#guard elaboratesToParameter p1730_3 "Items" == false
+#guard selectOwnedDeclaration p1730_3 "Add" == .property 1
+#guard elaboratesToParameter p1730_3 "Add" == false
+#guard selectOwnedDeclaration p1730_3 "Inc" == .property 1
+#guard elaboratesToParameter p1730_3 "Inc" == false
+#guard selectOwnedDeclaration p1730_5 "x" == .parameter 0
+#guard elaboratesToParameter p1730_5 "x" == true
+#guard selectOwnedDeclaration p1730_6 "a" == .parameter 0
+#guard elaboratesToParameter p1730_6 "a" == true
+#guard selectOwnedDeclaration p1730_6 "b" == .parameter 0
+#guard elaboratesToParameter p1730_6 "b" == true
+#guard selectOwnedDeclaration p1730_0 "Early" == .property 0
+#guard elaboratesToParameter p1730_0 "Early" == false
+#guard promotes p1730_0 "Early" == some false
+#guard promotes p1730_1 "reduce" == some false
+#guard promotes p1730_1 "Items" == some false
+#guard promotes p1730_1 "Add" == some false
+#guard promotes p1730_1 "Inc" == some false
+#guard forwardingSource p1730_1 true "x" == .forwardedParameter
+#guard promotes p1730_2 "take" == some false
+#guard promotes p1730_2 "Items" == some false
+#guard promotes p1730_2 "Inc" == some false
+#guard forwardingSource p1730_2 true "x" == .forwardedParameter
+#guard promotes p1730_3 "reduce" == some false
+#guard promotes p1730_3 "Items" == some false
+#guard promotes p1730_3 "Add" == some false
+#guard promotes p1730_3 "Inc" == some false
 #guard liftingSlotRole (.builtin .reduceBuiltin) 1 true == .callable -- reduce: Add
 #guard liftingSlotRole (.builtin .reduceBuiltin) 2 true == .value -- reduce: Inc
 #guard liftingSlotRole (.builtin .takeBuiltin) 1 false == .value -- take: Inc
@@ -48924,672 +48799,672 @@ def p1740_6 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } 
 #guard liftingSlotRole (.builtin .reduceBuiltin) 2 false == .callable -- reduce: Inc
 
 -- witness/fallback-receiver-is-slot-zero: Inc(x) = x + 1 \n Apply(f, v) = f(v) \n Pick(f, 0) = 0 \n Pick(f, n) = f + n \n Kept = Inc.Apply(4) \n Lifted = Inc.Pick(2) \n Kept, Lifted(1)
-def p1741_0 : List OwnerLevel := { parameters := [], properties := ["Kept", "Lifted", "Inc", "Apply", "Pick"] } :: prelude
-def p1741_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1741_0
-def p1741_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1741_0
-def p1741_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1741_0
-def p1741_4 : List OwnerLevel := { parameters := ["f", "v"], properties := [] } :: p1741_0
-def p1741_5 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1741_0
-def p1741_6 : List OwnerLevel := { parameters := ["f", "n"], properties := [] } :: p1741_0
-#guard selectOwnedDeclaration p1741_1 "Inc" == .property 1
-#guard elaboratesToParameter p1741_1 "Inc" == false
-#guard selectOwnedDeclaration p1741_1 "Apply" == .property 1
-#guard elaboratesToParameter p1741_1 "Apply" == false
-#guard selectOwnedDeclaration p1741_2 "Inc" == .property 1
-#guard elaboratesToParameter p1741_2 "Inc" == false
-#guard selectOwnedDeclaration p1741_2 "Pick" == .property 1
-#guard elaboratesToParameter p1741_2 "Pick" == false
-#guard selectOwnedDeclaration p1741_3 "x" == .parameter 0
-#guard elaboratesToParameter p1741_3 "x" == true
-#guard selectOwnedDeclaration p1741_4 "f" == .parameter 0
-#guard elaboratesToParameter p1741_4 "f" == true
-#guard selectOwnedDeclaration p1741_4 "v" == .parameter 0
-#guard elaboratesToParameter p1741_4 "v" == true
-#guard selectOwnedDeclaration p1741_6 "f" == .parameter 0
-#guard elaboratesToParameter p1741_6 "f" == true
-#guard selectOwnedDeclaration p1741_6 "n" == .parameter 0
-#guard elaboratesToParameter p1741_6 "n" == true
-#guard selectOwnedDeclaration p1741_0 "Kept" == .property 0
-#guard elaboratesToParameter p1741_0 "Kept" == false
-#guard selectOwnedDeclaration p1741_0 "Lifted" == .property 0
-#guard elaboratesToParameter p1741_0 "Lifted" == false
-#guard promotes p1741_0 "Kept" == some false
-#guard promotes p1741_0 "Lifted" == some false
-#guard promotes p1741_1 "Inc" == some false
-#guard promotes p1741_1 "Apply" == some false
-#guard promotes p1741_2 "Inc" == some false
-#guard promotes p1741_2 "Pick" == some false
-#guard forwardingSource p1741_2 true "x" == .forwardedParameter
+def p1731_0 : List OwnerLevel := { parameters := [], properties := ["Kept", "Lifted", "Inc", "Apply", "Pick"] } :: prelude
+def p1731_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1731_0
+def p1731_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1731_0
+def p1731_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1731_0
+def p1731_4 : List OwnerLevel := { parameters := ["f", "v"], properties := [] } :: p1731_0
+def p1731_5 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1731_0
+def p1731_6 : List OwnerLevel := { parameters := ["f", "n"], properties := [] } :: p1731_0
+#guard selectOwnedDeclaration p1731_1 "Inc" == .property 1
+#guard elaboratesToParameter p1731_1 "Inc" == false
+#guard selectOwnedDeclaration p1731_1 "Apply" == .property 1
+#guard elaboratesToParameter p1731_1 "Apply" == false
+#guard selectOwnedDeclaration p1731_2 "Inc" == .property 1
+#guard elaboratesToParameter p1731_2 "Inc" == false
+#guard selectOwnedDeclaration p1731_2 "Pick" == .property 1
+#guard elaboratesToParameter p1731_2 "Pick" == false
+#guard selectOwnedDeclaration p1731_3 "x" == .parameter 0
+#guard elaboratesToParameter p1731_3 "x" == true
+#guard selectOwnedDeclaration p1731_4 "f" == .parameter 0
+#guard elaboratesToParameter p1731_4 "f" == true
+#guard selectOwnedDeclaration p1731_4 "v" == .parameter 0
+#guard elaboratesToParameter p1731_4 "v" == true
+#guard selectOwnedDeclaration p1731_6 "f" == .parameter 0
+#guard elaboratesToParameter p1731_6 "f" == true
+#guard selectOwnedDeclaration p1731_6 "n" == .parameter 0
+#guard elaboratesToParameter p1731_6 "n" == true
+#guard selectOwnedDeclaration p1731_0 "Kept" == .property 0
+#guard elaboratesToParameter p1731_0 "Kept" == false
+#guard selectOwnedDeclaration p1731_0 "Lifted" == .property 0
+#guard elaboratesToParameter p1731_0 "Lifted" == false
+#guard promotes p1731_0 "Kept" == some false
+#guard promotes p1731_0 "Lifted" == some false
+#guard promotes p1731_1 "Inc" == some false
+#guard promotes p1731_1 "Apply" == some false
+#guard promotes p1731_2 "Inc" == some false
+#guard promotes p1731_2 "Pick" == some false
+#guard forwardingSource p1731_2 true "x" == .forwardedParameter
 #guard liftingSlotRole .user 0 true == .callable -- Apply: Inc
 #guard liftingSlotRole .family 0 true == .value -- Pick: Inc
 #guard familyLiftingSignature? [clause (.sequenceValue [.bind "f", .litInt 0]), clause (.sequenceValue [.bind "f", .bind "n"])] == some [.capture { name := "f" }, .capture { name := "n" }] -- family Pick
 
 -- witness/fallback-receiver-is-slot-zero/alpha-rename: w1(w2) = w2 + 1 \n w3(w4, w5) = w4(w5) \n w6(w4, 0) = 0 \n w6(w4, w7) = w4 + w7 \n w8 = w1.w3(4) \n w9 = w1.w6(2) \n w8, w9(1)
-def p1742_0 : List OwnerLevel := { parameters := [], properties := ["w8", "w9", "w1", "w3", "w6"] } :: prelude
-def p1742_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1742_0
-def p1742_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1742_0
-def p1742_3 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1742_0
-def p1742_4 : List OwnerLevel := { parameters := ["w4", "w5"], properties := [] } :: p1742_0
-def p1742_5 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1742_0
-def p1742_6 : List OwnerLevel := { parameters := ["w4", "w7"], properties := [] } :: p1742_0
-#guard selectOwnedDeclaration p1742_1 "w1" == .property 1
-#guard elaboratesToParameter p1742_1 "w1" == false
-#guard selectOwnedDeclaration p1742_1 "w3" == .property 1
-#guard elaboratesToParameter p1742_1 "w3" == false
-#guard selectOwnedDeclaration p1742_2 "w1" == .property 1
-#guard elaboratesToParameter p1742_2 "w1" == false
-#guard selectOwnedDeclaration p1742_2 "w6" == .property 1
-#guard elaboratesToParameter p1742_2 "w6" == false
-#guard selectOwnedDeclaration p1742_3 "w2" == .parameter 0
-#guard elaboratesToParameter p1742_3 "w2" == true
-#guard selectOwnedDeclaration p1742_4 "w4" == .parameter 0
-#guard elaboratesToParameter p1742_4 "w4" == true
-#guard selectOwnedDeclaration p1742_4 "w5" == .parameter 0
-#guard elaboratesToParameter p1742_4 "w5" == true
-#guard selectOwnedDeclaration p1742_6 "w4" == .parameter 0
-#guard elaboratesToParameter p1742_6 "w4" == true
-#guard selectOwnedDeclaration p1742_6 "w7" == .parameter 0
-#guard elaboratesToParameter p1742_6 "w7" == true
-#guard selectOwnedDeclaration p1742_0 "w8" == .property 0
-#guard elaboratesToParameter p1742_0 "w8" == false
-#guard selectOwnedDeclaration p1742_0 "w9" == .property 0
-#guard elaboratesToParameter p1742_0 "w9" == false
-#guard promotes p1742_0 "w8" == some false
-#guard promotes p1742_0 "w9" == some false
-#guard promotes p1742_1 "w1" == some false
-#guard promotes p1742_1 "w3" == some false
-#guard promotes p1742_2 "w1" == some false
-#guard promotes p1742_2 "w6" == some false
-#guard forwardingSource p1742_2 true "w2" == .forwardedParameter
+def p1732_0 : List OwnerLevel := { parameters := [], properties := ["w8", "w9", "w1", "w3", "w6"] } :: prelude
+def p1732_1 : List OwnerLevel := { parameters := [], properties := [] } :: p1732_0
+def p1732_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1732_0
+def p1732_3 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1732_0
+def p1732_4 : List OwnerLevel := { parameters := ["w4", "w5"], properties := [] } :: p1732_0
+def p1732_5 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1732_0
+def p1732_6 : List OwnerLevel := { parameters := ["w4", "w7"], properties := [] } :: p1732_0
+#guard selectOwnedDeclaration p1732_1 "w1" == .property 1
+#guard elaboratesToParameter p1732_1 "w1" == false
+#guard selectOwnedDeclaration p1732_1 "w3" == .property 1
+#guard elaboratesToParameter p1732_1 "w3" == false
+#guard selectOwnedDeclaration p1732_2 "w1" == .property 1
+#guard elaboratesToParameter p1732_2 "w1" == false
+#guard selectOwnedDeclaration p1732_2 "w6" == .property 1
+#guard elaboratesToParameter p1732_2 "w6" == false
+#guard selectOwnedDeclaration p1732_3 "w2" == .parameter 0
+#guard elaboratesToParameter p1732_3 "w2" == true
+#guard selectOwnedDeclaration p1732_4 "w4" == .parameter 0
+#guard elaboratesToParameter p1732_4 "w4" == true
+#guard selectOwnedDeclaration p1732_4 "w5" == .parameter 0
+#guard elaboratesToParameter p1732_4 "w5" == true
+#guard selectOwnedDeclaration p1732_6 "w4" == .parameter 0
+#guard elaboratesToParameter p1732_6 "w4" == true
+#guard selectOwnedDeclaration p1732_6 "w7" == .parameter 0
+#guard elaboratesToParameter p1732_6 "w7" == true
+#guard selectOwnedDeclaration p1732_0 "w8" == .property 0
+#guard elaboratesToParameter p1732_0 "w8" == false
+#guard selectOwnedDeclaration p1732_0 "w9" == .property 0
+#guard elaboratesToParameter p1732_0 "w9" == false
+#guard promotes p1732_0 "w8" == some false
+#guard promotes p1732_0 "w9" == some false
+#guard promotes p1732_1 "w1" == some false
+#guard promotes p1732_1 "w3" == some false
+#guard promotes p1732_2 "w1" == some false
+#guard promotes p1732_2 "w6" == some false
+#guard forwardingSource p1732_2 true "w2" == .forwardedParameter
 #guard liftingSlotRole .user 0 true == .callable -- w3: w1
 #guard liftingSlotRole .family 0 true == .value -- w6: w1
 #guard familyLiftingSignature? [clause (.sequenceValue [.bind "w4", .litInt 0]), clause (.sequenceValue [.bind "w4", .bind "w7"])] == some [.capture { name := "w4" }, .capture { name := "w7" }] -- family w6
 
 -- witness/fallback-receiver-is-slot-zero/declaration-reorder: Lifted = Inc.Pick(2) \n Kept = Inc.Apply(4) \n Pick(f, 0) = 0 \n Pick(f, n) = f + n \n Apply(f, v) = f(v) \n Inc(x) = x + 1 \n Kept, Lifted(1)
-def p1743_0 : List OwnerLevel := { parameters := [], properties := ["Lifted", "Kept", "Pick", "Apply", "Inc"] } :: prelude
-def p1743_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1743_0
-def p1743_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1743_0
-def p1743_3 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1743_0
-def p1743_4 : List OwnerLevel := { parameters := ["f", "n"], properties := [] } :: p1743_0
-def p1743_5 : List OwnerLevel := { parameters := ["f", "v"], properties := [] } :: p1743_0
-def p1743_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1743_0
-#guard selectOwnedDeclaration p1743_1 "Inc" == .property 1
-#guard elaboratesToParameter p1743_1 "Inc" == false
-#guard selectOwnedDeclaration p1743_1 "Pick" == .property 1
-#guard elaboratesToParameter p1743_1 "Pick" == false
-#guard selectOwnedDeclaration p1743_2 "Inc" == .property 1
-#guard elaboratesToParameter p1743_2 "Inc" == false
-#guard selectOwnedDeclaration p1743_2 "Apply" == .property 1
-#guard elaboratesToParameter p1743_2 "Apply" == false
-#guard selectOwnedDeclaration p1743_4 "f" == .parameter 0
-#guard elaboratesToParameter p1743_4 "f" == true
-#guard selectOwnedDeclaration p1743_4 "n" == .parameter 0
-#guard elaboratesToParameter p1743_4 "n" == true
-#guard selectOwnedDeclaration p1743_5 "f" == .parameter 0
-#guard elaboratesToParameter p1743_5 "f" == true
-#guard selectOwnedDeclaration p1743_5 "v" == .parameter 0
-#guard elaboratesToParameter p1743_5 "v" == true
-#guard selectOwnedDeclaration p1743_6 "x" == .parameter 0
-#guard elaboratesToParameter p1743_6 "x" == true
-#guard selectOwnedDeclaration p1743_0 "Kept" == .property 0
-#guard elaboratesToParameter p1743_0 "Kept" == false
-#guard selectOwnedDeclaration p1743_0 "Lifted" == .property 0
-#guard elaboratesToParameter p1743_0 "Lifted" == false
-#guard promotes p1743_0 "Kept" == some false
-#guard promotes p1743_0 "Lifted" == some false
-#guard promotes p1743_1 "Inc" == some false
-#guard promotes p1743_1 "Pick" == some false
-#guard forwardingSource p1743_1 true "x" == .forwardedParameter
-#guard promotes p1743_2 "Inc" == some false
-#guard promotes p1743_2 "Apply" == some false
+def p1733_0 : List OwnerLevel := { parameters := [], properties := ["Lifted", "Kept", "Pick", "Apply", "Inc"] } :: prelude
+def p1733_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1733_0
+def p1733_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1733_0
+def p1733_3 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p1733_0
+def p1733_4 : List OwnerLevel := { parameters := ["f", "n"], properties := [] } :: p1733_0
+def p1733_5 : List OwnerLevel := { parameters := ["f", "v"], properties := [] } :: p1733_0
+def p1733_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1733_0
+#guard selectOwnedDeclaration p1733_1 "Inc" == .property 1
+#guard elaboratesToParameter p1733_1 "Inc" == false
+#guard selectOwnedDeclaration p1733_1 "Pick" == .property 1
+#guard elaboratesToParameter p1733_1 "Pick" == false
+#guard selectOwnedDeclaration p1733_2 "Inc" == .property 1
+#guard elaboratesToParameter p1733_2 "Inc" == false
+#guard selectOwnedDeclaration p1733_2 "Apply" == .property 1
+#guard elaboratesToParameter p1733_2 "Apply" == false
+#guard selectOwnedDeclaration p1733_4 "f" == .parameter 0
+#guard elaboratesToParameter p1733_4 "f" == true
+#guard selectOwnedDeclaration p1733_4 "n" == .parameter 0
+#guard elaboratesToParameter p1733_4 "n" == true
+#guard selectOwnedDeclaration p1733_5 "f" == .parameter 0
+#guard elaboratesToParameter p1733_5 "f" == true
+#guard selectOwnedDeclaration p1733_5 "v" == .parameter 0
+#guard elaboratesToParameter p1733_5 "v" == true
+#guard selectOwnedDeclaration p1733_6 "x" == .parameter 0
+#guard elaboratesToParameter p1733_6 "x" == true
+#guard selectOwnedDeclaration p1733_0 "Kept" == .property 0
+#guard elaboratesToParameter p1733_0 "Kept" == false
+#guard selectOwnedDeclaration p1733_0 "Lifted" == .property 0
+#guard elaboratesToParameter p1733_0 "Lifted" == false
+#guard promotes p1733_0 "Kept" == some false
+#guard promotes p1733_0 "Lifted" == some false
+#guard promotes p1733_1 "Inc" == some false
+#guard promotes p1733_1 "Pick" == some false
+#guard forwardingSource p1733_1 true "x" == .forwardedParameter
+#guard promotes p1733_2 "Inc" == some false
+#guard promotes p1733_2 "Apply" == some false
 #guard liftingSlotRole .family 0 true == .value -- Pick: Inc
 #guard liftingSlotRole .user 0 true == .callable -- Apply: Inc
 #guard familyLiftingSignature? [clause (.sequenceValue [.bind "f", .litInt 0]), clause (.sequenceValue [.bind "f", .bind "n"])] == some [.capture { name := "f" }, .capture { name := "n" }] -- family Pick
 
 -- witness/runtime-receiver-decides-nothing: Inc(x) = x + 1 \n Go(r, f) = f(r) \n Use(p, x) = p.Go(Inc) \n Use(5, 0)
-def p1744_0 : List OwnerLevel := { parameters := [], properties := ["Inc", "Go", "Use"] } :: prelude
-def p1744_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1744_0
-def p1744_2 : List OwnerLevel := { parameters := ["r", "f"], properties := [] } :: p1744_0
-def p1744_3 : List OwnerLevel := { parameters := ["p", "x"], properties := [] } :: p1744_0
-#guard selectOwnedDeclaration p1744_1 "x" == .parameter 0
-#guard elaboratesToParameter p1744_1 "x" == true
-#guard selectOwnedDeclaration p1744_2 "f" == .parameter 0
-#guard elaboratesToParameter p1744_2 "f" == true
-#guard selectOwnedDeclaration p1744_2 "r" == .parameter 0
-#guard elaboratesToParameter p1744_2 "r" == true
-#guard selectOwnedDeclaration p1744_3 "p" == .parameter 0
-#guard elaboratesToParameter p1744_3 "p" == true
-#guard selectOwnedDeclaration p1744_3 "Go" == .property 1
-#guard elaboratesToParameter p1744_3 "Go" == false
-#guard selectOwnedDeclaration p1744_3 "Inc" == .property 1
-#guard elaboratesToParameter p1744_3 "Inc" == false
-#guard selectOwnedDeclaration p1744_0 "Use" == .property 0
-#guard elaboratesToParameter p1744_0 "Use" == false
-#guard promotes p1744_0 "Use" == some false
+def p1734_0 : List OwnerLevel := { parameters := [], properties := ["Inc", "Go", "Use"] } :: prelude
+def p1734_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1734_0
+def p1734_2 : List OwnerLevel := { parameters := ["r", "f"], properties := [] } :: p1734_0
+def p1734_3 : List OwnerLevel := { parameters := ["p", "x"], properties := [] } :: p1734_0
+#guard selectOwnedDeclaration p1734_1 "x" == .parameter 0
+#guard elaboratesToParameter p1734_1 "x" == true
+#guard selectOwnedDeclaration p1734_2 "f" == .parameter 0
+#guard elaboratesToParameter p1734_2 "f" == true
+#guard selectOwnedDeclaration p1734_2 "r" == .parameter 0
+#guard elaboratesToParameter p1734_2 "r" == true
+#guard selectOwnedDeclaration p1734_3 "p" == .parameter 0
+#guard elaboratesToParameter p1734_3 "p" == true
+#guard selectOwnedDeclaration p1734_3 "Go" == .property 1
+#guard elaboratesToParameter p1734_3 "Go" == false
+#guard selectOwnedDeclaration p1734_3 "Inc" == .property 1
+#guard elaboratesToParameter p1734_3 "Inc" == false
+#guard selectOwnedDeclaration p1734_0 "Use" == .property 0
+#guard elaboratesToParameter p1734_0 "Use" == false
+#guard promotes p1734_0 "Use" == some false
 #guard liftingSlotRole .dynamic 0 true == .callable -- .Go: Inc
 
 -- witness/runtime-receiver-decides-nothing/alpha-rename: w1(w2) = w2 + 1 \n w3(w4, w5) = w5(w4) \n w6(w7, w2) = w7.w3(w1) \n w6(5, 0)
-def p1745_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3", "w6"] } :: prelude
-def p1745_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1745_0
-def p1745_2 : List OwnerLevel := { parameters := ["w4", "w5"], properties := [] } :: p1745_0
-def p1745_3 : List OwnerLevel := { parameters := ["w7", "w2"], properties := [] } :: p1745_0
-#guard selectOwnedDeclaration p1745_1 "w2" == .parameter 0
-#guard elaboratesToParameter p1745_1 "w2" == true
-#guard selectOwnedDeclaration p1745_2 "w5" == .parameter 0
-#guard elaboratesToParameter p1745_2 "w5" == true
-#guard selectOwnedDeclaration p1745_2 "w4" == .parameter 0
-#guard elaboratesToParameter p1745_2 "w4" == true
-#guard selectOwnedDeclaration p1745_3 "w7" == .parameter 0
-#guard elaboratesToParameter p1745_3 "w7" == true
-#guard selectOwnedDeclaration p1745_3 "w3" == .property 1
-#guard elaboratesToParameter p1745_3 "w3" == false
-#guard selectOwnedDeclaration p1745_3 "w1" == .property 1
-#guard elaboratesToParameter p1745_3 "w1" == false
-#guard selectOwnedDeclaration p1745_0 "w6" == .property 0
-#guard elaboratesToParameter p1745_0 "w6" == false
-#guard promotes p1745_0 "w6" == some false
+def p1735_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3", "w6"] } :: prelude
+def p1735_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1735_0
+def p1735_2 : List OwnerLevel := { parameters := ["w4", "w5"], properties := [] } :: p1735_0
+def p1735_3 : List OwnerLevel := { parameters := ["w7", "w2"], properties := [] } :: p1735_0
+#guard selectOwnedDeclaration p1735_1 "w2" == .parameter 0
+#guard elaboratesToParameter p1735_1 "w2" == true
+#guard selectOwnedDeclaration p1735_2 "w5" == .parameter 0
+#guard elaboratesToParameter p1735_2 "w5" == true
+#guard selectOwnedDeclaration p1735_2 "w4" == .parameter 0
+#guard elaboratesToParameter p1735_2 "w4" == true
+#guard selectOwnedDeclaration p1735_3 "w7" == .parameter 0
+#guard elaboratesToParameter p1735_3 "w7" == true
+#guard selectOwnedDeclaration p1735_3 "w3" == .property 1
+#guard elaboratesToParameter p1735_3 "w3" == false
+#guard selectOwnedDeclaration p1735_3 "w1" == .property 1
+#guard elaboratesToParameter p1735_3 "w1" == false
+#guard selectOwnedDeclaration p1735_0 "w6" == .property 0
+#guard elaboratesToParameter p1735_0 "w6" == false
+#guard promotes p1735_0 "w6" == some false
 #guard liftingSlotRole .dynamic 0 true == .callable -- .w3: w1
 
 -- witness/runtime-receiver-decides-nothing/declaration-reorder: Use(p, x) = p.Go(Inc) \n Go(r, f) = f(r) \n Inc(x) = x + 1 \n Use(5, 0)
-def p1746_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Go", "Inc"] } :: prelude
-def p1746_1 : List OwnerLevel := { parameters := ["p", "x"], properties := [] } :: p1746_0
-def p1746_2 : List OwnerLevel := { parameters := ["r", "f"], properties := [] } :: p1746_0
-def p1746_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1746_0
-#guard selectOwnedDeclaration p1746_1 "p" == .parameter 0
-#guard elaboratesToParameter p1746_1 "p" == true
-#guard selectOwnedDeclaration p1746_1 "Go" == .property 1
-#guard elaboratesToParameter p1746_1 "Go" == false
-#guard selectOwnedDeclaration p1746_1 "Inc" == .property 1
-#guard elaboratesToParameter p1746_1 "Inc" == false
-#guard selectOwnedDeclaration p1746_2 "f" == .parameter 0
-#guard elaboratesToParameter p1746_2 "f" == true
-#guard selectOwnedDeclaration p1746_2 "r" == .parameter 0
-#guard elaboratesToParameter p1746_2 "r" == true
-#guard selectOwnedDeclaration p1746_3 "x" == .parameter 0
-#guard elaboratesToParameter p1746_3 "x" == true
-#guard selectOwnedDeclaration p1746_0 "Use" == .property 0
-#guard elaboratesToParameter p1746_0 "Use" == false
-#guard promotes p1746_0 "Use" == some false
+def p1736_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Go", "Inc"] } :: prelude
+def p1736_1 : List OwnerLevel := { parameters := ["p", "x"], properties := [] } :: p1736_0
+def p1736_2 : List OwnerLevel := { parameters := ["r", "f"], properties := [] } :: p1736_0
+def p1736_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1736_0
+#guard selectOwnedDeclaration p1736_1 "p" == .parameter 0
+#guard elaboratesToParameter p1736_1 "p" == true
+#guard selectOwnedDeclaration p1736_1 "Go" == .property 1
+#guard elaboratesToParameter p1736_1 "Go" == false
+#guard selectOwnedDeclaration p1736_1 "Inc" == .property 1
+#guard elaboratesToParameter p1736_1 "Inc" == false
+#guard selectOwnedDeclaration p1736_2 "f" == .parameter 0
+#guard elaboratesToParameter p1736_2 "f" == true
+#guard selectOwnedDeclaration p1736_2 "r" == .parameter 0
+#guard elaboratesToParameter p1736_2 "r" == true
+#guard selectOwnedDeclaration p1736_3 "x" == .parameter 0
+#guard elaboratesToParameter p1736_3 "x" == true
+#guard selectOwnedDeclaration p1736_0 "Use" == .property 0
+#guard elaboratesToParameter p1736_0 "Use" == false
+#guard promotes p1736_0 "Use" == some false
 #guard liftingSlotRole .dynamic 0 true == .callable -- .Go: Inc
 
 -- witness/one-unbound-name-among-several: Scale(x, k) = x * k \n Use(x) = Scale + 0 \n Use(3)
-def p1747_0 : List OwnerLevel := { parameters := [], properties := ["Scale", "Use"] } :: prelude
-def p1747_1 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p1747_0
-def p1747_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1747_0
-#guard selectOwnedDeclaration p1747_1 "x" == .parameter 0
-#guard elaboratesToParameter p1747_1 "x" == true
-#guard selectOwnedDeclaration p1747_1 "k" == .parameter 0
-#guard elaboratesToParameter p1747_1 "k" == true
-#guard selectOwnedDeclaration p1747_2 "Scale" == .property 1
-#guard elaboratesToParameter p1747_2 "Scale" == false
-#guard selectOwnedDeclaration p1747_0 "Use" == .property 0
-#guard elaboratesToParameter p1747_0 "Use" == false
-#guard promotes p1747_0 "Use" == some false
-#guard forwardingSource p1747_2 false "k" == .unavailable
+def p1737_0 : List OwnerLevel := { parameters := [], properties := ["Scale", "Use"] } :: prelude
+def p1737_1 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p1737_0
+def p1737_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1737_0
+#guard selectOwnedDeclaration p1737_1 "x" == .parameter 0
+#guard elaboratesToParameter p1737_1 "x" == true
+#guard selectOwnedDeclaration p1737_1 "k" == .parameter 0
+#guard elaboratesToParameter p1737_1 "k" == true
+#guard selectOwnedDeclaration p1737_2 "Scale" == .property 1
+#guard elaboratesToParameter p1737_2 "Scale" == false
+#guard selectOwnedDeclaration p1737_0 "Use" == .property 0
+#guard elaboratesToParameter p1737_0 "Use" == false
+#guard promotes p1737_0 "Use" == some false
+#guard forwardingSource p1737_2 false "k" == .unavailable
 
 -- witness/one-unbound-name-among-several/alpha-rename: w1(w2, w3) = w2 * w3 \n w4(w2) = w1 + 0 \n w4(3)
-def p1748_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w4"] } :: prelude
-def p1748_1 : List OwnerLevel := { parameters := ["w2", "w3"], properties := [] } :: p1748_0
-def p1748_2 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1748_0
-#guard selectOwnedDeclaration p1748_1 "w2" == .parameter 0
-#guard elaboratesToParameter p1748_1 "w2" == true
-#guard selectOwnedDeclaration p1748_1 "w3" == .parameter 0
-#guard elaboratesToParameter p1748_1 "w3" == true
-#guard selectOwnedDeclaration p1748_2 "w1" == .property 1
-#guard elaboratesToParameter p1748_2 "w1" == false
-#guard selectOwnedDeclaration p1748_0 "w4" == .property 0
-#guard elaboratesToParameter p1748_0 "w4" == false
-#guard promotes p1748_0 "w4" == some false
-#guard forwardingSource p1748_2 false "w3" == .unavailable
+def p1738_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w4"] } :: prelude
+def p1738_1 : List OwnerLevel := { parameters := ["w2", "w3"], properties := [] } :: p1738_0
+def p1738_2 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1738_0
+#guard selectOwnedDeclaration p1738_1 "w2" == .parameter 0
+#guard elaboratesToParameter p1738_1 "w2" == true
+#guard selectOwnedDeclaration p1738_1 "w3" == .parameter 0
+#guard elaboratesToParameter p1738_1 "w3" == true
+#guard selectOwnedDeclaration p1738_2 "w1" == .property 1
+#guard elaboratesToParameter p1738_2 "w1" == false
+#guard selectOwnedDeclaration p1738_0 "w4" == .property 0
+#guard elaboratesToParameter p1738_0 "w4" == false
+#guard promotes p1738_0 "w4" == some false
+#guard forwardingSource p1738_2 false "w3" == .unavailable
 
 -- witness/one-unbound-name-among-several/declaration-reorder: Use(x) = Scale + 0 \n Scale(x, k) = x * k \n Use(3)
-def p1749_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Scale"] } :: prelude
-def p1749_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1749_0
-def p1749_2 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p1749_0
-#guard selectOwnedDeclaration p1749_1 "Scale" == .property 1
-#guard elaboratesToParameter p1749_1 "Scale" == false
-#guard selectOwnedDeclaration p1749_2 "x" == .parameter 0
-#guard elaboratesToParameter p1749_2 "x" == true
-#guard selectOwnedDeclaration p1749_2 "k" == .parameter 0
-#guard elaboratesToParameter p1749_2 "k" == true
-#guard selectOwnedDeclaration p1749_0 "Use" == .property 0
-#guard elaboratesToParameter p1749_0 "Use" == false
-#guard promotes p1749_0 "Use" == some false
-#guard forwardingSource p1749_1 false "k" == .unavailable
+def p1739_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Scale"] } :: prelude
+def p1739_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1739_0
+def p1739_2 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p1739_0
+#guard selectOwnedDeclaration p1739_1 "Scale" == .property 1
+#guard elaboratesToParameter p1739_1 "Scale" == false
+#guard selectOwnedDeclaration p1739_2 "x" == .parameter 0
+#guard elaboratesToParameter p1739_2 "x" == true
+#guard selectOwnedDeclaration p1739_2 "k" == .parameter 0
+#guard elaboratesToParameter p1739_2 "k" == true
+#guard selectOwnedDeclaration p1739_0 "Use" == .property 0
+#guard elaboratesToParameter p1739_0 "Use" == false
+#guard promotes p1739_0 "Use" == some false
+#guard forwardingSource p1739_1 false "k" == .unavailable
 
 -- witness/two-unbound-names-share-one-refusal: Scale(x, k) = x * k \n Use(p) = Scale + 0 \n Use(3)
-def p1750_0 : List OwnerLevel := { parameters := [], properties := ["Scale", "Use"] } :: prelude
-def p1750_1 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p1750_0
-def p1750_2 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1750_0
-#guard selectOwnedDeclaration p1750_1 "x" == .parameter 0
-#guard elaboratesToParameter p1750_1 "x" == true
-#guard selectOwnedDeclaration p1750_1 "k" == .parameter 0
-#guard elaboratesToParameter p1750_1 "k" == true
-#guard selectOwnedDeclaration p1750_2 "Scale" == .property 1
-#guard elaboratesToParameter p1750_2 "Scale" == false
-#guard selectOwnedDeclaration p1750_0 "Use" == .property 0
-#guard elaboratesToParameter p1750_0 "Use" == false
-#guard promotes p1750_0 "Use" == some false
+def p1740_0 : List OwnerLevel := { parameters := [], properties := ["Scale", "Use"] } :: prelude
+def p1740_1 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p1740_0
+def p1740_2 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1740_0
+#guard selectOwnedDeclaration p1740_1 "x" == .parameter 0
+#guard elaboratesToParameter p1740_1 "x" == true
+#guard selectOwnedDeclaration p1740_1 "k" == .parameter 0
+#guard elaboratesToParameter p1740_1 "k" == true
+#guard selectOwnedDeclaration p1740_2 "Scale" == .property 1
+#guard elaboratesToParameter p1740_2 "Scale" == false
+#guard selectOwnedDeclaration p1740_0 "Use" == .property 0
+#guard elaboratesToParameter p1740_0 "Use" == false
+#guard promotes p1740_0 "Use" == some false
 -- 1 refused forward(s) not attributed: 2 unbound names share the bare reference(s)
 
 -- witness/two-unbound-names-share-one-refusal/alpha-rename: w1(w2, w3) = w2 * w3 \n w4(w5) = w1 + 0 \n w4(3)
-def p1751_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w4"] } :: prelude
-def p1751_1 : List OwnerLevel := { parameters := ["w2", "w3"], properties := [] } :: p1751_0
-def p1751_2 : List OwnerLevel := { parameters := ["w5"], properties := [] } :: p1751_0
-#guard selectOwnedDeclaration p1751_1 "w2" == .parameter 0
-#guard elaboratesToParameter p1751_1 "w2" == true
-#guard selectOwnedDeclaration p1751_1 "w3" == .parameter 0
-#guard elaboratesToParameter p1751_1 "w3" == true
-#guard selectOwnedDeclaration p1751_2 "w1" == .property 1
-#guard elaboratesToParameter p1751_2 "w1" == false
-#guard selectOwnedDeclaration p1751_0 "w4" == .property 0
-#guard elaboratesToParameter p1751_0 "w4" == false
-#guard promotes p1751_0 "w4" == some false
+def p1741_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w4"] } :: prelude
+def p1741_1 : List OwnerLevel := { parameters := ["w2", "w3"], properties := [] } :: p1741_0
+def p1741_2 : List OwnerLevel := { parameters := ["w5"], properties := [] } :: p1741_0
+#guard selectOwnedDeclaration p1741_1 "w2" == .parameter 0
+#guard elaboratesToParameter p1741_1 "w2" == true
+#guard selectOwnedDeclaration p1741_1 "w3" == .parameter 0
+#guard elaboratesToParameter p1741_1 "w3" == true
+#guard selectOwnedDeclaration p1741_2 "w1" == .property 1
+#guard elaboratesToParameter p1741_2 "w1" == false
+#guard selectOwnedDeclaration p1741_0 "w4" == .property 0
+#guard elaboratesToParameter p1741_0 "w4" == false
+#guard promotes p1741_0 "w4" == some false
 -- 1 refused forward(s) not attributed: 2 unbound names share the bare reference(s)
 
 -- witness/two-unbound-names-share-one-refusal/declaration-reorder: Use(p) = Scale + 0 \n Scale(x, k) = x * k \n Use(3)
-def p1752_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Scale"] } :: prelude
-def p1752_1 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1752_0
-def p1752_2 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p1752_0
-#guard selectOwnedDeclaration p1752_1 "Scale" == .property 1
-#guard elaboratesToParameter p1752_1 "Scale" == false
-#guard selectOwnedDeclaration p1752_2 "x" == .parameter 0
-#guard elaboratesToParameter p1752_2 "x" == true
-#guard selectOwnedDeclaration p1752_2 "k" == .parameter 0
-#guard elaboratesToParameter p1752_2 "k" == true
-#guard selectOwnedDeclaration p1752_0 "Use" == .property 0
-#guard elaboratesToParameter p1752_0 "Use" == false
-#guard promotes p1752_0 "Use" == some false
+def p1742_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Scale"] } :: prelude
+def p1742_1 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1742_0
+def p1742_2 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p1742_0
+#guard selectOwnedDeclaration p1742_1 "Scale" == .property 1
+#guard elaboratesToParameter p1742_1 "Scale" == false
+#guard selectOwnedDeclaration p1742_2 "x" == .parameter 0
+#guard elaboratesToParameter p1742_2 "x" == true
+#guard selectOwnedDeclaration p1742_2 "k" == .parameter 0
+#guard elaboratesToParameter p1742_2 "k" == true
+#guard selectOwnedDeclaration p1742_0 "Use" == .property 0
+#guard elaboratesToParameter p1742_0 "Use" == false
+#guard promotes p1742_0 "Use" == some false
 -- 1 refused forward(s) not attributed: 2 unbound names share the bare reference(s)
 
 -- witness/bare-forwarding-reports-each-parameter: Mix(p, q, r) = p + q + r \n Use(p) = Mix \n Use(1)
-def p1753_0 : List OwnerLevel := { parameters := [], properties := ["Mix", "Use"] } :: prelude
-def p1753_1 : List OwnerLevel := { parameters := ["p", "q", "r"], properties := [] } :: p1753_0
-def p1753_2 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1753_0
-#guard selectOwnedDeclaration p1753_1 "p" == .parameter 0
-#guard elaboratesToParameter p1753_1 "p" == true
-#guard selectOwnedDeclaration p1753_1 "q" == .parameter 0
-#guard elaboratesToParameter p1753_1 "q" == true
-#guard selectOwnedDeclaration p1753_1 "r" == .parameter 0
-#guard elaboratesToParameter p1753_1 "r" == true
-#guard selectOwnedDeclaration p1753_2 "Mix" == .property 1
-#guard elaboratesToParameter p1753_2 "Mix" == false
-#guard selectOwnedDeclaration p1753_0 "Use" == .property 0
-#guard elaboratesToParameter p1753_0 "Use" == false
-#guard promotes p1753_0 "Use" == some false
-#guard forwardingSource p1753_2 false "q" == .unavailable
-#guard forwardingSource p1753_2 false "r" == .unavailable
+def p1743_0 : List OwnerLevel := { parameters := [], properties := ["Mix", "Use"] } :: prelude
+def p1743_1 : List OwnerLevel := { parameters := ["p", "q", "r"], properties := [] } :: p1743_0
+def p1743_2 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1743_0
+#guard selectOwnedDeclaration p1743_1 "p" == .parameter 0
+#guard elaboratesToParameter p1743_1 "p" == true
+#guard selectOwnedDeclaration p1743_1 "q" == .parameter 0
+#guard elaboratesToParameter p1743_1 "q" == true
+#guard selectOwnedDeclaration p1743_1 "r" == .parameter 0
+#guard elaboratesToParameter p1743_1 "r" == true
+#guard selectOwnedDeclaration p1743_2 "Mix" == .property 1
+#guard elaboratesToParameter p1743_2 "Mix" == false
+#guard selectOwnedDeclaration p1743_0 "Use" == .property 0
+#guard elaboratesToParameter p1743_0 "Use" == false
+#guard promotes p1743_0 "Use" == some false
+#guard forwardingSource p1743_2 false "q" == .unavailable
+#guard forwardingSource p1743_2 false "r" == .unavailable
 
 -- witness/bare-forwarding-reports-each-parameter/alpha-rename: w1(w2, w3, w4) = w2 + w3 + w4 \n w5(w2) = w1 \n w5(1)
-def p1754_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w5"] } :: prelude
-def p1754_1 : List OwnerLevel := { parameters := ["w2", "w3", "w4"], properties := [] } :: p1754_0
-def p1754_2 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1754_0
-#guard selectOwnedDeclaration p1754_1 "w2" == .parameter 0
-#guard elaboratesToParameter p1754_1 "w2" == true
-#guard selectOwnedDeclaration p1754_1 "w3" == .parameter 0
-#guard elaboratesToParameter p1754_1 "w3" == true
-#guard selectOwnedDeclaration p1754_1 "w4" == .parameter 0
-#guard elaboratesToParameter p1754_1 "w4" == true
-#guard selectOwnedDeclaration p1754_2 "w1" == .property 1
-#guard elaboratesToParameter p1754_2 "w1" == false
-#guard selectOwnedDeclaration p1754_0 "w5" == .property 0
-#guard elaboratesToParameter p1754_0 "w5" == false
-#guard promotes p1754_0 "w5" == some false
-#guard forwardingSource p1754_2 false "w3" == .unavailable
-#guard forwardingSource p1754_2 false "w4" == .unavailable
+def p1744_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w5"] } :: prelude
+def p1744_1 : List OwnerLevel := { parameters := ["w2", "w3", "w4"], properties := [] } :: p1744_0
+def p1744_2 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1744_0
+#guard selectOwnedDeclaration p1744_1 "w2" == .parameter 0
+#guard elaboratesToParameter p1744_1 "w2" == true
+#guard selectOwnedDeclaration p1744_1 "w3" == .parameter 0
+#guard elaboratesToParameter p1744_1 "w3" == true
+#guard selectOwnedDeclaration p1744_1 "w4" == .parameter 0
+#guard elaboratesToParameter p1744_1 "w4" == true
+#guard selectOwnedDeclaration p1744_2 "w1" == .property 1
+#guard elaboratesToParameter p1744_2 "w1" == false
+#guard selectOwnedDeclaration p1744_0 "w5" == .property 0
+#guard elaboratesToParameter p1744_0 "w5" == false
+#guard promotes p1744_0 "w5" == some false
+#guard forwardingSource p1744_2 false "w3" == .unavailable
+#guard forwardingSource p1744_2 false "w4" == .unavailable
 
 -- witness/bare-forwarding-reports-each-parameter/declaration-reorder: Use(p) = Mix \n Mix(p, q, r) = p + q + r \n Use(1)
-def p1755_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Mix"] } :: prelude
-def p1755_1 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1755_0
-def p1755_2 : List OwnerLevel := { parameters := ["p", "q", "r"], properties := [] } :: p1755_0
-#guard selectOwnedDeclaration p1755_1 "Mix" == .property 1
-#guard elaboratesToParameter p1755_1 "Mix" == false
-#guard selectOwnedDeclaration p1755_2 "p" == .parameter 0
-#guard elaboratesToParameter p1755_2 "p" == true
-#guard selectOwnedDeclaration p1755_2 "q" == .parameter 0
-#guard elaboratesToParameter p1755_2 "q" == true
-#guard selectOwnedDeclaration p1755_2 "r" == .parameter 0
-#guard elaboratesToParameter p1755_2 "r" == true
-#guard selectOwnedDeclaration p1755_0 "Use" == .property 0
-#guard elaboratesToParameter p1755_0 "Use" == false
-#guard promotes p1755_0 "Use" == some false
-#guard forwardingSource p1755_1 false "q" == .unavailable
-#guard forwardingSource p1755_1 false "r" == .unavailable
+def p1745_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Mix"] } :: prelude
+def p1745_1 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1745_0
+def p1745_2 : List OwnerLevel := { parameters := ["p", "q", "r"], properties := [] } :: p1745_0
+#guard selectOwnedDeclaration p1745_1 "Mix" == .property 1
+#guard elaboratesToParameter p1745_1 "Mix" == false
+#guard selectOwnedDeclaration p1745_2 "p" == .parameter 0
+#guard elaboratesToParameter p1745_2 "p" == true
+#guard selectOwnedDeclaration p1745_2 "q" == .parameter 0
+#guard elaboratesToParameter p1745_2 "q" == true
+#guard selectOwnedDeclaration p1745_2 "r" == .parameter 0
+#guard elaboratesToParameter p1745_2 "r" == true
+#guard selectOwnedDeclaration p1745_0 "Use" == .property 0
+#guard elaboratesToParameter p1745_0 "Use" == false
+#guard promotes p1745_0 "Use" == some false
+#guard forwardingSource p1745_1 false "q" == .unavailable
+#guard forwardingSource p1745_1 false "r" == .unavailable
 
 -- witness/member-calls-and-bare-forwarding: Inc(x) = x + 1 \n Lib = { public Mix(p, [pair], q) = p } \n Kept = Lib.Mix(Inc, [0], 1) \n AlsoKept = (Lib.Mix)(Inc, [0], 1) \n Lifted = Math.Abs(Inc) \n Use(p) = Lib.Mix \n Use(1)
-def p1756_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "Kept", "AlsoKept", "Lifted", "Inc", "Use"] } :: prelude
-def p1756_1 : List OwnerLevel := { parameters := [], properties := ["Mix"] } :: p1756_0
-def p1756_2 : List OwnerLevel := { parameters := ["p", "pair", "q"], properties := [] } :: p1756_1
-def p1756_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1756_0
-def p1756_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1756_0
-def p1756_5 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1756_0
-def p1756_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1756_0
-def p1756_7 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1756_0
-#guard selectOwnedDeclaration p1756_2 "p" == .parameter 0
-#guard elaboratesToParameter p1756_2 "p" == true
-#guard selectOwnedDeclaration p1756_3 "Lib" == .property 1
-#guard elaboratesToParameter p1756_3 "Lib" == false
-#guard selectOwnedDeclaration p1756_3 "Mix" == .none
-#guard elaboratesToParameter p1756_3 "Mix" == false
-#guard selectOwnedDeclaration p1756_3 "Inc" == .property 1
-#guard elaboratesToParameter p1756_3 "Inc" == false
-#guard selectOwnedDeclaration p1756_4 "Lib" == .property 1
-#guard elaboratesToParameter p1756_4 "Lib" == false
-#guard selectOwnedDeclaration p1756_4 "Mix" == .none
-#guard elaboratesToParameter p1756_4 "Mix" == false
-#guard selectOwnedDeclaration p1756_4 "Inc" == .property 1
-#guard elaboratesToParameter p1756_4 "Inc" == false
-#guard selectOwnedDeclaration p1756_5 "Math" == .property 2
-#guard elaboratesToParameter p1756_5 "Math" == false
-#guard selectOwnedDeclaration p1756_5 "Abs" == .none
-#guard elaboratesToParameter p1756_5 "Abs" == false
-#guard selectOwnedDeclaration p1756_5 "Inc" == .property 1
-#guard elaboratesToParameter p1756_5 "Inc" == false
-#guard selectOwnedDeclaration p1756_6 "x" == .parameter 0
-#guard elaboratesToParameter p1756_6 "x" == true
-#guard selectOwnedDeclaration p1756_7 "Lib" == .property 1
-#guard elaboratesToParameter p1756_7 "Lib" == false
-#guard selectOwnedDeclaration p1756_7 "Mix" == .none
-#guard elaboratesToParameter p1756_7 "Mix" == false
-#guard selectOwnedDeclaration p1756_0 "Use" == .property 0
-#guard elaboratesToParameter p1756_0 "Use" == false
-#guard promotes p1756_0 "Use" == some false
-#guard promotes p1756_3 "Lib" == some false
-#guard promotes p1756_3 "Inc" == some false
-#guard promotes p1756_4 "Lib" == some false
-#guard promotes p1756_4 "Inc" == some false
-#guard promotes p1756_5 "Inc" == some false
-#guard forwardingSource p1756_5 true "x" == .forwardedParameter
-#guard forwardingSource p1756_7 false "q" == .unavailable
+def p1746_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "Kept", "AlsoKept", "Lifted", "Inc", "Use"] } :: prelude
+def p1746_1 : List OwnerLevel := { parameters := [], properties := ["Mix"] } :: p1746_0
+def p1746_2 : List OwnerLevel := { parameters := ["p", "pair", "q"], properties := [] } :: p1746_1
+def p1746_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1746_0
+def p1746_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1746_0
+def p1746_5 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1746_0
+def p1746_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1746_0
+def p1746_7 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1746_0
+#guard selectOwnedDeclaration p1746_2 "p" == .parameter 0
+#guard elaboratesToParameter p1746_2 "p" == true
+#guard selectOwnedDeclaration p1746_3 "Lib" == .property 1
+#guard elaboratesToParameter p1746_3 "Lib" == false
+#guard selectOwnedDeclaration p1746_3 "Mix" == .none
+#guard elaboratesToParameter p1746_3 "Mix" == false
+#guard selectOwnedDeclaration p1746_3 "Inc" == .property 1
+#guard elaboratesToParameter p1746_3 "Inc" == false
+#guard selectOwnedDeclaration p1746_4 "Lib" == .property 1
+#guard elaboratesToParameter p1746_4 "Lib" == false
+#guard selectOwnedDeclaration p1746_4 "Mix" == .none
+#guard elaboratesToParameter p1746_4 "Mix" == false
+#guard selectOwnedDeclaration p1746_4 "Inc" == .property 1
+#guard elaboratesToParameter p1746_4 "Inc" == false
+#guard selectOwnedDeclaration p1746_5 "Math" == .property 2
+#guard elaboratesToParameter p1746_5 "Math" == false
+#guard selectOwnedDeclaration p1746_5 "Abs" == .none
+#guard elaboratesToParameter p1746_5 "Abs" == false
+#guard selectOwnedDeclaration p1746_5 "Inc" == .property 1
+#guard elaboratesToParameter p1746_5 "Inc" == false
+#guard selectOwnedDeclaration p1746_6 "x" == .parameter 0
+#guard elaboratesToParameter p1746_6 "x" == true
+#guard selectOwnedDeclaration p1746_7 "Lib" == .property 1
+#guard elaboratesToParameter p1746_7 "Lib" == false
+#guard selectOwnedDeclaration p1746_7 "Mix" == .none
+#guard elaboratesToParameter p1746_7 "Mix" == false
+#guard selectOwnedDeclaration p1746_0 "Use" == .property 0
+#guard elaboratesToParameter p1746_0 "Use" == false
+#guard promotes p1746_0 "Use" == some false
+#guard promotes p1746_3 "Lib" == some false
+#guard promotes p1746_3 "Inc" == some false
+#guard promotes p1746_4 "Lib" == some false
+#guard promotes p1746_4 "Inc" == some false
+#guard promotes p1746_5 "Inc" == some false
+#guard forwardingSource p1746_5 true "x" == .forwardedParameter
+#guard forwardingSource p1746_7 false "q" == .unavailable
 #guard liftingSlotRole .user 0 true == .callable -- .Mix: Inc -- x2
 #guard liftingSlotRole .strictValue 0 true == .value -- .Abs: Inc
 -- bare forwarding of Mix refused at level 7: 1 report(s) of a pattern's form (bareForwardingArgument, not forwardingSource)
 
 -- witness/member-calls-and-bare-forwarding/alpha-rename: w1(w2) = w2 + 1 \n w3 = { public w4(w5, [w6], w7) = w5 } \n w8 = w3.w4(w1, [0], 1) \n w9 = (w3.w4)(w1, [0], 1) \n w10 = Math.Abs(w1) \n w11(w5) = w3.w4 \n w11(1)
-def p1757_0 : List OwnerLevel := { parameters := [], properties := ["w3", "w8", "w9", "w10", "w1", "w11"] } :: prelude
-def p1757_1 : List OwnerLevel := { parameters := [], properties := ["w4"] } :: p1757_0
-def p1757_2 : List OwnerLevel := { parameters := ["w5", "w6", "w7"], properties := [] } :: p1757_1
-def p1757_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1757_0
-def p1757_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1757_0
-def p1757_5 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1757_0
-def p1757_6 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1757_0
-def p1757_7 : List OwnerLevel := { parameters := ["w5"], properties := [] } :: p1757_0
-#guard selectOwnedDeclaration p1757_2 "w5" == .parameter 0
-#guard elaboratesToParameter p1757_2 "w5" == true
-#guard selectOwnedDeclaration p1757_3 "w3" == .property 1
-#guard elaboratesToParameter p1757_3 "w3" == false
-#guard selectOwnedDeclaration p1757_3 "w4" == .none
-#guard elaboratesToParameter p1757_3 "w4" == false
-#guard selectOwnedDeclaration p1757_3 "w1" == .property 1
-#guard elaboratesToParameter p1757_3 "w1" == false
-#guard selectOwnedDeclaration p1757_4 "w3" == .property 1
-#guard elaboratesToParameter p1757_4 "w3" == false
-#guard selectOwnedDeclaration p1757_4 "w4" == .none
-#guard elaboratesToParameter p1757_4 "w4" == false
-#guard selectOwnedDeclaration p1757_4 "w1" == .property 1
-#guard elaboratesToParameter p1757_4 "w1" == false
-#guard selectOwnedDeclaration p1757_5 "Math" == .property 2
-#guard elaboratesToParameter p1757_5 "Math" == false
-#guard selectOwnedDeclaration p1757_5 "Abs" == .none
-#guard elaboratesToParameter p1757_5 "Abs" == false
-#guard selectOwnedDeclaration p1757_5 "w1" == .property 1
-#guard elaboratesToParameter p1757_5 "w1" == false
-#guard selectOwnedDeclaration p1757_6 "w2" == .parameter 0
-#guard elaboratesToParameter p1757_6 "w2" == true
-#guard selectOwnedDeclaration p1757_7 "w3" == .property 1
-#guard elaboratesToParameter p1757_7 "w3" == false
-#guard selectOwnedDeclaration p1757_7 "w4" == .none
-#guard elaboratesToParameter p1757_7 "w4" == false
-#guard selectOwnedDeclaration p1757_0 "w11" == .property 0
-#guard elaboratesToParameter p1757_0 "w11" == false
-#guard promotes p1757_0 "w11" == some false
-#guard promotes p1757_3 "w3" == some false
-#guard promotes p1757_3 "w1" == some false
-#guard promotes p1757_4 "w3" == some false
-#guard promotes p1757_4 "w1" == some false
-#guard promotes p1757_5 "w1" == some false
-#guard forwardingSource p1757_5 true "w2" == .forwardedParameter
-#guard forwardingSource p1757_7 false "w7" == .unavailable
+def p1747_0 : List OwnerLevel := { parameters := [], properties := ["w3", "w8", "w9", "w10", "w1", "w11"] } :: prelude
+def p1747_1 : List OwnerLevel := { parameters := [], properties := ["w4"] } :: p1747_0
+def p1747_2 : List OwnerLevel := { parameters := ["w5", "w6", "w7"], properties := [] } :: p1747_1
+def p1747_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1747_0
+def p1747_4 : List OwnerLevel := { parameters := [], properties := [] } :: p1747_0
+def p1747_5 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["w2"] } :: p1747_0
+def p1747_6 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1747_0
+def p1747_7 : List OwnerLevel := { parameters := ["w5"], properties := [] } :: p1747_0
+#guard selectOwnedDeclaration p1747_2 "w5" == .parameter 0
+#guard elaboratesToParameter p1747_2 "w5" == true
+#guard selectOwnedDeclaration p1747_3 "w3" == .property 1
+#guard elaboratesToParameter p1747_3 "w3" == false
+#guard selectOwnedDeclaration p1747_3 "w4" == .none
+#guard elaboratesToParameter p1747_3 "w4" == false
+#guard selectOwnedDeclaration p1747_3 "w1" == .property 1
+#guard elaboratesToParameter p1747_3 "w1" == false
+#guard selectOwnedDeclaration p1747_4 "w3" == .property 1
+#guard elaboratesToParameter p1747_4 "w3" == false
+#guard selectOwnedDeclaration p1747_4 "w4" == .none
+#guard elaboratesToParameter p1747_4 "w4" == false
+#guard selectOwnedDeclaration p1747_4 "w1" == .property 1
+#guard elaboratesToParameter p1747_4 "w1" == false
+#guard selectOwnedDeclaration p1747_5 "Math" == .property 2
+#guard elaboratesToParameter p1747_5 "Math" == false
+#guard selectOwnedDeclaration p1747_5 "Abs" == .none
+#guard elaboratesToParameter p1747_5 "Abs" == false
+#guard selectOwnedDeclaration p1747_5 "w1" == .property 1
+#guard elaboratesToParameter p1747_5 "w1" == false
+#guard selectOwnedDeclaration p1747_6 "w2" == .parameter 0
+#guard elaboratesToParameter p1747_6 "w2" == true
+#guard selectOwnedDeclaration p1747_7 "w3" == .property 1
+#guard elaboratesToParameter p1747_7 "w3" == false
+#guard selectOwnedDeclaration p1747_7 "w4" == .none
+#guard elaboratesToParameter p1747_7 "w4" == false
+#guard selectOwnedDeclaration p1747_0 "w11" == .property 0
+#guard elaboratesToParameter p1747_0 "w11" == false
+#guard promotes p1747_0 "w11" == some false
+#guard promotes p1747_3 "w3" == some false
+#guard promotes p1747_3 "w1" == some false
+#guard promotes p1747_4 "w3" == some false
+#guard promotes p1747_4 "w1" == some false
+#guard promotes p1747_5 "w1" == some false
+#guard forwardingSource p1747_5 true "w2" == .forwardedParameter
+#guard forwardingSource p1747_7 false "w7" == .unavailable
 #guard liftingSlotRole .user 0 true == .callable -- .w4: w1 -- x2
 #guard liftingSlotRole .strictValue 0 true == .value -- .Abs: w1
 -- bare forwarding of w4 refused at level 7: 1 report(s) of a pattern's form (bareForwardingArgument, not forwardingSource)
 
 -- witness/member-calls-and-bare-forwarding/declaration-reorder: Use(p) = Lib.Mix \n Lifted = Math.Abs(Inc) \n AlsoKept = (Lib.Mix)(Inc, [0], 1) \n Kept = Lib.Mix(Inc, [0], 1) \n Lib = { public Mix(p, [pair], q) = p } \n Inc(x) = x + 1 \n Use(1)
-def p1758_0 : List OwnerLevel := { parameters := [], properties := ["Lifted", "AlsoKept", "Kept", "Lib", "Use", "Inc"] } :: prelude
-def p1758_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1758_0
-def p1758_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1758_0
-def p1758_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1758_0
-def p1758_4 : List OwnerLevel := { parameters := [], properties := ["Mix"] } :: p1758_0
-def p1758_5 : List OwnerLevel := { parameters := ["p", "pair", "q"], properties := [] } :: p1758_4
-def p1758_6 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1758_0
-def p1758_7 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1758_0
-#guard selectOwnedDeclaration p1758_1 "Math" == .property 2
-#guard elaboratesToParameter p1758_1 "Math" == false
-#guard selectOwnedDeclaration p1758_1 "Abs" == .none
-#guard elaboratesToParameter p1758_1 "Abs" == false
-#guard selectOwnedDeclaration p1758_1 "Inc" == .property 1
-#guard elaboratesToParameter p1758_1 "Inc" == false
-#guard selectOwnedDeclaration p1758_2 "Lib" == .property 1
-#guard elaboratesToParameter p1758_2 "Lib" == false
-#guard selectOwnedDeclaration p1758_2 "Mix" == .none
-#guard elaboratesToParameter p1758_2 "Mix" == false
-#guard selectOwnedDeclaration p1758_2 "Inc" == .property 1
-#guard elaboratesToParameter p1758_2 "Inc" == false
-#guard selectOwnedDeclaration p1758_3 "Lib" == .property 1
-#guard elaboratesToParameter p1758_3 "Lib" == false
-#guard selectOwnedDeclaration p1758_3 "Mix" == .none
-#guard elaboratesToParameter p1758_3 "Mix" == false
-#guard selectOwnedDeclaration p1758_3 "Inc" == .property 1
-#guard elaboratesToParameter p1758_3 "Inc" == false
-#guard selectOwnedDeclaration p1758_5 "p" == .parameter 0
-#guard elaboratesToParameter p1758_5 "p" == true
-#guard selectOwnedDeclaration p1758_6 "Lib" == .property 1
-#guard elaboratesToParameter p1758_6 "Lib" == false
-#guard selectOwnedDeclaration p1758_6 "Mix" == .none
-#guard elaboratesToParameter p1758_6 "Mix" == false
-#guard selectOwnedDeclaration p1758_7 "x" == .parameter 0
-#guard elaboratesToParameter p1758_7 "x" == true
-#guard selectOwnedDeclaration p1758_0 "Use" == .property 0
-#guard elaboratesToParameter p1758_0 "Use" == false
-#guard promotes p1758_0 "Use" == some false
-#guard promotes p1758_1 "Inc" == some false
-#guard forwardingSource p1758_1 true "x" == .forwardedParameter
-#guard promotes p1758_2 "Lib" == some false
-#guard promotes p1758_2 "Inc" == some false
-#guard promotes p1758_3 "Lib" == some false
-#guard promotes p1758_3 "Inc" == some false
-#guard forwardingSource p1758_6 false "q" == .unavailable
+def p1748_0 : List OwnerLevel := { parameters := [], properties := ["Lifted", "AlsoKept", "Kept", "Lib", "Use", "Inc"] } :: prelude
+def p1748_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p1748_0
+def p1748_2 : List OwnerLevel := { parameters := [], properties := [] } :: p1748_0
+def p1748_3 : List OwnerLevel := { parameters := [], properties := [] } :: p1748_0
+def p1748_4 : List OwnerLevel := { parameters := [], properties := ["Mix"] } :: p1748_0
+def p1748_5 : List OwnerLevel := { parameters := ["p", "pair", "q"], properties := [] } :: p1748_4
+def p1748_6 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p1748_0
+def p1748_7 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p1748_0
+#guard selectOwnedDeclaration p1748_1 "Math" == .property 2
+#guard elaboratesToParameter p1748_1 "Math" == false
+#guard selectOwnedDeclaration p1748_1 "Abs" == .none
+#guard elaboratesToParameter p1748_1 "Abs" == false
+#guard selectOwnedDeclaration p1748_1 "Inc" == .property 1
+#guard elaboratesToParameter p1748_1 "Inc" == false
+#guard selectOwnedDeclaration p1748_2 "Lib" == .property 1
+#guard elaboratesToParameter p1748_2 "Lib" == false
+#guard selectOwnedDeclaration p1748_2 "Mix" == .none
+#guard elaboratesToParameter p1748_2 "Mix" == false
+#guard selectOwnedDeclaration p1748_2 "Inc" == .property 1
+#guard elaboratesToParameter p1748_2 "Inc" == false
+#guard selectOwnedDeclaration p1748_3 "Lib" == .property 1
+#guard elaboratesToParameter p1748_3 "Lib" == false
+#guard selectOwnedDeclaration p1748_3 "Mix" == .none
+#guard elaboratesToParameter p1748_3 "Mix" == false
+#guard selectOwnedDeclaration p1748_3 "Inc" == .property 1
+#guard elaboratesToParameter p1748_3 "Inc" == false
+#guard selectOwnedDeclaration p1748_5 "p" == .parameter 0
+#guard elaboratesToParameter p1748_5 "p" == true
+#guard selectOwnedDeclaration p1748_6 "Lib" == .property 1
+#guard elaboratesToParameter p1748_6 "Lib" == false
+#guard selectOwnedDeclaration p1748_6 "Mix" == .none
+#guard elaboratesToParameter p1748_6 "Mix" == false
+#guard selectOwnedDeclaration p1748_7 "x" == .parameter 0
+#guard elaboratesToParameter p1748_7 "x" == true
+#guard selectOwnedDeclaration p1748_0 "Use" == .property 0
+#guard elaboratesToParameter p1748_0 "Use" == false
+#guard promotes p1748_0 "Use" == some false
+#guard promotes p1748_1 "Inc" == some false
+#guard forwardingSource p1748_1 true "x" == .forwardedParameter
+#guard promotes p1748_2 "Lib" == some false
+#guard promotes p1748_2 "Inc" == some false
+#guard promotes p1748_3 "Lib" == some false
+#guard promotes p1748_3 "Inc" == some false
+#guard forwardingSource p1748_6 false "q" == .unavailable
 #guard liftingSlotRole .strictValue 0 true == .value -- .Abs: Inc
 #guard liftingSlotRole .user 0 true == .callable -- .Mix: Inc -- x2
 -- bare forwarding of Mix refused at level 6: 1 report(s) of a pattern's form (bareForwardingArgument, not forwardingSource)
 
 -- witness/by-shape-supply-under-two-names/alpha-rename: w1([*w2]) = w2.count \n w3(*w4) = [w1][0] \n w3(3, 4)
-def p1759_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3"] } :: prelude
-def p1759_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1759_0
-def p1759_2 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1759_0
-#guard selectOwnedDeclaration p1759_1 "w2" == .parameter 0
-#guard elaboratesToParameter p1759_1 "w2" == true
-#guard selectOwnedDeclaration p1759_1 "count" == .property 2
-#guard elaboratesToParameter p1759_1 "count" == false
-#guard selectOwnedDeclaration p1759_2 "w1" == .property 1
-#guard elaboratesToParameter p1759_2 "w1" == false
-#guard selectOwnedDeclaration p1759_0 "w3" == .property 0
-#guard elaboratesToParameter p1759_0 "w3" == false
-#guard promotes p1759_0 "w3" == some false
-#guard forwardingSource p1759_2 false "w4" == .ownParameter -- by shape, for the callee's "w2"
-#guard forwardingSource p1759_2 false "w2" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "w4" by shape
+def p1749_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3"] } :: prelude
+def p1749_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1749_0
+def p1749_2 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1749_0
+#guard selectOwnedDeclaration p1749_1 "w2" == .parameter 0
+#guard elaboratesToParameter p1749_1 "w2" == true
+#guard selectOwnedDeclaration p1749_1 "count" == .property 2
+#guard elaboratesToParameter p1749_1 "count" == false
+#guard selectOwnedDeclaration p1749_2 "w1" == .property 1
+#guard elaboratesToParameter p1749_2 "w1" == false
+#guard selectOwnedDeclaration p1749_0 "w3" == .property 0
+#guard elaboratesToParameter p1749_0 "w3" == false
+#guard promotes p1749_0 "w3" == some false
+#guard forwardingSource p1749_2 false "w4" == .ownParameter -- by shape, for the callee's "w2"
+#guard forwardingSource p1749_2 false "w2" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "w4" by shape
 
 -- witness/by-shape-supply-under-two-names/declaration-reorder: Use(*items) = [Get][0] \n Get([*xs]) = xs.count \n Use(3, 4)
-def p1760_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Get"] } :: prelude
-def p1760_1 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1760_0
-def p1760_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1760_0
-#guard selectOwnedDeclaration p1760_1 "Get" == .property 1
-#guard elaboratesToParameter p1760_1 "Get" == false
-#guard selectOwnedDeclaration p1760_2 "xs" == .parameter 0
-#guard elaboratesToParameter p1760_2 "xs" == true
-#guard selectOwnedDeclaration p1760_2 "count" == .property 2
-#guard elaboratesToParameter p1760_2 "count" == false
-#guard selectOwnedDeclaration p1760_0 "Use" == .property 0
-#guard elaboratesToParameter p1760_0 "Use" == false
-#guard promotes p1760_0 "Use" == some false
-#guard forwardingSource p1760_1 false "items" == .ownParameter -- by shape, for the callee's "xs"
-#guard forwardingSource p1760_1 false "xs" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "items" by shape
+def p1750_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Get"] } :: prelude
+def p1750_1 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1750_0
+def p1750_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1750_0
+#guard selectOwnedDeclaration p1750_1 "Get" == .property 1
+#guard elaboratesToParameter p1750_1 "Get" == false
+#guard selectOwnedDeclaration p1750_2 "xs" == .parameter 0
+#guard elaboratesToParameter p1750_2 "xs" == true
+#guard selectOwnedDeclaration p1750_2 "count" == .property 2
+#guard elaboratesToParameter p1750_2 "count" == false
+#guard selectOwnedDeclaration p1750_0 "Use" == .property 0
+#guard elaboratesToParameter p1750_0 "Use" == false
+#guard promotes p1750_0 "Use" == some false
+#guard forwardingSource p1750_1 false "items" == .ownParameter -- by shape, for the callee's "xs"
+#guard forwardingSource p1750_1 false "xs" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "items" by shape
 
 -- witness/by-shape-supply-of-a-sequence-group: Sum((*xs)) = xs.sum \n Use(*items) = Sum + 0 \n Use(3, 4)
-def p1761_0 : List OwnerLevel := { parameters := [], properties := ["Sum", "Use"] } :: prelude
-def p1761_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1761_0
-def p1761_2 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1761_0
-#guard selectOwnedDeclaration p1761_1 "xs" == .parameter 0
-#guard elaboratesToParameter p1761_1 "xs" == true
-#guard selectOwnedDeclaration p1761_1 "sum" == .property 2
-#guard elaboratesToParameter p1761_1 "sum" == false
-#guard selectOwnedDeclaration p1761_2 "Sum" == .property 1
-#guard elaboratesToParameter p1761_2 "Sum" == false
-#guard selectOwnedDeclaration p1761_0 "Use" == .property 0
-#guard elaboratesToParameter p1761_0 "Use" == false
-#guard promotes p1761_0 "Use" == some false
-#guard forwardingSource p1761_2 false "items" == .ownParameter -- by shape, for the callee's "xs"
-#guard forwardingSource p1761_2 false "xs" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "items" by shape
+def p1751_0 : List OwnerLevel := { parameters := [], properties := ["Sum", "Use"] } :: prelude
+def p1751_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1751_0
+def p1751_2 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1751_0
+#guard selectOwnedDeclaration p1751_1 "xs" == .parameter 0
+#guard elaboratesToParameter p1751_1 "xs" == true
+#guard selectOwnedDeclaration p1751_1 "sum" == .property 2
+#guard elaboratesToParameter p1751_1 "sum" == false
+#guard selectOwnedDeclaration p1751_2 "Sum" == .property 1
+#guard elaboratesToParameter p1751_2 "Sum" == false
+#guard selectOwnedDeclaration p1751_0 "Use" == .property 0
+#guard elaboratesToParameter p1751_0 "Use" == false
+#guard promotes p1751_0 "Use" == some false
+#guard forwardingSource p1751_2 false "items" == .ownParameter -- by shape, for the callee's "xs"
+#guard forwardingSource p1751_2 false "xs" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "items" by shape
 
 -- witness/by-shape-supply-of-a-sequence-group/alpha-rename: w1((*w2)) = w2.sum \n w3(*w4) = w1 + 0 \n w3(3, 4)
-def p1762_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3"] } :: prelude
-def p1762_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1762_0
-def p1762_2 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1762_0
-#guard selectOwnedDeclaration p1762_1 "w2" == .parameter 0
-#guard elaboratesToParameter p1762_1 "w2" == true
-#guard selectOwnedDeclaration p1762_1 "sum" == .property 2
-#guard elaboratesToParameter p1762_1 "sum" == false
-#guard selectOwnedDeclaration p1762_2 "w1" == .property 1
-#guard elaboratesToParameter p1762_2 "w1" == false
-#guard selectOwnedDeclaration p1762_0 "w3" == .property 0
-#guard elaboratesToParameter p1762_0 "w3" == false
-#guard promotes p1762_0 "w3" == some false
-#guard forwardingSource p1762_2 false "w4" == .ownParameter -- by shape, for the callee's "w2"
-#guard forwardingSource p1762_2 false "w2" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "w4" by shape
+def p1752_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3"] } :: prelude
+def p1752_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1752_0
+def p1752_2 : List OwnerLevel := { parameters := ["w4"], properties := [] } :: p1752_0
+#guard selectOwnedDeclaration p1752_1 "w2" == .parameter 0
+#guard elaboratesToParameter p1752_1 "w2" == true
+#guard selectOwnedDeclaration p1752_1 "sum" == .property 2
+#guard elaboratesToParameter p1752_1 "sum" == false
+#guard selectOwnedDeclaration p1752_2 "w1" == .property 1
+#guard elaboratesToParameter p1752_2 "w1" == false
+#guard selectOwnedDeclaration p1752_0 "w3" == .property 0
+#guard elaboratesToParameter p1752_0 "w3" == false
+#guard promotes p1752_0 "w3" == some false
+#guard forwardingSource p1752_2 false "w4" == .ownParameter -- by shape, for the callee's "w2"
+#guard forwardingSource p1752_2 false "w2" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "w4" by shape
 
 -- witness/by-shape-supply-of-a-sequence-group/declaration-reorder: Use(*items) = Sum + 0 \n Sum((*xs)) = xs.sum \n Use(3, 4)
-def p1763_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Sum"] } :: prelude
-def p1763_1 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1763_0
-def p1763_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1763_0
-#guard selectOwnedDeclaration p1763_1 "Sum" == .property 1
-#guard elaboratesToParameter p1763_1 "Sum" == false
-#guard selectOwnedDeclaration p1763_2 "xs" == .parameter 0
-#guard elaboratesToParameter p1763_2 "xs" == true
-#guard selectOwnedDeclaration p1763_2 "sum" == .property 2
-#guard elaboratesToParameter p1763_2 "sum" == false
-#guard selectOwnedDeclaration p1763_0 "Use" == .property 0
-#guard elaboratesToParameter p1763_0 "Use" == false
-#guard promotes p1763_0 "Use" == some false
-#guard forwardingSource p1763_1 false "items" == .ownParameter -- by shape, for the callee's "xs"
-#guard forwardingSource p1763_1 false "xs" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "items" by shape
+def p1753_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Sum"] } :: prelude
+def p1753_1 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1753_0
+def p1753_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1753_0
+#guard selectOwnedDeclaration p1753_1 "Sum" == .property 1
+#guard elaboratesToParameter p1753_1 "Sum" == false
+#guard selectOwnedDeclaration p1753_2 "xs" == .parameter 0
+#guard elaboratesToParameter p1753_2 "xs" == true
+#guard selectOwnedDeclaration p1753_2 "sum" == .property 2
+#guard elaboratesToParameter p1753_2 "sum" == false
+#guard selectOwnedDeclaration p1753_0 "Use" == .property 0
+#guard elaboratesToParameter p1753_0 "Use" == false
+#guard promotes p1753_0 "Use" == some false
+#guard forwardingSource p1753_1 false "items" == .ownParameter -- by shape, for the callee's "xs"
+#guard forwardingSource p1753_1 false "xs" == .unavailable -- FD-F1: by name; C# supplies .ownParameter "items" by shape
 
 -- witness/by-shape-supply-under-one-name: Get([*xs]) = xs.count \n Use(*xs) = [Get][0] \n Use(3, 4)
-def p1764_0 : List OwnerLevel := { parameters := [], properties := ["Get", "Use"] } :: prelude
-def p1764_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1764_0
-def p1764_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1764_0
-#guard selectOwnedDeclaration p1764_1 "xs" == .parameter 0
-#guard elaboratesToParameter p1764_1 "xs" == true
-#guard selectOwnedDeclaration p1764_1 "count" == .property 2
-#guard elaboratesToParameter p1764_1 "count" == false
-#guard selectOwnedDeclaration p1764_2 "Get" == .property 1
-#guard elaboratesToParameter p1764_2 "Get" == false
-#guard selectOwnedDeclaration p1764_0 "Use" == .property 0
-#guard elaboratesToParameter p1764_0 "Use" == false
-#guard promotes p1764_0 "Use" == some false
-#guard forwardingSource p1764_2 false "xs" == .ownParameter
+def p1754_0 : List OwnerLevel := { parameters := [], properties := ["Get", "Use"] } :: prelude
+def p1754_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1754_0
+def p1754_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1754_0
+#guard selectOwnedDeclaration p1754_1 "xs" == .parameter 0
+#guard elaboratesToParameter p1754_1 "xs" == true
+#guard selectOwnedDeclaration p1754_1 "count" == .property 2
+#guard elaboratesToParameter p1754_1 "count" == false
+#guard selectOwnedDeclaration p1754_2 "Get" == .property 1
+#guard elaboratesToParameter p1754_2 "Get" == false
+#guard selectOwnedDeclaration p1754_0 "Use" == .property 0
+#guard elaboratesToParameter p1754_0 "Use" == false
+#guard promotes p1754_0 "Use" == some false
+#guard forwardingSource p1754_2 false "xs" == .ownParameter
 
 -- witness/by-shape-supply-under-one-name/alpha-rename: w1([*w2]) = w2.count \n w3(*w2) = [w1][0] \n w3(3, 4)
-def p1765_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3"] } :: prelude
-def p1765_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1765_0
-def p1765_2 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1765_0
-#guard selectOwnedDeclaration p1765_1 "w2" == .parameter 0
-#guard elaboratesToParameter p1765_1 "w2" == true
-#guard selectOwnedDeclaration p1765_1 "count" == .property 2
-#guard elaboratesToParameter p1765_1 "count" == false
-#guard selectOwnedDeclaration p1765_2 "w1" == .property 1
-#guard elaboratesToParameter p1765_2 "w1" == false
-#guard selectOwnedDeclaration p1765_0 "w3" == .property 0
-#guard elaboratesToParameter p1765_0 "w3" == false
-#guard promotes p1765_0 "w3" == some false
-#guard forwardingSource p1765_2 false "w2" == .ownParameter
+def p1755_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3"] } :: prelude
+def p1755_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1755_0
+def p1755_2 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1755_0
+#guard selectOwnedDeclaration p1755_1 "w2" == .parameter 0
+#guard elaboratesToParameter p1755_1 "w2" == true
+#guard selectOwnedDeclaration p1755_1 "count" == .property 2
+#guard elaboratesToParameter p1755_1 "count" == false
+#guard selectOwnedDeclaration p1755_2 "w1" == .property 1
+#guard elaboratesToParameter p1755_2 "w1" == false
+#guard selectOwnedDeclaration p1755_0 "w3" == .property 0
+#guard elaboratesToParameter p1755_0 "w3" == false
+#guard promotes p1755_0 "w3" == some false
+#guard forwardingSource p1755_2 false "w2" == .ownParameter
 
 -- witness/by-shape-supply-under-one-name/declaration-reorder: Use(*xs) = [Get][0] \n Get([*xs]) = xs.count \n Use(3, 4)
-def p1766_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Get"] } :: prelude
-def p1766_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1766_0
-def p1766_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1766_0
-#guard selectOwnedDeclaration p1766_1 "Get" == .property 1
-#guard elaboratesToParameter p1766_1 "Get" == false
-#guard selectOwnedDeclaration p1766_2 "xs" == .parameter 0
-#guard elaboratesToParameter p1766_2 "xs" == true
-#guard selectOwnedDeclaration p1766_2 "count" == .property 2
-#guard elaboratesToParameter p1766_2 "count" == false
-#guard selectOwnedDeclaration p1766_0 "Use" == .property 0
-#guard elaboratesToParameter p1766_0 "Use" == false
-#guard promotes p1766_0 "Use" == some false
-#guard forwardingSource p1766_1 false "xs" == .ownParameter
+def p1756_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Get"] } :: prelude
+def p1756_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1756_0
+def p1756_2 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1756_0
+#guard selectOwnedDeclaration p1756_1 "Get" == .property 1
+#guard elaboratesToParameter p1756_1 "Get" == false
+#guard selectOwnedDeclaration p1756_2 "xs" == .parameter 0
+#guard elaboratesToParameter p1756_2 "xs" == true
+#guard selectOwnedDeclaration p1756_2 "count" == .property 2
+#guard elaboratesToParameter p1756_2 "count" == false
+#guard selectOwnedDeclaration p1756_0 "Use" == .property 0
+#guard elaboratesToParameter p1756_0 "Use" == false
+#guard promotes p1756_0 "Use" == some false
+#guard forwardingSource p1756_1 false "xs" == .ownParameter
 
 -- witness/by-shape-supply-beside-an-enclosing-binding: Get([*xs]) = xs.count \n Outer(*xs) = { \n     Use(*items) = [Get][0] \n     Use(3, 4) \n } \n Outer(1, 2, 3)
-def p1767_0 : List OwnerLevel := { parameters := [], properties := ["Get", "Outer"] } :: prelude
-def p1767_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1767_0
-def p1767_2 : List OwnerLevel := { parameters := ["xs"], properties := ["Use"] } :: p1767_0
-def p1767_3 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1767_2
-#guard selectOwnedDeclaration p1767_1 "xs" == .parameter 0
-#guard elaboratesToParameter p1767_1 "xs" == true
-#guard selectOwnedDeclaration p1767_1 "count" == .property 2
-#guard elaboratesToParameter p1767_1 "count" == false
-#guard selectOwnedDeclaration p1767_3 "Get" == .property 2
-#guard elaboratesToParameter p1767_3 "Get" == false
-#guard selectOwnedDeclaration p1767_2 "Use" == .property 0
-#guard elaboratesToParameter p1767_2 "Use" == false
-#guard selectOwnedDeclaration p1767_0 "Outer" == .property 0
-#guard elaboratesToParameter p1767_0 "Outer" == false
-#guard promotes p1767_0 "Outer" == some false
-#guard forwardingSource p1767_3 false "items" == .ownParameter -- by shape, for the callee's "xs"
-#guard forwardingSource p1767_3 false "xs" == .capturedParameter 1 -- FD-F2: by name; C# supplies .ownParameter "items" by shape
-#guard ownedConflicts p1767_2 == []
-#guard validOwnedDeclarations p1767_3 == true
+def p1757_0 : List OwnerLevel := { parameters := [], properties := ["Get", "Outer"] } :: prelude
+def p1757_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1757_0
+def p1757_2 : List OwnerLevel := { parameters := ["xs"], properties := ["Use"] } :: p1757_0
+def p1757_3 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1757_2
+#guard selectOwnedDeclaration p1757_1 "xs" == .parameter 0
+#guard elaboratesToParameter p1757_1 "xs" == true
+#guard selectOwnedDeclaration p1757_1 "count" == .property 2
+#guard elaboratesToParameter p1757_1 "count" == false
+#guard selectOwnedDeclaration p1757_3 "Get" == .property 2
+#guard elaboratesToParameter p1757_3 "Get" == false
+#guard selectOwnedDeclaration p1757_2 "Use" == .property 0
+#guard elaboratesToParameter p1757_2 "Use" == false
+#guard selectOwnedDeclaration p1757_0 "Outer" == .property 0
+#guard elaboratesToParameter p1757_0 "Outer" == false
+#guard promotes p1757_0 "Outer" == some false
+#guard forwardingSource p1757_3 false "items" == .ownParameter -- by shape, for the callee's "xs"
+#guard forwardingSource p1757_3 false "xs" == .capturedParameter 1 -- FD-F2: by name; C# supplies .ownParameter "items" by shape
+#guard ownedConflicts p1757_2 == []
+#guard validOwnedDeclarations p1757_3 == true
 
 -- witness/by-shape-supply-beside-an-enclosing-binding/alpha-rename: w1([*w2]) = w2.count \n w3(*w2) = { \n     w4(*w5) = [w1][0] \n     w4(3, 4) \n } \n w3(1, 2, 3)
-def p1768_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3"] } :: prelude
-def p1768_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1768_0
-def p1768_2 : List OwnerLevel := { parameters := ["w2"], properties := ["w4"] } :: p1768_0
-def p1768_3 : List OwnerLevel := { parameters := ["w5"], properties := [] } :: p1768_2
-#guard selectOwnedDeclaration p1768_1 "w2" == .parameter 0
-#guard elaboratesToParameter p1768_1 "w2" == true
-#guard selectOwnedDeclaration p1768_1 "count" == .property 2
-#guard elaboratesToParameter p1768_1 "count" == false
-#guard selectOwnedDeclaration p1768_3 "w1" == .property 2
-#guard elaboratesToParameter p1768_3 "w1" == false
-#guard selectOwnedDeclaration p1768_2 "w4" == .property 0
-#guard elaboratesToParameter p1768_2 "w4" == false
-#guard selectOwnedDeclaration p1768_0 "w3" == .property 0
-#guard elaboratesToParameter p1768_0 "w3" == false
-#guard promotes p1768_0 "w3" == some false
-#guard forwardingSource p1768_3 false "w5" == .ownParameter -- by shape, for the callee's "w2"
-#guard forwardingSource p1768_3 false "w2" == .capturedParameter 1 -- FD-F2: by name; C# supplies .ownParameter "w5" by shape
-#guard ownedConflicts p1768_2 == []
-#guard validOwnedDeclarations p1768_3 == true
+def p1758_0 : List OwnerLevel := { parameters := [], properties := ["w1", "w3"] } :: prelude
+def p1758_1 : List OwnerLevel := { parameters := ["w2"], properties := [] } :: p1758_0
+def p1758_2 : List OwnerLevel := { parameters := ["w2"], properties := ["w4"] } :: p1758_0
+def p1758_3 : List OwnerLevel := { parameters := ["w5"], properties := [] } :: p1758_2
+#guard selectOwnedDeclaration p1758_1 "w2" == .parameter 0
+#guard elaboratesToParameter p1758_1 "w2" == true
+#guard selectOwnedDeclaration p1758_1 "count" == .property 2
+#guard elaboratesToParameter p1758_1 "count" == false
+#guard selectOwnedDeclaration p1758_3 "w1" == .property 2
+#guard elaboratesToParameter p1758_3 "w1" == false
+#guard selectOwnedDeclaration p1758_2 "w4" == .property 0
+#guard elaboratesToParameter p1758_2 "w4" == false
+#guard selectOwnedDeclaration p1758_0 "w3" == .property 0
+#guard elaboratesToParameter p1758_0 "w3" == false
+#guard promotes p1758_0 "w3" == some false
+#guard forwardingSource p1758_3 false "w5" == .ownParameter -- by shape, for the callee's "w2"
+#guard forwardingSource p1758_3 false "w2" == .capturedParameter 1 -- FD-F2: by name; C# supplies .ownParameter "w5" by shape
+#guard ownedConflicts p1758_2 == []
+#guard validOwnedDeclarations p1758_3 == true
 
 -- witness/by-shape-supply-beside-an-enclosing-binding/declaration-reorder: Outer(*xs) = { \n     Use(*items) = [Get][0] \n     Use(3, 4) \n } \n Get([*xs]) = xs.count \n Outer(1, 2, 3)
-def p1769_0 : List OwnerLevel := { parameters := [], properties := ["Outer", "Get"] } :: prelude
-def p1769_1 : List OwnerLevel := { parameters := ["xs"], properties := ["Use"] } :: p1769_0
-def p1769_2 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1769_1
-def p1769_3 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1769_0
-#guard selectOwnedDeclaration p1769_2 "Get" == .property 2
-#guard elaboratesToParameter p1769_2 "Get" == false
-#guard selectOwnedDeclaration p1769_1 "Use" == .property 0
-#guard elaboratesToParameter p1769_1 "Use" == false
-#guard selectOwnedDeclaration p1769_3 "xs" == .parameter 0
-#guard elaboratesToParameter p1769_3 "xs" == true
-#guard selectOwnedDeclaration p1769_3 "count" == .property 2
-#guard elaboratesToParameter p1769_3 "count" == false
-#guard selectOwnedDeclaration p1769_0 "Outer" == .property 0
-#guard elaboratesToParameter p1769_0 "Outer" == false
-#guard promotes p1769_0 "Outer" == some false
-#guard forwardingSource p1769_2 false "items" == .ownParameter -- by shape, for the callee's "xs"
-#guard forwardingSource p1769_2 false "xs" == .capturedParameter 1 -- FD-F2: by name; C# supplies .ownParameter "items" by shape
-#guard ownedConflicts p1769_1 == []
-#guard validOwnedDeclarations p1769_2 == true
+def p1759_0 : List OwnerLevel := { parameters := [], properties := ["Outer", "Get"] } :: prelude
+def p1759_1 : List OwnerLevel := { parameters := ["xs"], properties := ["Use"] } :: p1759_0
+def p1759_2 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p1759_1
+def p1759_3 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p1759_0
+#guard selectOwnedDeclaration p1759_2 "Get" == .property 2
+#guard elaboratesToParameter p1759_2 "Get" == false
+#guard selectOwnedDeclaration p1759_1 "Use" == .property 0
+#guard elaboratesToParameter p1759_1 "Use" == false
+#guard selectOwnedDeclaration p1759_3 "xs" == .parameter 0
+#guard elaboratesToParameter p1759_3 "xs" == true
+#guard selectOwnedDeclaration p1759_3 "count" == .property 2
+#guard elaboratesToParameter p1759_3 "count" == false
+#guard selectOwnedDeclaration p1759_0 "Outer" == .property 0
+#guard elaboratesToParameter p1759_0 "Outer" == false
+#guard promotes p1759_0 "Outer" == some false
+#guard forwardingSource p1759_2 false "items" == .ownParameter -- by shape, for the callee's "xs"
+#guard forwardingSource p1759_2 false "xs" == .capturedParameter 1 -- FD-F2: by name; C# supplies .ownParameter "items" by shape
+#guard ownedConflicts p1759_1 == []
+#guard validOwnedDeclarations p1759_2 == true
 
 /--
 Machine-checked partition count: explorer ids from the block-emission loop against its corpus.
@@ -53953,64 +53828,53 @@ def tutorialGuardedIds : List String := [
   "tutorial/fence-006",
   "tutorial/fence-007",
   "tutorial/fence-008",
-  "tutorial/fence-032",
-  "tutorial/fence-042",
-  "tutorial/fence-053",
-  "tutorial/fence-054",
-  "tutorial/fence-072",
-  "tutorial/fence-073",
-  "tutorial/fence-074",
-  "tutorial/fence-075",
-  "tutorial/fence-080",
-  "tutorial/fence-083",
+  "tutorial/fence-030",
+  "tutorial/fence-040",
+  "tutorial/fence-050",
+  "tutorial/fence-051",
+  "tutorial/fence-062",
+  "tutorial/fence-063",
+  "tutorial/fence-064",
+  "tutorial/fence-065",
+  "tutorial/fence-070",
   "tutorial/fence-071",
-  "tutorial/fence-099",
-  "tutorial/fence-111",
-  "tutorial/fence-091",
-  "tutorial/fence-101",
-  "tutorial/fence-097",
-  "tutorial/fence-038",
-  "tutorial/fence-012",
-  "tutorial/fence-192",
-  "tutorial/fence-173",
-  "tutorial/fence-015",
-  "tutorial/fence-186",
-  "tutorial/fence-014",
-  "tutorial/fence-149",
-  "tutorial/fence-145",
-  "tutorial/fence-059",
-  "tutorial/fence-114",
-  "tutorial/fence-058",
-  "tutorial/fence-121",
-  "tutorial/fence-123",
-  "tutorial/fence-120",
-  "tutorial/fence-165",
-  "tutorial/fence-166",
-  "tutorial/fence-167",
-  "tutorial/fence-029",
-  "tutorial/fence-168",
-  "tutorial/fence-169",
-  "tutorial/fence-170",
-  "tutorial/fence-134",
-  "tutorial/fence-159",
-  "tutorial/fence-161",
-  "tutorial/fence-094",
-  "tutorial/fence-081",
-  "tutorial/fence-082",
-  "tutorial/fence-104",
-  "tutorial/fence-055",
-  "tutorial/fence-194",
-  "tutorial/fence-140",
-  "tutorial/fence-046",
-  "tutorial/fence-093",
-  "tutorial/fence-022",
-  "tutorial/fence-124",
-  "tutorial/fence-155",
-  "tutorial/fence-184",
-  "tutorial/fence-090",
-  "tutorial/fence-016",
-  "tutorial/fence-026",
   "tutorial/fence-086",
+  "tutorial/fence-100",
+  "tutorial/fence-078",
+  "tutorial/fence-088",
+  "tutorial/fence-084",
+  "tutorial/fence-037",
+  "tutorial/fence-012",
+  "tutorial/fence-171",
+  "tutorial/fence-015",
+  "tutorial/fence-014",
+  "tutorial/fence-134",
+  "tutorial/fence-130",
+  "tutorial/fence-056",
+  "tutorial/fence-103",
+  "tutorial/fence-055",
+  "tutorial/fence-108",
+  "tutorial/fence-110",
+  "tutorial/fence-107",
+  "tutorial/fence-151",
+  "tutorial/fence-150",
+  "tutorial/fence-148",
+  "tutorial/fence-152",
+  "tutorial/fence-142",
+  "tutorial/fence-144",
+  "tutorial/fence-081",
+  "tutorial/fence-098",
+  "tutorial/fence-099",
+  "tutorial/fence-092",
+  "tutorial/fence-052",
+  "tutorial/fence-173",
+  "tutorial/fence-043",
+  "tutorial/fence-080",
+  "tutorial/fence-022",
+  "tutorial/fence-111",
+  "tutorial/fence-139",
+  "tutorial/fence-153",
+  "tutorial/fence-016",
   "tutorial/fence-009",
   "tutorial/fence-010",
   "tutorial/fence-011",
@@ -54022,120 +53886,110 @@ def tutorialGuardedIds : List String := [
   "tutorial/fence-023",
   "tutorial/fence-024",
   "tutorial/fence-025",
+  "tutorial/fence-026",
   "tutorial/fence-027",
   "tutorial/fence-028",
-  "tutorial/fence-030",
+  "tutorial/fence-029",
   "tutorial/fence-031",
+  "tutorial/fence-032",
   "tutorial/fence-033",
   "tutorial/fence-034",
   "tutorial/fence-035",
   "tutorial/fence-036",
-  "tutorial/fence-037",
+  "tutorial/fence-038",
   "tutorial/fence-039",
-  "tutorial/fence-040",
   "tutorial/fence-041",
-  "tutorial/fence-043",
+  "tutorial/fence-042",
   "tutorial/fence-044",
   "tutorial/fence-045",
+  "tutorial/fence-046",
   "tutorial/fence-047",
   "tutorial/fence-048",
   "tutorial/fence-049",
-  "tutorial/fence-050",
-  "tutorial/fence-051",
-  "tutorial/fence-052",
-  "tutorial/fence-056",
+  "tutorial/fence-053",
+  "tutorial/fence-054",
   "tutorial/fence-057",
+  "tutorial/fence-058",
+  "tutorial/fence-172",
+  "tutorial/fence-059",
   "tutorial/fence-060",
   "tutorial/fence-061",
-  "tutorial/fence-193",
-  "tutorial/fence-062",
-  "tutorial/fence-063",
-  "tutorial/fence-064",
-  "tutorial/fence-065",
   "tutorial/fence-066",
   "tutorial/fence-067",
   "tutorial/fence-068",
   "tutorial/fence-069",
-  "tutorial/fence-070",
+  "tutorial/fence-072",
+  "tutorial/fence-073",
+  "tutorial/fence-074",
+  "tutorial/fence-075",
   "tutorial/fence-076",
   "tutorial/fence-077",
-  "tutorial/fence-078",
   "tutorial/fence-079",
-  "tutorial/fence-084",
+  "tutorial/fence-082",
+  "tutorial/fence-083",
   "tutorial/fence-085",
   "tutorial/fence-087",
-  "tutorial/fence-088",
   "tutorial/fence-089",
-  "tutorial/fence-092",
+  "tutorial/fence-090",
+  "tutorial/fence-091",
+  "tutorial/fence-093",
+  "tutorial/fence-094",
   "tutorial/fence-095",
   "tutorial/fence-096",
-  "tutorial/fence-098",
-  "tutorial/fence-100",
+  "tutorial/fence-097",
+  "tutorial/fence-101",
   "tutorial/fence-102",
-  "tutorial/fence-103",
+  "tutorial/fence-104",
   "tutorial/fence-105",
   "tutorial/fence-106",
-  "tutorial/fence-107",
-  "tutorial/fence-108",
   "tutorial/fence-109",
-  "tutorial/fence-110",
   "tutorial/fence-112",
   "tutorial/fence-113",
+  "tutorial/fence-114",
   "tutorial/fence-115",
   "tutorial/fence-116",
   "tutorial/fence-117",
   "tutorial/fence-118",
   "tutorial/fence-119",
-  "tutorial/fence-122",
+  "tutorial/fence-120",
+  "tutorial/fence-121",
+  "tutorial/fence-123",
+  "tutorial/fence-124",
   "tutorial/fence-125",
   "tutorial/fence-126",
   "tutorial/fence-127",
   "tutorial/fence-128",
   "tutorial/fence-129",
-  "tutorial/fence-130",
   "tutorial/fence-131",
   "tutorial/fence-132",
   "tutorial/fence-133",
   "tutorial/fence-135",
   "tutorial/fence-136",
+  "tutorial/fence-137",
   "tutorial/fence-138",
-  "tutorial/fence-139",
+  "tutorial/fence-140",
   "tutorial/fence-141",
-  "tutorial/fence-142",
   "tutorial/fence-143",
-  "tutorial/fence-144",
-  "tutorial/fence-146",
-  "tutorial/fence-147",
-  "tutorial/fence-148",
-  "tutorial/fence-150",
-  "tutorial/fence-151",
-  "tutorial/fence-152",
-  "tutorial/fence-153",
+  "tutorial/fence-145",
+  "tutorial/fence-149",
   "tutorial/fence-154",
+  "tutorial/fence-155",
   "tutorial/fence-156",
   "tutorial/fence-157",
   "tutorial/fence-158",
+  "tutorial/fence-159",
   "tutorial/fence-160",
+  "tutorial/fence-161",
   "tutorial/fence-162",
-  "tutorial/fence-171",
-  "tutorial/fence-172",
-  "tutorial/fence-174",
-  "tutorial/fence-175",
-  "tutorial/fence-176",
-  "tutorial/fence-177",
-  "tutorial/fence-178",
-  "tutorial/fence-179",
-  "tutorial/fence-180",
-  "tutorial/fence-181",
-  "tutorial/fence-182",
-  "tutorial/fence-183",
-  "tutorial/fence-185",
-  "tutorial/fence-187",
-  "tutorial/fence-188",
-  "tutorial/fence-189",
-  "tutorial/fence-191"
+  "tutorial/fence-163",
+  "tutorial/fence-164",
+  "tutorial/fence-165",
+  "tutorial/fence-166",
+  "tutorial/fence-167",
+  "tutorial/fence-168",
+  "tutorial/fence-170"
 ]
-#guard tutorialGuardedIds.length == 190
+#guard tutorialGuardedIds.length == 169
 
 /--
 Machine-checked partition count: witness ids from the block-emission loop against its corpus.
@@ -54193,7 +54047,7 @@ def witnessGuardedIds : List String := [
 #guard witnessGuardedIds.length == 48
 
 def guardedProgramIds : List String := explorerGuardedIds ++ specGuardedIds ++ sem2bGuardedIds ++ tutorialGuardedIds ++ witnessGuardedIds
-#guard guardedProgramIds.length == 4566
+#guard guardedProgramIds.length == 4545
 
 /--
 The programs that contribute no guard (the reasons are counted in the partition above).
@@ -54246,10 +54100,10 @@ def skippedProgramIds : List String := [
   "sem2b/sem2b/v2/seed/5EED2B000001/14",
   "sem2b/sem2b/v2/seed/5EED2B000006/2",
   "tutorial/fence-013",
-  "tutorial/fence-137",
-  "tutorial/fence-163",
-  "tutorial/fence-164",
-  "tutorial/fence-190"
+  "tutorial/fence-122",
+  "tutorial/fence-146",
+  "tutorial/fence-147",
+  "tutorial/fence-169"
 ]
 #guard skippedProgramIds.length == 51
 
