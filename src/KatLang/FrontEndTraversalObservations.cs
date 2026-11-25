@@ -1166,6 +1166,26 @@ internal sealed class FrontEndTraversalObservations
         => StructuralPreflightEdges = checked(StructuralPreflightEdges + 1);
 
     /// <summary>
+    /// Child edges an evaluator run's route-selection walk followed
+    /// (<c>DeferredModuleRegion.RequiresAsyncEvaluationCounting</c>, observed only by an evaluator run): one per
+    /// child it pushed, revisits of shared nodes included. The walk stops at the first deferred placeholder.
+    /// </summary>
+    public long EvaluatorRouteEdges { get; private set; }
+
+    internal void RecordEvaluatorRouteEdge()
+        => EvaluatorRouteEdges = checked(EvaluatorRouteEdges + 1);
+
+    /// <summary>
+    /// Child edges a deferred-body admission's prefix accounting followed
+    /// (<c>AstStructuralPreflight.AccumulateDeferredRegionPrefixes</c>, observed only through a run's deferred-admission
+    /// observer): one per child it pushed. The body check itself records <see cref="StructuralPreflightEdges"/>.
+    /// </summary>
+    public long DeferredRegionPrefixEdges { get; private set; }
+
+    internal void RecordDeferredRegionPrefixEdge()
+        => DeferredRegionPrefixEdges = checked(DeferredRegionPrefixEdges + 1);
+
+    /// <summary>
     /// The capacity hints the structural preflight's height tables were created with, summed over the walks this
     /// observer saw. An evaluator run's admission walk is handed the node count an earlier walk of the same run
     /// counted (the synchronous entry guard's, or the async entry's tree fact), and 0 when none was made. Capacity
@@ -1452,7 +1472,8 @@ internal sealed class FrontEndTraversalObservations
 /// The bounded blocks of elaboration work at whose start the passes observe the source-processing
 /// token (2.06; see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>), the blocks of
 /// semantic-model construction at whose start the builder observes the token of its cancellable entry,
-/// and the blocks of an evaluator run's structural admission walk, which observes the run's evaluation token.
+/// and the blocks of an evaluator run's route selection, structural admission and validation walks and of its
+/// deferred-body admissions, which observe the run's evaluation token.
 /// </summary>
 internal enum FrontEndCancellationCheckpoint
 {
@@ -1502,6 +1523,28 @@ internal enum FrontEndCancellationCheckpoint
     /// over a large or expanded program is cancellable inside its preflight.
     /// </summary>
     EvaluatorPreflight,
+    /// <summary>
+    /// The start of an evaluator run's route-selection walk — the deferred-region walk an async entry decides its
+    /// route and cache pairing with, or the synchronous entry's deferred-region guard — and every
+    /// <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> edges after it. The route rule's own walk for an
+    /// internal caller that supplies a synchronous-only cache without a decided fact takes no token: it decides the
+    /// cache-pairing guard that fails loud even under a cancelled token.
+    /// </summary>
+    EvaluatorRoute,
+    /// <summary>
+    /// Every <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> units of an evaluator run's pre-evaluation
+    /// validation walk below its algorithm expansions (which observe <see cref="WalkerAlgorithm"/>): expressions
+    /// visited, join-spine nodes unwound, clause-head pattern nodes visited, clause heads prescanned, and the
+    /// pattern slots and alias-validation work as the shared helpers actually read them.
+    /// </summary>
+    EvaluatorValidationBlock,
+    /// <summary>
+    /// The start of each pass of a deferred-body admission during evaluation — the body's structural check, the replay
+    /// that positions its rejection, and the prefix accounting over the admitted root or an admitted body — and every
+    /// <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> edges inside one. The admission observes the run's
+    /// evaluation token.
+    /// </summary>
+    EvaluatorDeferredAdmission,
 }
 
 /// <summary>
@@ -1523,9 +1566,29 @@ internal static class FrontEndPassStage
     internal static bool IsPass(string stage) => stage.StartsWith("pass:", StringComparison.Ordinal);
 }
 
+/// <summary>One countdown shared by the loops of a cancellable pre-evaluation validation walk.</summary>
+internal sealed class ValidationWork(FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+{
+    private int _remaining = AstStructuralPreflight.CancellationCheckpointEdges;
+
+    internal void Step()
+    {
+        if (--_remaining == 0)
+            ObserveBlock();
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void ObserveBlock()
+    {
+        _remaining = AstStructuralPreflight.CancellationCheckpointEdges;
+        FrontEndTraversalObservations.ObserveCancellation(
+            observations, FrontEndCancellationCheckpoint.EvaluatorValidationBlock, cancellationToken);
+    }
+}
+
 internal static class FrontEndCancellationCheckpointKinds
 {
-    internal const int Count = (int)FrontEndCancellationCheckpoint.EvaluatorPreflight + 1;
+    internal const int Count = (int)FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission + 1;
 }
 
 /// <summary>

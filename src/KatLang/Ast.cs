@@ -1113,12 +1113,13 @@ public closed record ParameterPattern
     /// explored without a hit the first time, so the verdict and the first witness are those of
     /// the equivalent tree while the work is linear in the distinct pattern nodes.
     /// </remarks>
-    internal static SequenceValueParameterPattern? FindSingletonSequenceGroup(IReadOnlyList<ParameterPattern> patterns)
+    internal static SequenceValueParameterPattern? FindSingletonSequenceGroup(IReadOnlyList<ParameterPattern> patterns, ValidationWork? work = null)
     {
         Stack<ParameterPattern>? pending = null;
         HashSet<ParameterPattern>? expanded = null;
         for (var index = patterns.Count - 1; index >= 0; index--)
         {
+            work?.Step();
             if (patterns[index] is CaptureParameterPattern)
                 continue;
             pending ??= new Stack<ParameterPattern>();
@@ -1127,13 +1128,14 @@ public closed record ParameterPattern
 
         while (pending is { Count: > 0 })
         {
+            work?.Step();
             var pattern = pending.Pop();
             if (pattern is SequenceValueParameterPattern sequence && IsSingletonSequenceItems(sequence.Items))
                 return sequence;
 
             if (StructuralItems(pattern) is { } items
                 && (expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
-                PushItems(pending, items);
+                PushItems(pending, items, work);
         }
 
         return null;
@@ -1190,12 +1192,13 @@ public closed record ParameterPattern
     /// hit the first time, so it is skipped; the work is linear in the distinct pattern nodes, and
     /// a flat list of capture leaves allocates nothing.
     /// </summary>
-    internal static ParameterDeclaration? FindFirstCapture(IReadOnlyList<ParameterPattern> patterns, bool requireSpan)
+    internal static ParameterDeclaration? FindFirstCapture(IReadOnlyList<ParameterPattern> patterns, bool requireSpan, ValidationWork? work = null)
     {
         Stack<ParameterPattern>? pending = null;
         HashSet<ParameterPattern>? expanded = null;
         for (var index = 0; index < patterns.Count; index++)
         {
+            work?.Step();
             var top = patterns[index];
             if (top is CaptureParameterPattern topCapture)
             {
@@ -1208,11 +1211,12 @@ public closed record ParameterPattern
             pending.Push(top);
             while (pending.Count > 0)
             {
+                work?.Step();
                 var pattern = pending.Pop();
                 if (StructuralItems(pattern) is { } items)
                 {
                     if ((expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
-                        PushItems(pending, items);
+                        PushItems(pending, items, work);
                 }
                 else if (!requireSpan || ((CaptureParameterPattern)pattern).Parameter.Span is not null)
                 {
@@ -1272,10 +1276,13 @@ public closed record ParameterPattern
     }
 
     // Items are pushed last-first so the pop order is the written left-to-right order.
-    private static void PushItems(Stack<ParameterPattern> pending, IReadOnlyList<ParameterPattern> items)
+    private static void PushItems(Stack<ParameterPattern> pending, IReadOnlyList<ParameterPattern> items, ValidationWork? work = null)
     {
         for (var index = items.Count - 1; index >= 0; index--)
+        {
+            work?.Step();
             pending.Push(items[index]);
+        }
     }
 
     public static bool HasCollectingCaptureAtCurrentLevel(IEnumerable<ParameterPattern> patterns)
@@ -1315,6 +1322,9 @@ public closed record ParameterPattern
         => PatternLevelArity.Of(patterns).Accepts(0);
 
     public static bool HasMultipleCollectingCapturesAtAnyLevel(IReadOnlyList<ParameterPattern> patterns)
+        => MultipleCollectingAtAnyLevel(patterns, null);
+
+    internal static bool MultipleCollectingAtAnyLevel(IReadOnlyList<ParameterPattern> patterns, ValidationWork? work)
     {
         // Iterative per-level scan: patterns are host-constructible to arbitrary
         // depth, and this public helper must not recurse on the caller's stack.
@@ -1327,9 +1337,11 @@ public closed record ParameterPattern
         IReadOnlyList<ParameterPattern>? level = patterns;
         while (level is not null)
         {
+            work?.Step();
             var collectingAtLevel = 0;
             for (var index = 0; index < level.Count; index++)
             {
+                work?.Step();
                 var pattern = level[index];
                 if (pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting })
                 {
@@ -1391,9 +1403,11 @@ public closed record ParameterPattern
     /// is never expanded per path; a flat list without a collecting capture allocates nothing.
     /// </summary>
     public static bool HasRepeatedCaptureNameIncludingCollecting(IEnumerable<ParameterPattern> patterns)
+        => RepeatedCaptureIncludingCollecting(patterns as IReadOnlyList<ParameterPattern> ?? patterns.ToList(), null);
+
+    internal static bool RepeatedCaptureIncludingCollecting(IReadOnlyList<ParameterPattern> list, ValidationWork? work)
     {
-        var list = patterns as IReadOnlyList<ParameterPattern> ?? patterns.ToList();
-        var flat = IsFlatCaptureList(list, out var flatHasCollecting);
+        var flat = IsFlatCaptureList(list, out var flatHasCollecting, work);
         if (flat && (!flatHasCollecting || list.Count < 2))
             return false;
 
@@ -1401,16 +1415,20 @@ public closed record ParameterPattern
         if (flat)
         {
             for (var index = 0; index < list.Count; index++)
+            {
+                work?.Step();
                 Record(occurrences, ((CaptureParameterPattern)list[index]).Parameter);
+            }
         }
         else
         {
-            foreach (var capture in EnumerateCapturesAtMostTwicePerNode(list, nestedOnly: false))
+            foreach (var capture in EnumerateCapturesAtMostTwicePerNode(list, nestedOnly: false, work))
                 Record(occurrences, capture);
         }
 
         foreach (var (count, collecting) in occurrences.Values)
         {
+            work?.Step();
             if (count > 1 && collecting)
                 return true;
         }
@@ -1425,11 +1443,12 @@ public closed record ParameterPattern
     }
 
     // Whether every item is a capture leaf, and whether one of them collects. Reads each item once.
-    private static bool IsFlatCaptureList(IReadOnlyList<ParameterPattern> patterns, out bool hasCollecting)
+    private static bool IsFlatCaptureList(IReadOnlyList<ParameterPattern> patterns, out bool hasCollecting, ValidationWork? work = null)
     {
         hasCollecting = false;
         for (var index = 0; index < patterns.Count; index++)
         {
+            work?.Step();
             if (patterns[index] is not CaptureParameterPattern capture)
                 return false;
             hasCollecting |= capture.Kind == ParameterKind.Collecting;
@@ -1458,13 +1477,13 @@ public closed record ParameterPattern
     /// A shared implicit-signature template answers from its facts, computed once (FE-3).
     /// Lean: <c>ParameterPattern.signatureViolation?</c>.
     /// </summary>
-    internal static ParameterSignatureViolation? FindSignatureViolation(IReadOnlyList<ParameterPattern> patterns)
+    internal static ParameterSignatureViolation? FindSignatureViolation(IReadOnlyList<ParameterPattern> patterns, ValidationWork? work = null)
         => patterns is ImplicitSignatureTemplate template
-            ? template.Facts.SignatureViolation
+            ? template.GetSignatureViolation(work)
             : SignatureViolationOf(
-                HasSingletonSequenceGroup(patterns),
-                HasMultipleCollectingCapturesAtAnyLevel(patterns),
-                HasRepeatedCaptureNameIncludingCollecting(patterns));
+                FindSingletonSequenceGroup(patterns, work) is not null,
+                MultipleCollectingAtAnyLevel(patterns, work),
+                RepeatedCaptureIncludingCollecting(patterns, work));
 
     /// <summary>The first violated rule of <see cref="FindSignatureViolation"/>, from its three facts in rule order.</summary>
     internal static ParameterSignatureViolation? SignatureViolationOf(
@@ -1484,24 +1503,26 @@ public closed record ParameterPattern
     /// is not collecting). Clause families carry no META at all: the parser and the pre-evaluation
     /// preflight reject a META clause binder. Lean: <c>ParameterPattern.metaViolation?</c>.
     /// </summary>
-    internal static ParameterDeclaration? FindMetaViolation(IReadOnlyList<ParameterPattern> patterns)
+    internal static ParameterDeclaration? FindMetaViolation(IReadOnlyList<ParameterPattern> patterns, ValidationWork? work = null)
     {
-        if (!HasMetaCapture(patterns))
+        if (!HasMetaCapture(patterns, work))
             return null;
 
         // A META capture nested in a structural pattern is misplaced wherever it stands.
-        foreach (var nested in EnumerateCapturesAtMostTwicePerNode(patterns, nestedOnly: true))
+        foreach (var nested in EnumerateCapturesAtMostTwicePerNode(patterns, nestedOnly: true, work))
         {
+            work?.Step();
             if (nested.Kind == ParameterKind.Meta)
                 return nested;
         }
 
         // A top-level META capture whose name the list binds more than once.
         var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var capture in EnumerateCapturesAtMostTwicePerNode(patterns, nestedOnly: false))
+        foreach (var capture in EnumerateCapturesAtMostTwicePerNode(patterns, nestedOnly: false, work))
             occurrences[capture.Name] = Math.Min(2, occurrences.GetValueOrDefault(capture.Name) + 1);
         foreach (var pattern in patterns)
         {
+            work?.Step();
             if (pattern is CaptureParameterPattern { Kind: ParameterKind.Meta } meta && occurrences[meta.Name] > 1)
                 return meta.Parameter;
         }
@@ -1515,23 +1536,25 @@ public closed record ParameterPattern
     // host DAG cannot expand to exponentially many paths. Nested-only roots omit top-level
     // captures, preserving the rule's first nested-META rejection before duplicate names.
     private static IEnumerable<ParameterDeclaration> EnumerateCapturesAtMostTwicePerNode(
-        IReadOnlyList<ParameterPattern> patterns, bool nestedOnly)
+        IReadOnlyList<ParameterPattern> patterns, bool nestedOnly, ValidationWork? work = null)
     {
         var pending = new Stack<ParameterPattern>();
         var visits = new Dictionary<ParameterPattern, int>(ReferenceEqualityComparer.Instance);
         for (var index = patterns.Count - 1; index >= 0; index--)
         {
+            work?.Step();
             var pattern = patterns[index];
             if (!nestedOnly || StructuralItems(pattern) is not null)
                 pending.Push(pattern);
         }
         while (pending.TryPop(out var pattern))
         {
+            work?.Step();
             var count = visits.GetValueOrDefault(pattern);
             if (count == 2) continue;
             visits[pattern] = count + 1;
             if (StructuralItems(pattern) is { } items)
-                PushItems(pending, items);
+                PushItems(pending, items, work);
             else
                 yield return ((CaptureParameterPattern)pattern).Parameter;
         }
@@ -1542,12 +1565,13 @@ public closed record ParameterPattern
     /// for a flat list of capture leaves (the pre-evaluation validation reads it once per signature of
     /// every run); a structural pattern is walked with an explicit stack.
     /// </summary>
-    internal static bool HasMetaCapture(IReadOnlyList<ParameterPattern> patterns)
+    internal static bool HasMetaCapture(IReadOnlyList<ParameterPattern> patterns, ValidationWork? work = null)
     {
         Stack<ParameterPattern>? pending = null;
         HashSet<ParameterPattern>? expanded = null;
         for (var index = 0; index < patterns.Count; index++)
         {
+            work?.Step();
             switch (patterns[index])
             {
                 case CaptureParameterPattern { Kind: ParameterKind.Meta }:
@@ -1562,12 +1586,13 @@ public closed record ParameterPattern
 
         while (pending is { Count: > 0 })
         {
+            work?.Step();
             var pattern = pending.Pop();
             if (pattern is CaptureParameterPattern { Kind: ParameterKind.Meta })
                 return true;
             if (StructuralItems(pattern) is { } items
                 && (expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
-                PushItems(pending, items);
+                PushItems(pending, items, work);
         }
 
         return false;
@@ -2657,14 +2682,17 @@ public closed record Pattern
     /// without a hit the first time, so the first witness is the tree's and the work is linear in
     /// the distinct pattern nodes.
     /// </summary>
-    internal SequenceValue? FindHeadSingletonSequenceGroup()
+    internal SequenceValue? FindHeadSingletonSequenceGroup(ValidationWork? work = null)
     {
         var pending = new Stack<Pattern>();
         HashSet<Pattern>? expanded = null;
         if (this is SequenceValue(var headItems))
         {
             for (var i = headItems.Count - 1; i >= 0; i--)
+            {
+                work?.Step();
                 pending.Push(headItems[i]);
+            }
         }
         else
         {
@@ -2673,6 +2701,7 @@ public closed record Pattern
 
         while (pending.Count > 0)
         {
+            work?.Step();
             switch (pending.Pop())
             {
                 case SequenceValue sequence:
@@ -2681,14 +2710,20 @@ public closed record Pattern
                     if (!(expanded ??= new HashSet<Pattern>(ReferenceEqualityComparer.Instance)).Add(sequence))
                         break;
                     for (var i = sequence.Items.Count - 1; i >= 0; i--)
+                    {
+                        work?.Step();
                         pending.Push(sequence.Items[i]);
+                    }
                     break;
                 case ListValue list:
                     if (!(expanded ??= new HashSet<Pattern>(ReferenceEqualityComparer.Instance)).Add(list))
                         break;
                     var items = list.Items;
                     for (var i = items.Count - 1; i >= 0; i--)
+                    {
+                        work?.Step();
                         pending.Push(items[i]);
+                    }
                     break;
             }
         }
@@ -2707,7 +2742,7 @@ public closed record Pattern
     /// pattern nodes of a host-built head that shares subtrees, and allocation-free for a head whose
     /// items are leaves (every run validates every clause head).
     /// </summary>
-    internal bool HeadHasBinderOfKind(ParameterKind kind)
+    internal bool HeadHasBinderOfKind(ParameterKind kind, ValidationWork? work = null)
     {
         if (this is Bind self)
             return self.ParameterKind == kind;
@@ -2717,8 +2752,10 @@ public closed record Pattern
         var items = ClauseGroupItems(this);
         while (items is not null)
         {
+            work?.Step();
             foreach (var item in items)
             {
+                work?.Step();
                 if (item is Bind bind && bind.ParameterKind == kind)
                     return true;
                 if (ClauseGroupItems(item) is { Count: > 0 } nested
@@ -4828,7 +4865,7 @@ internal closed record PreEvaluationAstViolation
 /// targets in different scopes. Scopes declaring none of the reachable alias-target heads do not
 /// split the context; each scope's property names are indexed once.
 /// </summary>
-internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = null)
+internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = null, ValidationWork? work = null)
 {
     private readonly HashSet<AliasSite> _settled = [];
     // Per property list: name -> the FIRST property of that name, and, kept apart, the first nameless property (Lookup).
@@ -4836,7 +4873,7 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
     private readonly Dictionary<int, Dictionary<IReadOnlyList<Property>, int>> _contexts = [];
     private readonly Dictionary<IReadOnlyList<Property>, bool> _relevantScopes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<(int Region, string Head, int Context), int> _regions = [];
-    private readonly RegionFreeNames _freeNames = new(new NameSetInterner());
+    private readonly RegionFreeNames _freeNames = new(new NameSetInterner(work: work), work);
     private int _nextContext;
 
     internal int ContextOf(IReadOnlyList<Algorithm> chain) => ContextOf(chain, chain.Count);
@@ -4853,6 +4890,7 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
         var free = _freeNames.IncludingNull(node);
         foreach (var name in free.Named.Names)
         {
+            work?.Step();
             if (targetHeads?.Contains(name) == false) continue;
             region = RegionWith(region, name, chain);
         }
@@ -4881,6 +4919,7 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
         var context = 0;
         for (var index = 0; index < count; index++)
         {
+            work?.Step();
             var owner = chain[index];
             if (owner.Properties.Count == 0 || !HasRelevantDeclarations(owner.Properties))
                 continue;
@@ -4900,7 +4939,15 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
             return true;
         if (!_relevantScopes.TryGetValue(properties, out var relevant))
         {
-            relevant = properties.Any(property => targetHeads.Contains(property.Name));
+            foreach (var property in properties)
+            {
+                work?.Step();
+                if (targetHeads.Contains(property.Name))
+                {
+                    relevant = true;
+                    break;
+                }
+            }
             _relevantScopes.Add(properties, relevant);
         }
 
@@ -4962,6 +5009,7 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
             && TryResolve(current, chain, out var value, out var valueChain)
             && value is Algorithm.Alias next)
         {
+            work?.Step();
             site = new AliasSite(next, ContextOf(valueChain));
             if (!onChain.Add(site))
                 return current.Target;
@@ -4969,7 +5017,11 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
             chain = valueChain;
         }
 
-        _settled.UnionWith(onChain);
+        foreach (var completed in onChain)
+        {
+            work?.Step();
+            _settled.Add(completed);
+        }
         return null;
     }
 
@@ -5078,6 +5130,7 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
             index = (new Dictionary<string, Property>(StringComparer.Ordinal), null);
             foreach (var property in properties)
             {
+                work?.Step();
                 if (property.Name is null)
                     index.Unnamed ??= property;
                 else
@@ -5166,18 +5219,22 @@ internal static class AlgorithmValidation
     /// every alias reach would answer <c>false</c>, so the walk builds no alias-reach table and asks none.
     /// Pass <c>true</c> only with that proof for the same graph; <c>false</c> is always safe.
     /// <paramref name="cancellationToken"/> is the evaluator run's token, observed at every algorithm the walk
-    /// expands; it changes no verdict of a walk it does not cancel.
+    /// expands (<see cref="FrontEndCancellationCheckpoint.WalkerAlgorithm"/>) and once per
+    /// <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> units of work below them
+    /// (<see cref="FrontEndCancellationCheckpoint.EvaluatorValidationBlock"/>: expression visits, join-spine nodes, clause-head
+    /// nodes and prescans, parameter patterns), so one wide body is cancellable inside its walk; it changes no verdict of
+    /// a walk it does not cancel. The pattern and alias helpers share the countdown across nested scans.
     /// </summary>
     internal static PreEvaluationAstViolation? FindFirstPreEvaluationViolation(
         Expr expr, FrontEndTraversalObservations? observations, int nodeCountHint = 0,
         PreEvaluationTables? tables = null, bool graphIsAliasFree = false, CancellationToken cancellationToken = default)
     {
         var walker = new PreEvaluationValidationWalker(
-            stopAfterFirst: true, checkConditionalBranchArities: true, nodeCountHint, tables, graphIsAliasFree, observations)
+            stopAfterFirst: true, checkConditionalBranchArities: true, nodeCountHint, tables, graphIsAliasFree, observations,
+            cancellationToken.CanBeCanceled ? new ValidationWork(observations, cancellationToken) : null)
         {
             TraversalObservations = observations,
-            // An evaluator run's token: the walker observes it at every algorithm it expands
-            // (FrontEndCancellationCheckpoint.WalkerAlgorithm), as the front-end walkers do.
+            // The base walker also observes it on algorithm expansion (WalkerAlgorithm).
             CancellationToken = cancellationToken,
         };
         walker.VisitExpr(expr);
@@ -5190,7 +5247,7 @@ internal static class AlgorithmValidation
         int nodeCountHint = 0,
         PreEvaluationTables? tables = null,
         bool graphIsAliasFree = false,
-        FrontEndTraversalObservations? tableObservations = null) : AstWalker
+        FrontEndTraversalObservations? tableObservations = null, ValidationWork? work = null) : AstWalker
     {
         /// <summary>
         /// Lean's default diagnostic label for a conditional reached outside a
@@ -5258,10 +5315,10 @@ internal static class AlgorithmValidation
         private bool FirstVisit(object node)
         {
             var first = _visited.Add(node);
-            if (_aliasReach is null || !AstStructuralPreflight.ReachesAlias(node, _aliasReach))
+            if (_aliasReach is null || !AstStructuralPreflight.ReachesAlias(node, _aliasReach, work))
                 return first;
 
-            var context = (_aliasTargets ??= new(AstStructuralPreflight.AliasTargetHeads(node))).RegionOf(node, _chain);
+            var context = (_aliasTargets ??= new(AstStructuralPreflight.AliasTargetHeads(node, work), work)).RegionOf(node, _chain);
             if (!_scopedVisits.TryGetValue(context, out var visited))
                 _scopedVisits.Add(context, visited = new(ReferenceEqualityComparer.Instance));
             return visited.Add(node);
@@ -5279,6 +5336,8 @@ internal static class AlgorithmValidation
             FrontEndStack.Ensure();
             if (stopAfterFirst && Violations.Count > 0)
                 return;
+
+            work?.Step(); // Includes placeholders, builtins and revisits that skip the base walker.
 
             // A deferred module region's placeholder body is a PROVISIONAL elaboration: a name the
             // region's module will supply reads as undeclared there, so judging it here would blame
@@ -5362,7 +5421,7 @@ internal static class AlgorithmValidation
             // innermost level.
             var held = _chain;
             _chain = [];
-            if (_aliasReach is not null && AstStructuralPreflight.ReachesAlias(scope, _aliasReach))
+            if (_aliasReach is not null && AstStructuralPreflight.ReachesAlias(scope, _aliasReach, work))
             {
                 var levels = new Stack<ScopeCtx>();
                 for (var current = scope; current is not null; current = current.Parent)
@@ -5410,7 +5469,7 @@ internal static class AlgorithmValidation
             {
                 PreEvaluationAstViolation? aliasViolation = !AliasTargetRows.IsAdmitted(algorithm.Target)
                     ? new PreEvaluationAstViolation.AliasTargetNotStaticPath(algorithm.Target)
-                    : (_aliasTargets ??= new()).FindCycle(algorithm, _chain.GetRange(0, _chain.Count - 1)) is { } cycleTarget
+                    : (_aliasTargets ??= new(work: work)).FindCycle(algorithm, _chain.GetRange(0, _chain.Count - 1)) is { } cycleTarget
                         ? new PreEvaluationAstViolation.AliasCycle(cycleTarget)
                         : null;
                 if (aliasViolation is not null)
@@ -5430,6 +5489,8 @@ internal static class AlgorithmValidation
             if (stopAfterFirst && Violations.Count > 0)
                 return;
 
+            // Every visit, a revisit of a shared node included: a wide body's rows and slots are visits.
+            work?.Step();
             if (!FirstVisit(expr))
                 return;
 
@@ -5475,6 +5536,8 @@ internal static class AlgorithmValidation
                 var current = stack.Pop();
                 if (current is Expr.SequenceConstruct(var outputLeft, var outputRight))
                 {
+                    // A join spine is unwound here, not through VisitExpr: a long zero-weight spread chain has one leaf.
+                    work?.Step();
                     if (!ReferenceEquals(current, expr) && !FirstVisit(current))
                         continue;
 
@@ -5485,6 +5548,7 @@ internal static class AlgorithmValidation
 
                 if (current is Expr.SequenceSpread(var spreadOperand))
                 {
+                    work?.Step();
                     if (!ReferenceEquals(current, expr) && !FirstVisit(current))
                         continue;
 
@@ -5508,10 +5572,10 @@ internal static class AlgorithmValidation
             if (checkConditionalBranchArities && _visited.Add(algorithm.ParameterPatterns))
             {
                 PreEvaluationAstViolation? patternViolation =
-                    ParameterPattern.FindSignatureViolation(algorithm.ParameterPatterns) switch
+                    ParameterPattern.FindSignatureViolation(algorithm.ParameterPatterns, work) switch
                     {
                         ParameterSignatureViolation.SingletonSequencePattern => new PreEvaluationAstViolation.SingletonSequencePattern(
-                            ParameterPattern.FindSingletonSequenceGroup(algorithm.ParameterPatterns)?.Source?.WrittenSpan),
+                            ParameterPattern.FindSingletonSequenceGroup(algorithm.ParameterPatterns, work)?.Source?.WrittenSpan),
                         ParameterSignatureViolation.MultipleCollectingAtOneLevel => new PreEvaluationAstViolation.MultipleCollectingCaptures(),
                         ParameterSignatureViolation.RepeatedNameIncludesCollecting => new PreEvaluationAstViolation.RepeatedNameIncludesCollecting(),
                         null => null,
@@ -5551,12 +5615,12 @@ internal static class AlgorithmValidation
                 // patterns (ParameterPattern.FindFirstCapture), never the per-occurrence Parameters
                 // projection, so a host pattern sharing subtrees is read linearly in its distinct nodes.
                 var span = algorithm.HasExplicitParameterList
-                    ? ParameterPattern.FindFirstCapture(algorithm.ParameterPatterns, requireSpan: false)?.Span
+                    ? ParameterPattern.FindFirstCapture(algorithm.ParameterPatterns, requireSpan: false, work)?.Span
                     : null;
                 Violations.Add(new PreEvaluationAstViolation.ExplicitParametersWithoutOutput(span)
                 {
                     WrittenAnchor = algorithm.HasExplicitParameterList
-                        ? ParameterPattern.FindFirstCapture(algorithm.ParameterPatterns, requireSpan: true)?.Span
+                        ? ParameterPattern.FindFirstCapture(algorithm.ParameterPatterns, requireSpan: true, work)?.Span
                             ?? _enclosingPropertySpan
                         : null,
                 });
@@ -5574,6 +5638,7 @@ internal static class AlgorithmValidation
         // nodes. Its own reference set: a pattern never reaches an alias region.
         public override void VisitPattern(Pattern pattern)
         {
+            work?.Step();
             if (pattern is Pattern.SequenceValue or Pattern.ListValue
                 && !(_visitedPatterns ??= new(ReferenceEqualityComparer.Instance)).Add(pattern))
                 return;
@@ -5607,7 +5672,7 @@ internal static class AlgorithmValidation
         private bool ScanMeta(IReadOnlyList<ParameterPattern> patterns)
         {
             TraversalObservations?.RecordPreEvaluationMetaPlacementSlots(patterns.Count);
-            return ParameterPattern.FindMetaViolation(patterns) is not null;
+            return ParameterPattern.FindMetaViolation(patterns, work) is not null;
         }
 
         protected override void VisitProperty(Property property)
@@ -5618,7 +5683,8 @@ internal static class AlgorithmValidation
             var enclosingSpan = _enclosingPropertySpan;
             _enclosingPropertyName = property.Name;
             _enclosingPropertySpan = property.FirstDeclarationSpan;
-            base.VisitProperty(property);
+            // Declaration-span hooks are empty on this walker. The first span above is its only input.
+            VisitAlgorithm(property.Value);
             _enclosingPropertyName = enclosingName;
             _enclosingPropertySpan = enclosingSpan;
         }
@@ -5628,9 +5694,7 @@ internal static class AlgorithmValidation
             // Lean: the singleton rule over every branch head runs first
             // (`a.hasSingletonSequencePattern`), then validateConditionalBranchArities, both
             // BEFORE the conditional's opens and branch bodies are walked.
-            if (checkConditionalBranchArities
-                && algorithm.Branches.Select(static branch => branch.Pattern.FindHeadSingletonSequenceGroup())
-                    .FirstOrDefault(static group => group is not null) is { } singleton)
+            if (checkConditionalBranchArities && FirstHeadSingletonSequenceGroup(algorithm.Branches) is { } singleton)
             {
                 Violations.Add(new PreEvaluationAstViolation.SingletonSequencePattern(singleton.Span));
                 if (stopAfterFirst)
@@ -5646,8 +5710,7 @@ internal static class AlgorithmValidation
             // collector to ONE raw item otherwise; a single collecting binder lost its kind in
             // the single-clause flat-binder conversion and was ignored by zero-argument
             // acceptance while the binder accepted an empty supply.
-            if (checkConditionalBranchArities
-                && algorithm.Branches.Any(static branch => branch.Pattern.HeadHasBinderOfKind(ParameterKind.Collecting)))
+            if (checkConditionalBranchArities && AnyHeadHasBinderOfKind(algorithm.Branches, ParameterKind.Collecting))
             {
                 Violations.Add(new PreEvaluationAstViolation.CollectingClauseBinder());
                 if (stopAfterFirst)
@@ -5656,8 +5719,7 @@ internal static class AlgorithmValidation
 
             // A clause binder is never META (CallReference S1): the parser refuses one in a clause
             // family, and Lean's clause binders have no kind.
-            if (checkConditionalBranchArities
-                && algorithm.Branches.Any(static branch => branch.Pattern.HeadHasBinderOfKind(ParameterKind.Meta)))
+            if (checkConditionalBranchArities && AnyHeadHasBinderOfKind(algorithm.Branches, ParameterKind.Meta))
             {
                 Violations.Add(new PreEvaluationAstViolation.MetaClauseBinder());
                 if (stopAfterFirst)
@@ -5671,6 +5733,32 @@ internal static class AlgorithmValidation
                 return;
 
             base.VisitConditionalAlgorithm(algorithm);
+        }
+
+        // The family prescans, in branch order with the first answer winning (formerly LINQ over the branches): each
+        // prescanned head advances the countdown, so a family of many clauses is cancellable inside them.
+        private Pattern.SequenceValue? FirstHeadSingletonSequenceGroup(IReadOnlyList<CondBranch> branches)
+        {
+            foreach (var branch in branches)
+            {
+                work?.Step();
+                if (branch.Pattern.FindHeadSingletonSequenceGroup(work) is { } group)
+                    return group;
+            }
+
+            return null;
+        }
+
+        private bool AnyHeadHasBinderOfKind(IReadOnlyList<CondBranch> branches, ParameterKind kind)
+        {
+            foreach (var branch in branches)
+            {
+                work?.Step();
+                if (branch.Pattern.HeadHasBinderOfKind(kind, work))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -5688,6 +5776,7 @@ internal static class AlgorithmValidation
             var expectedArity = branches[0].Pattern.TopLevelArity();
             for (var i = 1; i < branches.Count; i++)
             {
+                work?.Step();
                 var actualArity = branches[i].Pattern.TopLevelArity();
                 if (actualArity != expectedArity)
                 {
@@ -5700,6 +5789,7 @@ internal static class AlgorithmValidation
             var expectedOutputArity = branches[0].TopLevelOutputArity();
             for (var i = 1; i < branches.Count; i++)
             {
+                work?.Step();
                 var actualOutputArity = branches[i].TopLevelOutputArity();
                 if (actualOutputArity != expectedOutputArity)
                 {

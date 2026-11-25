@@ -273,7 +273,7 @@ internal sealed class SharedBodyCensus
 /// <para>For host alias preflight the free-name set also tracks the null name. It has its own bit alongside the
 /// interned strings and follows the same union and shadowing rules as every written name.</para>
 /// </summary>
-internal sealed class RegionFreeNames(NameSetInterner names)
+internal sealed class RegionFreeNames(NameSetInterner names, ValidationWork? work = null)
 {
     internal readonly record struct FreeNames(CanonicalNameSet Named, bool HasNull);
 
@@ -285,6 +285,7 @@ internal sealed class RegionFreeNames(NameSetInterner names)
 
     internal FreeNames IncludingNull(object node)
     {
+        work?.Step();
         if (_memo.TryGetValue(node, out var known)) return known;
         var set = node switch
         {
@@ -309,8 +310,11 @@ internal sealed class RegionFreeNames(NameSetInterner names)
     {
         FreeNames set = default;
         for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
+        {
+            work?.Step();
             if (child is Expr or Algorithm or OutputBundle)
                 set = Union(set, IncludingNull(child));
+        }
         return set;
     }
 
@@ -324,18 +328,44 @@ internal sealed class RegionFreeNames(NameSetInterner names)
         foreach (var branch in body.Branches) own = Union(own, IncludingNull(branch.Body));
         if (body.Properties.Count > 0)
         {
-            own = new(Names.Except(own.Named, Names.With(NameSetInterner.Empty, DeclaredNames(body.Properties))),
-                own.HasNull && !body.Properties.Any(static property => property.Name is null));
+            // Bound each sort/build of declared names during evaluator validation. The interner
+            // canonicalizes by content, so batches and a single union give the same set.
+            var declared = DeclaredNames(body.Properties);
+            var named = NameSetInterner.Empty;
+            if (work is not null && body.Properties.Count > AstStructuralPreflight.CancellationCheckpointEdges)
+            {
+                foreach (var chunk in declared.Chunk(AstStructuralPreflight.CancellationCheckpointEdges))
+                    named = Names.With(named, chunk);
+            }
+            else
+            {
+                named = Names.With(named, declared);
+            }
+            own = new(Names.Except(own.Named, named), own.HasNull && !DeclaresNull(body.Properties));
         }
         return Union(opens, own);
     }
 
-    // The string-valued names to intern. The null declaration shadows the separate bit in Body.
-    private static IEnumerable<string> DeclaredNames(IReadOnlyList<Property> properties)
+    private bool DeclaresNull(IReadOnlyList<Property> properties)
     {
         foreach (var property in properties)
+        {
+            work?.Step();
+            if (property.Name is null)
+                return true;
+        }
+        return false;
+    }
+
+    // The string-valued names to intern. The null declaration shadows the separate bit in Body.
+    private IEnumerable<string> DeclaredNames(IReadOnlyList<Property> properties)
+    {
+        foreach (var property in properties)
+        {
+            work?.Step();
             if (property.Name is { } name)
                 yield return name;
+        }
     }
 }
 

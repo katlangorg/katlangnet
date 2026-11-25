@@ -1002,14 +1002,39 @@ internal sealed class DeferredModuleRegion
     /// <c>false</c> hands its visited set over to <paramref name="tables"/> as its last act, for the run's
     /// validation walk to reuse the storage (<see cref="PreEvaluationTables"/>, which clears it); a walk that
     /// stops at a placeholder refuses the synchronous run and hands nothing over.
+    /// <para>An evaluator run that may observe its token here hands it in as <paramref name="cancellationToken"/>: the
+    /// walk then observes it before its first edge and after every
+    /// <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> edges
+    /// (<see cref="FrontEndCancellationCheckpoint.EvaluatorRoute"/>, recorded in <paramref name="observations"/>), so a
+    /// wide pending stacks also poll every block of pops, even when every remaining child is a leaf or a revisit.
+    /// A walk whose token cannot be
+    /// cancelled observes nothing; with or without one, a walk that is not cancelled visits the same nodes in the same
+    /// order and reaches the same answer, count and hand-over.</para>
     /// </summary>
-    internal static bool RequiresAsyncEvaluationCounting(Expr expr, out int visitedNodeCount, PreEvaluationTables? tables = null)
+    internal static bool RequiresAsyncEvaluationCounting(
+        Expr expr,
+        out int visitedNodeCount,
+        PreEvaluationTables? tables = null,
+        FrontEndTraversalObservations? observations = null,
+        CancellationToken cancellationToken = default)
     {
+        var observesCancellation = cancellationToken.CanBeCanceled;
+        if (observesCancellation)
+            FrontEndTraversalObservations.ObserveCancellation(observations, FrontEndCancellationCheckpoint.EvaluatorRoute, cancellationToken);
+        var popsBeforeCheckpoint = AstStructuralPreflight.CancellationCheckpointEdges;
+        var edgesBeforeCheckpoint = AstStructuralPreflight.CancellationCheckpointEdges;
         var pending = new Stack<object>();
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
         pending.Push(expr);
         while (pending.TryPop(out var node))
         {
+            // A wide leaf or shared-child frontier can drain without another child edge.
+            if (observesCancellation && --popsBeforeCheckpoint == 0)
+            {
+                popsBeforeCheckpoint = AstStructuralPreflight.CancellationCheckpointEdges;
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             if (!visited.Add(node))
                 continue;
 
@@ -1020,7 +1045,18 @@ internal sealed class DeferredModuleRegion
             }
 
             for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
+            {
+                // Per edge, not per node: one wide node pushes all its children at once.
+                observations?.RecordEvaluatorRouteEdge();
+                if (observesCancellation && --edgesBeforeCheckpoint == 0)
+                {
+                    edgesBeforeCheckpoint = AstStructuralPreflight.CancellationCheckpointEdges;
+                    FrontEndTraversalObservations.ObserveCancellation(
+                        observations, FrontEndCancellationCheckpoint.EvaluatorRoute, cancellationToken);
+                }
+
                 pending.Push(child);
+            }
         }
 
         visitedNodeCount = visited.Count;

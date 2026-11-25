@@ -988,9 +988,11 @@ public static class KatLangEngine
         // Cache-pairing rule (async-capable cache exactly for asynchronous host-operation
         // configurations and for roots carrying deferred module regions):
         // Evaluator.CreateRunScopedZeroArgPropertyResultCache. The tree half of the rule is
-        // decided ONCE for this run and shared by the cache pairing and the route rule.
+        // decided ONCE for this run and shared by the cache pairing and the route rule. Its walk
+        // observes the evaluation token in blocks of edges, so a large program is cancellable here.
         var program = new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot);
-        var treeRequiresAsyncEvaluation = Evaluator.DecideTreeRequiresAsyncEvaluation(program, hostOperations);
+        var treeRequiresAsyncEvaluation = Evaluator.DecideTreeRequiresAsyncEvaluation(
+            program, hostOperations, observations: null, evaluationCancellationToken);
         var observationSink = CreateObservationSink(frontEndResult, options);
         var zeroArgPropertyResultCache = Evaluator.CreateRunScopedZeroArgPropertyResultCache(
             program, hostOperations, observationSink, treeRequiresAsyncEvaluation);

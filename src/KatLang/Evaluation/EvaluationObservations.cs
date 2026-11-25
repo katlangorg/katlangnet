@@ -47,6 +47,17 @@ internal sealed class EvaluationObservations
     public FrontEndTraversalObservations? PreEvaluationTraversal { get; init; }
 
     /// <summary>
+    /// Optional observer of the run's deferred-body admissions during evaluation (<c>DeferredBodyAdmission</c>): the
+    /// edges of each body check and of its rejection replay (<see cref="FrontEndTraversalObservations.StructuralPreflightEdges"/>),
+    /// the edges of the prefix accounting (<see cref="FrontEndTraversalObservations.DeferredRegionPrefixEdges"/>), and each
+    /// cancellation checkpoint they reach (<see cref="FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission"/>), whose
+    /// <see cref="FrontEndTraversalObservations.CheckpointReached"/> hook a test uses to cancel at a known block. Admissions
+    /// are serialized by their run's gate, so one observer is never written concurrently. Supplied by the measuring test;
+    /// <c>null</c> records nothing.
+    /// </summary>
+    public FrontEndTraversalObservations? DeferredAdmissionTraversal { get; init; }
+
+    /// <summary>
     /// Number of COMPLETE assignment-deconstruction binding computations begun during this run. A
     /// deconstruction group binds its shared N-capture pattern once per shared-bind execution (group,
     /// actual pattern list and source entry — <c>DeconstructionBindingExecution</c>; since OD-1 no reader

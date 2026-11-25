@@ -137,11 +137,13 @@ internal enum AstConsumerProfile
 /// every <see cref="CancellationCheckpointEdges"/> edges, so cancelling a run over a large graph
 /// — such as signatures that stay distinct per owner because their names meet — costs a bounded
 /// block of edges, never the rest of the walk; a walk that is not cancelled decides exactly as
-/// before. It holds no static state, so concurrent checks are independent.</para>
+/// before. A deferred-body admission during evaluation (<see cref="CheckDeferredBody"/>, its rejection
+/// replay and <see cref="AccumulateDeferredRegionPrefixes"/>) observes the same token at the same
+/// cadence under its own checkpoint kind. It holds no static state, so concurrent checks are independent.</para>
 /// </summary>
 internal static class AstStructuralPreflight
 {
-    internal static IReadOnlySet<string> AliasTargetHeads(object root)
+    internal static IReadOnlySet<string> AliasTargetHeads(object root, ValidationWork? work = null)
     {
         var heads = new HashSet<string>(StringComparer.Ordinal);
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
@@ -149,6 +151,7 @@ internal static class AstStructuralPreflight
         stack.Push(root);
         while (stack.TryPop(out var node))
         {
+            work?.Step();
             if (!visited.Add(node))
                 continue;
             if (node is Algorithm.Alias { DeferredRegion: null } alias)
@@ -161,7 +164,10 @@ internal static class AstStructuralPreflight
             }
 
             for (var index = 0; TryGetAliasValidationChild(node, index, out var child); index++)
+            {
+                work?.Step();
                 stack.Push(child);
+            }
         }
 
         return heads;
@@ -182,7 +188,7 @@ internal static class AstStructuralPreflight
     /// booleans, so the validation walk can reuse the storage of the structural preflight's height table
     /// (<see cref="PreEvaluationTables"/>), which hands it over CLEARED: no height survives as an answer.
     /// </summary>
-    internal static bool ReachesAlias(object root, Dictionary<object, int> memo)
+    internal static bool ReachesAlias(object root, Dictionary<object, int> memo, ValidationWork? work = null)
     {
         if (memo.TryGetValue(root, out var known))
             return known == AliasReached;
@@ -191,6 +197,7 @@ internal static class AstStructuralPreflight
         stack.Push((root, 0));
         while (stack.TryPop(out var frame))
         {
+            work?.Step();
             if (memo.ContainsKey(frame.Node))
                 continue;
             if (IsValidationAlias(frame.Node))
@@ -384,18 +391,32 @@ internal static class AstStructuralPreflight
     /// The ordinary evaluator-profile check with run-local reuse across materializations. A
     /// previously completed subtree is skipped only if its height FITS at this occurrence;
     /// otherwise the ordinary walk locates the rejection, preserving fresh-check error spans.
+    /// <para>The admitting run's <paramref name="cancellationToken"/> is observed by both walks — the check and the
+    /// replay that positions its rejection — before their first edge and after every
+    /// <see cref="CancellationCheckpointEdges"/> edges (<see cref="FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission"/>,
+    /// recorded in <paramref name="observations"/> with the walks' edges). A cancelled check leaves only what an
+    /// uncancelled one would also have published: the facts of subtrees it COMPLETED (an in-flight node never enters
+    /// <paramref name="memo"/>, exactly as under a rejection), so the memo stays sound for any later check.</para>
     /// </summary>
     internal static AstStructuralRejection? CheckDeferredBody(
-        object root, int maxDepth, DeferredAdmissionMemo memo, out bool hasDeferredRegions)
+        object root,
+        int maxDepth,
+        DeferredAdmissionMemo memo,
+        out bool hasDeferredRegions,
+        FrontEndTraversalObservations? observations = null,
+        CancellationToken cancellationToken = default)
     {
         var rejection = CheckCore(root, maxDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines,
-            observations: null, detectCallCapture: false, deferredMemo: memo, out _, out _);
+            observations, detectCallCapture: false, deferredMemo: memo, out _, out _,
+            checkpoint: FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission, cancellationToken: cancellationToken);
         hasDeferredRegions = rejection is null && memo.Completed[root].HasDeferredRegion;
         // Reuse can omit descendants from THIS walk's local height table. On rejection,
         // replay the ordinary walk once: its first crossing/cycle and shared-grouping slot
         // determine the established error location independently of earlier admissions.
         return rejection is null ? null
-            : Check(root, maxDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines)
+            : CheckCore(root, maxDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines, observations, detectCallCapture: false,
+                    deferredMemo: null, out _, out _, checkpoint: FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission,
+                    cancellationToken: cancellationToken)
                 ?? throw new InvalidOperationException("The deferred AST changed during structural admission.");
     }
 
@@ -485,17 +506,19 @@ internal static class AstStructuralPreflight
         int nodeCountHint = 0,
         PreEvaluationTables? tables = null,
         CompletedModuleViews.Attempt? moduleViews = null,
+        FrontEndCancellationCheckpoint checkpoint = FrontEndCancellationCheckpoint.EvaluatorPreflight,
         CancellationToken cancellationToken = default)
     {
         // Module-view heights are facts of the fully recursive profile (CheckComposedModuleBody, its one caller).
         if (moduleViews is not null && profile != AstConsumerProfile.FullyRecursive)
             throw new ArgumentException("Completed module-view heights are fully recursive heights.", nameof(moduleViews));
 
-        // Only an evaluator run hands in a cancellable token (CheckAdmittedProgram): every other caller's walk observes
-        // nothing and records no checkpoint, exactly as before.
+        // Only an evaluator run hands in a cancellable token (CheckAdmittedProgram, and a deferred-body admission during
+        // evaluation, which reports under its own checkpoint kind): every other caller's walk observes nothing and records
+        // no checkpoint, exactly as before.
         var observesCancellation = cancellationToken.CanBeCanceled;
         if (observesCancellation)
-            FrontEndTraversalObservations.ObserveCancellation(observations, FrontEndCancellationCheckpoint.EvaluatorPreflight, cancellationToken);
+            FrontEndTraversalObservations.ObserveCancellation(observations, checkpoint, cancellationToken);
         var edgesBeforeCheckpoint = CancellationCheckpointEdges;
         var mayCaptureCalls = false;
         var mayReachRuntimeAlias = false;
@@ -604,7 +627,7 @@ internal static class AstStructuralPreflight
             if (observesCancellation && --edgesBeforeCheckpoint == 0)
             {
                 edgesBeforeCheckpoint = CancellationCheckpointEdges;
-                FrontEndTraversalObservations.ObserveCancellation(observations, FrontEndCancellationCheckpoint.EvaluatorPreflight, cancellationToken);
+                FrontEndTraversalObservations.ObserveCancellation(observations, checkpoint, cancellationToken);
             }
 
             var transitionWeight = TransitionWeight(frame.Node, child, profile);
@@ -638,7 +661,7 @@ internal static class AstStructuralPreflight
                 if (deferredMemo is null && (child is OutputBundle or ImplicitSignatureTemplate)
                     && (childHeight == OnStack || pathWeight + transitionWeight + childHeight > maxDepth))
                     return RejectWithinGroupingNode(child, heights, pathWeight + transitionWeight, maxDepth, frames, frameCount,
-                        observations, cancellationToken);
+                        observations, checkpoint, cancellationToken);
 
                 if (childHeight == OnStack)
                     return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(child, frames, frameCount, cancellationToken));
@@ -714,6 +737,13 @@ internal static class AstStructuralPreflight
     /// the unique graph's nodes and edges, rather than the number of materializations times a shared
     /// payload's size. No CLR recursion. Only meaningful for roots <see cref="Check"/> accepted
     /// under <paramref name="profile"/> (acyclic graphs), at the supplied prefix.
+    /// <para>The admitting run's <paramref name="cancellationToken"/> is observed before the first edge and after every
+    /// <see cref="CancellationCheckpointEdges"/> edges (<see cref="FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission"/>,
+    /// recorded in <paramref name="observations"/> with <see cref="FrontEndTraversalObservations.DeferredRegionPrefixEdges"/>).
+    /// Pending stack pops also poll in blocks, including leaves and memo hits.
+    /// A cancelled accumulation leaves <paramref name="prefixes"/> and <paramref name="arrivals"/> PARTIAL — an arrival can
+    /// be recorded for a node whose children were never propagated — so its caller must never reuse them
+    /// (<see cref="Evaluation.DeferredBodyAdmission"/> abandons its whole state).</para>
     /// </summary>
     internal static void AccumulateDeferredRegionPrefixes(
         object root,
@@ -721,12 +751,27 @@ internal static class AstStructuralPreflight
         AstConsumerProfile profile,
         Dictionary<DeferredModuleRegion, int> prefixes,
         Dictionary<object, int> arrivals,
-        DeferredAdmissionMemo? memo = null)
+        DeferredAdmissionMemo? memo = null,
+        FrontEndTraversalObservations? observations = null,
+        CancellationToken cancellationToken = default)
     {
+        var observesCancellation = cancellationToken.CanBeCanceled;
+        if (observesCancellation)
+            FrontEndTraversalObservations.ObserveCancellation(
+                observations, FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission, cancellationToken);
+        var popsBeforeCheckpoint = AstStructuralPreflight.CancellationCheckpointEdges;
+        var edgesBeforeCheckpoint = CancellationCheckpointEdges;
         var stack = new Stack<(object Node, int Depth)>();
         stack.Push((root, rootPrefix + NodeWeight(root, profile)));
         while (stack.TryPop(out var frame))
         {
+            // A wide leaf or shared-child frontier can drain without another child edge.
+            if (observesCancellation && --popsBeforeCheckpoint == 0)
+            {
+                popsBeforeCheckpoint = AstStructuralPreflight.CancellationCheckpointEdges;
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             var (node, depth) = frame;
             if (memo is not null && memo.Completed.TryGetValue(node, out var facts) && !facts.HasDeferredRegion)
                 continue;
@@ -741,7 +786,17 @@ internal static class AstStructuralPreflight
             }
 
             for (var index = 0; TryGetChild(node, index, out var child); index++)
+            {
+                observations?.RecordDeferredRegionPrefixEdge();
+                if (observesCancellation && --edgesBeforeCheckpoint == 0)
+                {
+                    edgesBeforeCheckpoint = CancellationCheckpointEdges;
+                    FrontEndTraversalObservations.ObserveCancellation(
+                        observations, FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission, cancellationToken);
+                }
+
                 stack.Push((child, depth + TransitionWeight(node, child, profile) + NodeWeight(child, profile)));
+            }
         }
     }
 
@@ -763,6 +818,7 @@ internal static class AstStructuralPreflight
         Frame[] frames,
         int frameCount,
         FrontEndTraversalObservations? observations,
+        FrontEndCancellationCheckpoint checkpoint,
         CancellationToken cancellationToken)
     {
         // A grouping node (an argument bundle, a shared signature template) is weightless, so its
@@ -771,8 +827,7 @@ internal static class AstStructuralPreflight
         for (var index = 0; TryGetChild(groupingNode, index, out var slot); index++)
         {
             if (cancellationToken.CanBeCanceled && index % CancellationCheckpointEdges == 0)
-                FrontEndTraversalObservations.ObserveCancellation(observations,
-                    FrontEndCancellationCheckpoint.EvaluatorPreflight, cancellationToken);
+                FrontEndTraversalObservations.ObserveCancellation(observations, checkpoint, cancellationToken);
             var slotHeight = heights[slot];
             var onPath = slotHeight == OnStackHeight;
             if (!onPath && pathWeight + slotHeight <= maxDepth)
@@ -780,7 +835,8 @@ internal static class AstStructuralPreflight
 
             // The first offending child; a nested grouping node holds the offending slot itself.
             if (slot is OutputBundle or ImplicitSignatureTemplate)
-                return RejectWithinGroupingNode(slot, heights, pathWeight, maxDepth, frames, frameCount, observations, cancellationToken);
+                return RejectWithinGroupingNode(slot, heights, pathWeight, maxDepth, frames, frameCount, observations, checkpoint,
+                    cancellationToken);
             return new AstStructuralRejection(
                 onPath ? AstStructuralViolation.CycleDetected : AstStructuralViolation.DepthExceeded,
                 SpanOf(slot, frames, frameCount, cancellationToken));

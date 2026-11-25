@@ -3618,9 +3618,20 @@ public static partial class Evaluator
     /// many distinct nodes the deciding walk visited — the fact's count, or this walk's — a capacity hint
     /// for the admission tables built over the same graph next, never a decision. A walk made here that
     /// admits the run hands its visited set over to <paramref name="tables"/> for the validation walk.
+    /// <para>A walk made here observes the run's <paramref name="cancellationToken"/> before its first edge and after
+    /// every <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> edges
+    /// (<see cref="FrontEndCancellationCheckpoint.EvaluatorRoute"/>, recorded in <paramref name="observations"/>). The
+    /// synchronous family observes the token before every pre-evaluation verdict, this misconfiguration rejection
+    /// included, so a cancellation requested before the walk reaches a placeholder escapes as that cancellation, as it
+    /// would at the entry; the asynchronous host-operation rejection runs before this walk and is unaffected.</para>
     /// </summary>
     private static void ThrowIfDeferredModuleRegionsOnSynchronousEntry(
-        Expr expr, TreeRouteFact? treeRequiresAsyncEvaluation, PreEvaluationTables tables, out int nodeCountHint)
+        Expr expr,
+        TreeRouteFact? treeRequiresAsyncEvaluation,
+        PreEvaluationTables tables,
+        FrontEndTraversalObservations? observations,
+        out int nodeCountHint,
+        CancellationToken cancellationToken)
     {
         bool requiresAsyncEvaluation;
         if (treeRequiresAsyncEvaluation is { } decided)
@@ -3630,7 +3641,8 @@ public static partial class Evaluator
         }
         else
         {
-            requiresAsyncEvaluation = DeferredModuleRegion.RequiresAsyncEvaluationCounting(expr, out nodeCountHint, tables);
+            requiresAsyncEvaluation = DeferredModuleRegion.RequiresAsyncEvaluationCounting(
+                expr, out nodeCountHint, tables, observations, cancellationToken);
         }
 
         if (requiresAsyncEvaluation)
@@ -3787,7 +3799,8 @@ public static partial class Evaluator
         ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
         // The hand-over between this run's pre-evaluation passes (storage only, never contents).
         var tables = new PreEvaluationTables();
-        ThrowIfDeferredModuleRegionsOnSynchronousEntry(expr, treeRequiresAsyncEvaluation, tables, out var nodeCountHint);
+        ThrowIfDeferredModuleRegionsOnSynchronousEntry(
+            expr, treeRequiresAsyncEvaluation, tables, observations?.PreEvaluationTraversal, out var nodeCountHint, cancellationToken);
 
         return PrepareAdmittedRun(
             expr,
@@ -3876,8 +3889,10 @@ public static partial class Evaluator
         // META-S3-2: a run that may reach a runtime-target alias is pre-marked before any resolver runs.
         budget.DecideRuntimeAliasReach(programFacts.MayReachRuntimeAlias, programFacts.HasDeferredModuleRegion);
         // B2c: a deferred body is admitted by the run that consumes it, at its position in this root.
+        // Its walks observe the run's token in bounded blocks (DeferredBodyAdmission, Cancellation).
         if (programFacts.HasDeferredModuleRegion)
-            budget.RecordDeferredBodyAdmission(expr, (limits ?? EvaluationLimits.Default).EffectiveMaxAstDepth);
+            budget.RecordDeferredBodyAdmission(
+                expr, (limits ?? EvaluationLimits.Default).EffectiveMaxAstDepth, observations?.DeferredAdmissionTraversal);
 
         return PreparedRun.Ready(CreateRootCtx(
             zeroArgPropertyResultCache,

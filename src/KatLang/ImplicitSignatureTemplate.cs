@@ -116,6 +116,44 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
         }
     }
 
+    // X-02 needs only pattern validity, including one collector count across a composed head and tail.
+    // Keep this fact separate from the occurrence projection: a cold template can be checked in
+    // bounded blocks, and an interrupted computation publishes no partial verdict.
+    internal ParameterSignatureViolation? GetSignatureViolation(ValidationWork? work) => GetValidity(work).Violation;
+
+    private SignatureValidity? _validity;
+
+    private SignatureValidity GetValidity(ValidationWork? work)
+    {
+        if (Volatile.Read(ref _validity) is { } known)
+            return known;
+
+        var tail = _tail?.GetValidity(work);
+        var topCollectors = ComputedFacts?.TopLevelCollectingCount;
+        if (topCollectors is null)
+        {
+            topCollectors = tail?.TopCollectors ?? 0;
+            foreach (var pattern in _items)
+            {
+                work?.Step();
+                if (pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting })
+                    topCollectors++;
+            }
+        }
+
+        var validity = new SignatureValidity(topCollectors.Value,
+            tail?.Singleton == true || ParameterPattern.FindSingletonSequenceGroup(_items, work) is not null,
+            topCollectors > 1 || tail?.MultipleCollectors == true || ParameterPattern.MultipleCollectingAtAnyLevel(_items, work),
+            tail?.RepeatedCollector == true || ParameterPattern.RepeatedCaptureIncludingCollecting(_items, work));
+        return Interlocked.CompareExchange(ref _validity, validity, null) ?? validity;
+    }
+
+    private sealed record SignatureValidity(int TopCollectors, bool Singleton, bool MultipleCollectors, bool RepeatedCollector)
+    {
+        internal ParameterSignatureViolation? Violation { get; } =
+            ParameterPattern.SignatureViolationOf(Singleton, MultipleCollectors, RepeatedCollector);
+    }
+
     /// <summary>Already computed occurrence facts, without starting their per-path capture projection.</summary>
     internal TemplateFacts? ComputedFacts => Volatile.Read(ref _facts);
 
@@ -126,6 +164,7 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
     /// </summary>
     internal sealed class TemplateFacts
     {
+        private readonly ImplicitSignatureTemplate _template;
         private readonly ParameterPattern[] _headPatterns;
         private readonly ParameterDeclaration[] _headCaptures;
         private readonly Dictionary<string, ParameterDeclaration> _headFirstCapture;
@@ -133,6 +172,7 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
 
         internal TemplateFacts(ImplicitSignatureTemplate template)
         {
+            _template = template;
             _headPatterns = template._items;
             _tail = template._tail?.Facts;
             _headCaptures = [.. ParameterPattern.SelectCapturesSkippingBarrenNodes(template._items)];
@@ -203,36 +243,7 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
         /// plus its shared tail's, the top-level collector count spanning both. A repeated name never
         /// spans them: the head's capture names are disjoint from the tail's (<see cref="ImplicitSignatureTemplate.Compose"/>).
         /// </summary>
-        public ParameterSignatureViolation? SignatureViolation => Validity.Violation;
-
-        private SignatureValidity Validity
-        {
-            get
-            {
-                var validity = Volatile.Read(ref _validity);
-                if (validity is not null)
-                    return validity;
-                validity = new SignatureValidity(
-                    ParameterPattern.HasSingletonSequenceGroup(_headPatterns) || (_tail?.Validity.SingletonSequenceGroup ?? false),
-                    TopLevelCollectingCount > 1
-                        || ParameterPattern.HasMultipleCollectingCapturesAtAnyLevel(_headPatterns)
-                        || (_tail?.Validity.MultipleCollectingAtOneLevel ?? false),
-                    ParameterPattern.HasRepeatedCaptureNameIncludingCollecting(_headPatterns)
-                        || (_tail?.Validity.RepeatedNameIncludesCollecting ?? false));
-                return Interlocked.CompareExchange(ref _validity, validity, null) ?? validity;
-            }
-        }
-
-        private SignatureValidity? _validity;
-
-        private sealed record SignatureValidity(
-            bool SingletonSequenceGroup,
-            bool MultipleCollectingAtOneLevel,
-            bool RepeatedNameIncludesCollecting)
-        {
-            public ParameterSignatureViolation? Violation { get; } = ParameterPattern.SignatureViolationOf(
-                SingletonSequenceGroup, MultipleCollectingAtOneLevel, RepeatedNameIncludesCollecting);
-        }
+        public ParameterSignatureViolation? SignatureViolation => _template.GetSignatureViolation(null);
 
         /// <summary>
         /// The first-occurrence binding kind of each name — the forwarding SOURCE kinds of an owner

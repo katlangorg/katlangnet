@@ -221,8 +221,10 @@ public static partial class Evaluator
         // scans the host-built tree.
         cancellationToken.ThrowIfCancellationRequested();
         // The ONE deferred-region walk of this call; the cache pairing, the route rule and
-        // the fast path's synchronous guard all read this answer.
-        var treeRequiresAsyncEvaluation = DecideTreeRequiresAsyncEvaluation(expr, hostOperations: null);
+        // the fast path's synchronous guard all read this answer. It observes the token in
+        // blocks of edges, so a large tree is cancellable while its route is decided.
+        var treeRequiresAsyncEvaluation = DecideTreeRequiresAsyncEvaluation(
+            expr, hostOperations: null, observations: null, cancellationToken);
         return await RunAsync(
             expr,
             CreateRunScopedZeroArgPropertyResultCache(
@@ -317,8 +319,9 @@ public static partial class Evaluator
         ArgumentNullException.ThrowIfNull(hostOperations);
         // SEC-F5: as above — after argument validation, before any tree work.
         cancellationToken.ThrowIfCancellationRequested();
-        // As above: at most one deferred-region walk (none with an asynchronous operation).
-        var treeRequiresAsyncEvaluation = DecideTreeRequiresAsyncEvaluation(expr, hostOperations);
+        // As above: at most one deferred-region walk (none with an asynchronous operation),
+        // cancellable in blocks of edges.
+        var treeRequiresAsyncEvaluation = DecideTreeRequiresAsyncEvaluation(expr, hostOperations, observations: null, cancellationToken);
         return await RunAsync(
             expr,
             CreateRunScopedZeroArgPropertyResultCache(
@@ -443,6 +446,16 @@ public static partial class Evaluator
     /// (<see cref="DecideTreeRequiresAsyncEvaluation"/>); otherwise the tree is walked here and
     /// the fact is written back, so the fast path's synchronous guard reuses it — one walk
     /// per run either way. The first two components are checked first and need no walk.</para>
+    ///
+    /// <para><b>The one route walk that takes no token.</b> The walk here is reached only by an internal
+    /// caller that supplies a synchronous-only cache, no asynchronous host operation and no decided fact. Its
+    /// answer is a configuration verdict: a deferred region routes the call to the twin path, whose cache-pairing
+    /// guard rejects the cache even under a cancelled token (<see cref="PrepareAsyncTwinRun"/>), while its absence
+    /// selects the fast path, which observes the token first. Observing the token here could only replace that
+    /// rejection by a cancellation, so the walk runs to its first placeholder or to the end of the graph
+    /// unobserved: at most every node and edge of the tree once, reading the host-supplied AST collections. Every public entry decides
+    /// its fact with a cancellable walk before it constructs its cache
+    /// (<see cref="DecideTreeRequiresAsyncEvaluation"/>), so this window is never public.</para>
     /// </summary>
     private static bool RequiresAsyncEvaluationPath(
         Expr expr,
@@ -470,9 +483,17 @@ public static partial class Evaluator
     /// </summary>
     internal readonly record struct TreeRouteFact(bool RequiresAsyncEvaluation, int NodeCountHint)
     {
-        /// <summary>The fact one walk of <paramref name="expr"/> decides.</summary>
-        internal static TreeRouteFact Decide(Expr expr)
-            => new(DeferredModuleRegion.RequiresAsyncEvaluationCounting(expr, out var nodeCount), nodeCount);
+        /// <summary>
+        /// The fact one walk of <paramref name="expr"/> decides. A cancellable <paramref name="cancellationToken"/> is
+        /// observed in blocks of the walk's edges (<see cref="FrontEndCancellationCheckpoint.EvaluatorRoute"/>): a
+        /// cancelled walk decides no fact. Only a caller whose next step observes the same token anyway may pass one —
+        /// never the route rule's own walk, which also decides the cache-pairing guard
+        /// (<see cref="RequiresAsyncEvaluationPath"/>).
+        /// </summary>
+        internal static TreeRouteFact Decide(
+            Expr expr, FrontEndTraversalObservations? observations = null, CancellationToken cancellationToken = default)
+            => new(DeferredModuleRegion.RequiresAsyncEvaluationCounting(expr, out var nodeCount, tables: null, observations,
+                cancellationToken), nodeCount);
     }
 
     /// <summary>
@@ -486,11 +507,24 @@ public static partial class Evaluator
     /// <c>null</c> — no walk — when an asynchronous host operation is configured: every
     /// consumer then short-circuits on that component before it would read the fact (and a
     /// consumer handed <c>null</c> walks the tree itself, so <c>null</c> is always safe).
+    /// <para>The deciding walk observes the call's <paramref name="cancellationToken"/> before its first edge and after
+    /// every <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> edges
+    /// (<see cref="FrontEndCancellationCheckpoint.EvaluatorRoute"/>, recorded in <paramref name="observations"/>), so an
+    /// entry cancelled while it decides its route stops within one block with that token and constructs no cache. Only an
+    /// entry that builds its cache from this fact passes a token (the public <c>RunAsync</c> family,
+    /// <see cref="KatLangEngine.RunAsync"/> and the observed harness funnel), and there it preempts no verdict: the
+    /// cache-pairing guard cannot fail for a cache paired by this fact, and both routes observe the same token before
+    /// any check that could (<see cref="PrepareSynchronousRun"/>, <see cref="PrepareAsyncTwinRun"/>). An uncancelled walk
+    /// decides exactly the fact it decided without a token.</para>
     /// </summary>
-    internal static TreeRouteFact? DecideTreeRequiresAsyncEvaluation(Expr expr, HostOperations? hostOperations)
+    internal static TreeRouteFact? DecideTreeRequiresAsyncEvaluation(
+        Expr expr,
+        HostOperations? hostOperations,
+        FrontEndTraversalObservations? observations = null,
+        CancellationToken cancellationToken = default)
         => hostOperations?.ContainsAsynchronousOperations == true
             ? null
-            : TreeRouteFact.Decide(expr);
+            : TreeRouteFact.Decide(expr, observations, cancellationToken);
 
     /// <summary>
     /// Routing enforcement for the twin path's property seam: the twin family awaits
@@ -842,9 +876,10 @@ public static partial class Evaluator
         CancellationToken cancellationToken = default)
     {
         // At most one deferred-region walk for this call: decided here when this entry builds
-        // the cache, otherwise by the route rule; the fast path's guard reuses it either way.
+        // the cache — cancellable, and observed like the run's admission passes — otherwise by
+        // the route rule; the fast path's guard reuses it either way.
         var treeRequiresAsyncEvaluation = zeroArgPropertyResultCache is null
-            ? DecideTreeRequiresAsyncEvaluation(expr, hostOperations)
+            ? DecideTreeRequiresAsyncEvaluation(expr, hostOperations, observations?.PreEvaluationTraversal, cancellationToken)
             : null;
         var cache = zeroArgPropertyResultCache
             ?? CreateRunScopedZeroArgPropertyResultCache(

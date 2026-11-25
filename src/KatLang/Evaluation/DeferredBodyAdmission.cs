@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace KatLang.Evaluation;
 
 /// <summary>
@@ -38,8 +40,28 @@ namespace KatLang.Evaluation;
 /// one dictionary lookup. Nothing is computed for a program without deferred regions, and the
 /// prefix walk over the root runs at most once, on the first
 /// deferred consumption.</para>
+///
+/// <para><b>Cancellation.</b> Every walk of an admission — the prefix walk over the root, the body's
+/// check and the replay that positions its rejection, and the prefix walk over an admitted body —
+/// observes the run's <paramref name="cancellationToken"/> before its first edge and after every
+/// <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> edges
+/// (<see cref="FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission"/>, recorded in
+/// <paramref name="observations"/>), so a body consumed by a cancelled run costs at most one block
+/// of edges more. A cancelled admission publishes nothing reusable: the root's prefixes are published
+/// only once their walk completes, a body is recorded as admitted only after its check and its own
+/// prefix walk complete, and an admission whose walk was cancelled is ABANDONED — every later call
+/// rethrows the run's cancellation without touching the partial prefixes, arrivals or admitted set
+/// (an arrival recorded before its children were propagated would otherwise hide them from every
+/// later walk). The subtree memo keeps only completed subtrees' facts, as under a rejection. A
+/// repeated selection of an admitted body observes nothing (the same one lookup), and an admission
+/// that is not cancelled decides exactly what it decided without a token. A later run builds its own
+/// admission, so a cancelled run leaves nothing behind for it.</para>
 /// </summary>
-internal sealed class DeferredBodyAdmission(object root, int maxAstDepth)
+internal sealed class DeferredBodyAdmission(
+    object root,
+    int maxAstDepth,
+    FrontEndTraversalObservations? observations = null,
+    CancellationToken cancellationToken = default)
 {
     private const AstConsumerProfile Profile = AstConsumerProfile.EvaluatorIterativeJoinSpines;
 
@@ -48,6 +70,8 @@ internal sealed class DeferredBodyAdmission(object root, int maxAstDepth)
     private Dictionary<DeferredModuleRegion, (Algorithm Body, int Prefix)>? _admitted;
     private AstStructuralPreflight.DeferredAdmissionMemo? _memo;
     private Dictionary<object, int>? _arrivals;
+    // Set when a walk of this admission was cancelled: its prefix state may be partial, so it is never read again.
+    private ExceptionDispatchInfo? _cancellation;
 
     /// <summary>
     /// Null when <paramref name="body"/> — the materialization of <paramref name="region"/> — is
@@ -57,54 +81,84 @@ internal sealed class DeferredBodyAdmission(object root, int maxAstDepth)
     /// node's span or its nearest positioned ancestor within the body, otherwise the region's
     /// import site in the current document.
     /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// The run's token was cancelled while this call walked, or an earlier call of this admission was cancelled; the
+    /// exception carries the run's token.
+    /// </exception>
     internal EvalError? Admit(DeferredModuleRegion region, Algorithm body)
     {
         lock (_gate)
         {
-            var memo = _memo ??= new();
-            var arrivals = _arrivals ??= new(ReferenceEqualityComparer.Instance);
-            if (_prefixes is null)
+            _cancellation?.Throw();
+
+            try
             {
-                _prefixes = new(ReferenceEqualityComparer.Instance);
-                AstStructuralPreflight.AccumulateDeferredRegionPrefixes(root, 0, Profile, _prefixes, arrivals);
+                return AdmitCore(region, body);
             }
-
-            if (!_prefixes.TryGetValue(region, out var prefix))
+            catch (OperationCanceledException cancelled)
             {
-                throw new InvalidOperationException(
-                    "Internal error: the evaluator consumed a deferred module region that is not reachable from the " +
-                    "run's admitted program or from any body the run admitted, so its structural position is unknown.");
+                _cancellation = ExceptionDispatchInfo.Capture(cancelled);
+                throw;
             }
-
-            _admitted ??= new(ReferenceEqualityComparer.Instance);
-            if (_admitted.TryGetValue(region, out var admitted) && ReferenceEquals(admitted.Body, body) && admitted.Prefix >= prefix)
-                return null;
-
-            // Both consumers overwrite the materialization's root Parent: branch selection
-            // wires it under the family, and output preparation takes the placeholder view's
-            // parent. The placeholder's attached parent was already judged at this prefix by
-            // root/body admission. A stale parent retained by RawBody is never consumed here.
-            // Demand-time branch detection clears the root's parameter patterns; an output
-            // view's replacement patterns were already judged on the placeholder (or, for
-            // the flat-binder equivalent, as its strictly deeper family head).
-            var structuralBody = body.Parent is null ? body : body switch
-            {
-                Algorithm.User user => user with { Parent = null },
-                Algorithm.Conditional family => family with { Parent = null },
-                Algorithm.Alias alias => alias with { Parent = null },
-                Algorithm.Builtin => body,
-            };
-            if (AstStructuralPreflight.CheckDeferredBody(structuralBody, maxAstDepth - prefix, memo, out var hasDeferredRegions) is { } rejection)
-            {
-                return AstStructuralPreflight.ToEvalError(
-                    rejection.Span is null ? rejection with { Span = region.ImportSite } : rejection,
-                    maxAstDepth);
-            }
-
-            if (hasDeferredRegions)
-                AstStructuralPreflight.AccumulateDeferredRegionPrefixes(structuralBody, prefix, Profile, _prefixes, arrivals, memo);
-            _admitted[region] = (body, prefix);
-            return null;
         }
+    }
+
+    private EvalError? AdmitCore(DeferredModuleRegion region, Algorithm body)
+    {
+        var memo = _memo ??= new();
+        if (_prefixes is null)
+        {
+            // Published only once the walk completes: a cancelled walk leaves no prefix table behind.
+            var rootPrefixes = new Dictionary<DeferredModuleRegion, int>(ReferenceEqualityComparer.Instance);
+            var rootArrivals = new Dictionary<object, int>(ReferenceEqualityComparer.Instance);
+            AstStructuralPreflight.AccumulateDeferredRegionPrefixes(root, 0, Profile, rootPrefixes, rootArrivals,
+                memo: null, observations, cancellationToken);
+            _arrivals = rootArrivals;
+            _prefixes = rootPrefixes;
+        }
+
+        var arrivals = _arrivals!;
+        if (!_prefixes.TryGetValue(region, out var prefix))
+        {
+            throw new InvalidOperationException(
+                "Internal error: the evaluator consumed a deferred module region that is not reachable from the " +
+                "run's admitted program or from any body the run admitted, so its structural position is unknown.");
+        }
+
+        _admitted ??= new(ReferenceEqualityComparer.Instance);
+        if (_admitted.TryGetValue(region, out var admitted) && ReferenceEquals(admitted.Body, body) && admitted.Prefix >= prefix)
+            return null;
+
+        // Both consumers overwrite the materialization's root Parent: branch selection
+        // wires it under the family, and output preparation takes the placeholder view's
+        // parent. The placeholder's attached parent was already judged at this prefix by
+        // root/body admission. A stale parent retained by RawBody is never consumed here.
+        // Demand-time branch detection clears the root's parameter patterns; an output
+        // view's replacement patterns were already judged on the placeholder (or, for
+        // the flat-binder equivalent, as its strictly deeper family head).
+        var structuralBody = body.Parent is null ? body : body switch
+        {
+            Algorithm.User user => user with { Parent = null },
+            Algorithm.Conditional family => family with { Parent = null },
+            Algorithm.Alias alias => alias with { Parent = null },
+            Algorithm.Builtin => body,
+        };
+        if (AstStructuralPreflight.CheckDeferredBody(structuralBody, maxAstDepth - prefix, memo, out var hasDeferredRegions,
+                observations, cancellationToken) is { } rejection)
+        {
+            return AstStructuralPreflight.ToEvalError(
+                rejection.Span is null ? rejection with { Span = region.ImportSite } : rejection,
+                maxAstDepth);
+        }
+
+        // In place: a cancellation here leaves partial prefixes and arrivals, which Admit abandons.
+        if (hasDeferredRegions)
+        {
+            AstStructuralPreflight.AccumulateDeferredRegionPrefixes(structuralBody, prefix, Profile, _prefixes, arrivals, memo,
+                observations, cancellationToken);
+        }
+
+        _admitted[region] = (body, prefix);
+        return null;
     }
 }

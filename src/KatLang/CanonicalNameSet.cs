@@ -40,7 +40,7 @@ internal readonly struct CanonicalNameSet : IEquatable<CanonicalNameSet>
 /// static or ambient: one interner serves one pass run, and is garbage afterwards except for the
 /// immutable sets a run hands out.
 /// </summary>
-internal sealed class NameSetInterner(FrontEndTraversalObservations? observations = null)
+internal sealed class NameSetInterner(FrontEndTraversalObservations? observations = null, ValidationWork? work = null)
     : CanonicalSetInterner<string>(StringComparer.Ordinal)
 {
     /// <summary>The empty set.</summary>
@@ -70,7 +70,11 @@ internal sealed class NameSetInterner(FrontEndTraversalObservations? observation
 
     protected override void RecordElementCanonicalized() => observations?.RecordContextNameCanonicalized();
 
-    protected override void RecordOperationStep() => observations?.RecordNameSetOperationStep();
+    protected override void RecordOperationStep()
+    {
+        work?.Step();
+        observations?.RecordNameSetOperationStep();
+    }
 }
 
 /// <summary>

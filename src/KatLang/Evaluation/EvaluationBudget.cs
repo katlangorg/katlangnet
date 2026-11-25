@@ -835,14 +835,19 @@ internal sealed class EvaluationBudget
     /// </summary>
     private DeferredBodyAdmission? _deferredBodyAdmission;
 
-    internal void RecordDeferredBodyAdmission(object admittedRoot, int effectiveMaxAstDepth)
-        => _deferredBodyAdmission = new DeferredBodyAdmission(admittedRoot, effectiveMaxAstDepth);
+    internal void RecordDeferredBodyAdmission(
+        object admittedRoot, int effectiveMaxAstDepth, FrontEndTraversalObservations? observations = null)
+        => _deferredBodyAdmission = new DeferredBodyAdmission(admittedRoot, effectiveMaxAstDepth, observations, _cancellationToken);
 
     /// <summary>
     /// Admits <paramref name="body"/>, the materialization of <paramref name="region"/>, for evaluation
     /// in this run (see <see cref="DeferredBodyAdmission"/>). A rejection is the evaluator's structured
     /// structural error and is TERMINAL for the run, like the run's own admission: nothing the evaluator
     /// does afterwards may absorb it and continue.
+    /// <para>The admission's walks observe the run's token in bounded blocks. A cancellation they observe is the
+    /// run's ordinary cancellation: it throws <see cref="OperationCanceledException"/> carrying the token, and inside an
+    /// asynchronous twin run's boundary (<see cref="CarriesHostTermination"/>) it is retained once and the run's marker
+    /// is returned instead, as at any chokepoint. A cancelled admission admits nothing and is never reused.</para>
     /// </summary>
     internal EvalError? AdmitDeferredBody(DeferredModuleRegion region, Algorithm body)
     {
@@ -853,7 +858,17 @@ internal sealed class EvaluationBudget
                 "prepared through a run entry point, so no structural admission covers it.");
         }
 
-        return admission.Admit(region, body) is { } rejection ? RetainTerminalCore(rejection) : null;
+        EvalError? rejection;
+        try
+        {
+            rejection = admission.Admit(region, body);
+        }
+        catch (OperationCanceledException cancelled) when (CarriesCancellation(cancelled))
+        {
+            return RetainHostTermination(cancelled);
+        }
+
+        return rejection is { } structural ? RetainTerminalCore(structural) : null;
     }
 
     internal void DecideRuntimeAliasReach(bool programMayReach, bool hasDeferredModuleRegions)
