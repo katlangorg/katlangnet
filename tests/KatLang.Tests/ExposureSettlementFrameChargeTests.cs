@@ -52,7 +52,7 @@ public sealed class ExposureSettlementFrameChargeTests
     /// (<see cref="StaticStructureAdmission.Create"/>), with its limits passed through <paramref name="bound"/>: the
     /// resolved root carries that operation's unsealed unit, and exposure charges its ledger.
     /// </summary>
-    private static (Algorithm Resolved, StaticQueryResourceBudget Ledger, StaticQueryLimits Limits) Resolved(
+    internal static (Algorithm Resolved, StaticQueryResourceBudget Ledger, StaticQueryLimits Limits) Resolved(
         string source, Func<StaticQueryLimits, StaticQueryLimits>? bound = null)
     {
         var syntax = SourceProvenance.ParseSyntaxValidRoot(source);
@@ -136,8 +136,13 @@ public sealed class ExposureSettlementFrameChargeTests
     /// <summary>
     /// The ledger's work rises by exactly <see cref="PropertyExposureResolver.SettlementFrameWork"/> at every frame,
     /// before the frame is counted, whatever the shape: the residual chains the share cannot serve, a chain it serves
-    /// in linear frames, and a captured terminal. Settlement charges nothing else, so the work at the last frame is the
-    /// work before exposure plus the frames.
+    /// in linear frames, a captured terminal, and the reuse shapes of November 2026. Besides its frames, settlement charges
+    /// only what it counts as reuse work (2026-11-25): one unit per live summary a kept settlement's reuse compares
+    /// (<see cref="FrontEndTraversalObservations.SettlementLiveReadChecks"/>), one per name snapshotted, one per seed part
+    /// examined or name a kept part set is built from (<see cref="FrontEndTraversalObservations.SettlementSeedPartWork"/>),
+    /// and one per entry a live-read name interner creates
+    /// (<see cref="FrontEndTraversalObservations.SettlementLiveNameEntries"/>). So the work at every frame, and at the last
+    /// one, is the work before exposure plus the frames and those counts.
     /// </summary>
     [Theory]
     [InlineData("explicit-parameter")]
@@ -146,6 +151,10 @@ public sealed class ExposureSettlementFrameChargeTests
     [InlineData("opened")]
     [InlineData("captured")]
     [InlineData("component")]
+    [InlineData("live-open-walks")]
+    [InlineData("live-member")]
+    [InlineData("live-overlapping")]
+    [InlineData("seed-parts")]
     public void EveryFrame_ChargesOneUnitOfTheOperationsWork_BeforeItIsCounted(string shape)
     {
         var source = shape switch
@@ -156,6 +165,10 @@ public sealed class ExposureSettlementFrameChargeTests
             "opened" => ExposureOpenChainComplexityTests.NestedOwnerChain(128),
             "captured" => ExposureOpenChainComplexityTests.NestedOwnerChain(128, last: "p"),
             "component" => ExposureSettlementComponentTests.ReportWitness,
+            "live-open-walks" => ExposureResidualReuseTests.LiveOpenFamily(24, 24),
+            "live-member" => ExposureResidualReuseTests.LiveMemberFamily(24, 24),
+            "live-overlapping" => ExposureResidualReuseTests.OverlappingLiveReads(24, 12),
+            "seed-parts" => ExposureResidualReuseTests.NavigatedChain(48, depth: 2),
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
         var (resolved, ledger, limits) = Resolved(source);
@@ -163,10 +176,12 @@ public sealed class ExposureSettlementFrameChargeTests
         var observations = new FrontEndTraversalObservations();
         long seen = 0;
         long firstMismatch = 0;
+        long Reuse() => observations.SettlementLiveReadChecks + observations.SettlementSnapshotNames + observations.SettlementSeedPartWork
+            + observations.SettlementLiveNameEntries;
         observations.RequiredAncestorSettlementObserver = _ =>
         {
             seen++;
-            if (firstMismatch == 0 && ledger.WorkCharged != before + seen * PropertyExposureResolver.SettlementFrameWork)
+            if (firstMismatch == 0 && ledger.WorkCharged != before + seen * PropertyExposureResolver.SettlementFrameWork + Reuse())
                 firstMismatch = seen;
         };
 
@@ -175,8 +190,17 @@ public sealed class ExposureSettlementFrameChargeTests
         Assert.Equal(0, firstMismatch);
         Assert.True(seen > 0);
         Assert.Equal(seen, observations.RequiredAncestorSettlementFrames);
+        if (shape.StartsWith("live", StringComparison.Ordinal))
+            Assert.True(observations.SettlementLiveNameEntries > 0);
+        if (shape is "live-open-walks" or "live-member")
+        {
+            Assert.True(observations.SettlementLiveReadChecks > 0);
+            Assert.True(observations.SettlementSnapshotNames > 0);
+        }
+        if (shape == "seed-parts")
+            Assert.True(observations.SettlementSeedPartWork > 0);
         // What follows the last frame is the unit's retargeting and sealing, charged as before.
-        Assert.InRange(ledger.WorkCharged, before + seen * PropertyExposureResolver.SettlementFrameWork, limits.MaxEvaluations);
+        Assert.InRange(ledger.WorkCharged, before + seen * PropertyExposureResolver.SettlementFrameWork + Reuse(), limits.MaxEvaluations);
         Assert.False(ledger.IsFailed);
     }
 

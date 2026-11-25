@@ -410,11 +410,17 @@ public class CompletedProviderSummaryTests
     }
 
     /// <summary>
-    /// A coarse allocation bound over the same programs (ratios stay in-process: a selection allocates hundreds of
-    /// kilobytes, far above the ~8 KB counter quantum; the minimum over the later selections damps a collection in
-    /// the window). Quadrupling the provider's width used to multiply a later selection's allocation by about 3.4
-    /// (2.9 MB to 10.1 MB at 1,000 and 4,000 members); with the share it grows by the levels a lookup still builds
-    /// over the provider (about 40 bytes per member), measured at 1.2. The unshared reference keeps the old growth.
+    /// A coarse allocation bound over the same programs (in-process: a selection allocates hundreds of kilobytes, far
+    /// above the ~8 KB counter quantum; the minimum over the later selections damps a collection in the window).
+    /// Quadrupling the provider's width used to multiply a later selection's allocation by about 3.4 (2.9 MB to 10.1 MB
+    /// at 1,000 and 4,000 members); with the share it grows by the levels a lookup still builds over the provider. The
+    /// unshared reference keeps the old growth.
+    /// <para>The bound is on that GROWTH PER MEMBER, at most 160 bytes, the allowance the former bound
+    /// <c>wide &lt; 1.6 × narrow</c> gave when it was introduced (7549d7d5). In the Debug test build the growth is 140
+    /// bytes per member at 7549d7d5, at 7de84650 and with the November 25 2026 exposure candidate alike (125.6 / 126.1 /
+    /// 125.9 KB from 300 to 1,200 members), but the ratio rose from 1.53 to 1.59, because later allocation work took 24 KB
+    /// off the part of a selection that does not depend on the width: the ratio's room shrank whenever anything else
+    /// improved, and a 1,200-member sample of 341,408 bytes against 213,160 crossed it on an unchanged growth.</para>
     /// </summary>
     [Fact]
     public async Task LaterSelections_AllocateAlmostNothingInTheWidthOfACompletedProvider()
@@ -432,7 +438,8 @@ public class CompletedProviderSummaryTests
         var narrowUnshared = await LaterSelection(300, CompletedProviderSummaries.Mode.Unshared);
         var wideUnshared = await LaterSelection(1200, CompletedProviderSummaries.Mode.Unshared);
 
-        Assert.True(wide < narrow * 1.6, $"with the share a later selection allocated {narrow} bytes at 300 members and {wide} at 1,200");
+        Assert.True(wide - narrow < 160L * (1200 - 300),
+            $"with the share a later selection allocated {narrow} bytes at 300 members and {wide} at 1,200");
         Assert.True(wideUnshared > narrowUnshared * 2.5,
             $"without the share a later selection allocated {narrowUnshared} bytes at 300 members and {wideUnshared} at 1,200");
         Assert.True(wideUnshared > wide * 10, $"at 1,200 members a later selection allocated {wide} bytes with the share and {wideUnshared} without");

@@ -892,6 +892,36 @@ internal static class PropertyDependencyGraphBuilder
                 && PendingReferences.SetEquals(other.PendingReferences)
                 && OwnerQualifiedParameters.SetEquals(other.OwnerQualifiedParameters);
 
+        // ── Reads WITHOUT folding (settlement and anchoring of completed seeds) ──────────────────────
+        // A seed held by reference is completed and never changes its content (folding moves content, never changes it),
+        // and the parts form no cycle (a seed only ever holds seeds built before it). These reads take the parts as they
+        // are, so a reader that only needs the union of the parts' required names never copies the parts' width.
+
+        /// <summary>The seed's OWN required ancestor-owned names (null: none), not those of the parts it holds by reference.</summary>
+        internal IReadOnlyCollection<string>? OwnRequiredNamesWithoutFolding => _requiredAncestorOwnedParameterNames;
+
+        /// <summary>The seed's OWN owner-qualified parameters (null: none).</summary>
+        internal IReadOnlyCollection<OwnerQualifiedParameter>? OwnQualifiedParametersWithoutFolding => _ownerQualifiedParameters;
+
+        /// <summary>The seed's OWN pending references (null: none).</summary>
+        internal PendingReferenceSet? OwnPendingReferencesWithoutFolding => _pendingReferences;
+
+        /// <summary>The completed seeds this seed holds by reference, in absorption order (null: none, or folded).</summary>
+        internal IReadOnlyList<SummarySeed>? AbsorbedPartsWithoutFolding => _absorbed;
+
+        /// <summary>
+        /// Whether this seed's OWN sets hold required ancestor-owned names only (no visible name, pending reference or
+        /// owner-qualified parameter): one test per seed, the parts it holds by reference not included.
+        /// </summary>
+        internal bool OwnSetsHoldOnlyRequiredNames
+            => (_visiblePropertyDependencyNames?.Count ?? 0) == 0
+                && (_pendingReferences?.Count ?? 0) == 0
+                && (_ownerQualifiedParameters?.Count ?? 0) == 0;
+
+        /// <summary>Whether this seed's OWN sets hold no visible name and no pending reference.</summary>
+        internal bool OwnSetsHoldNoNamesOrReferences
+            => (_visiblePropertyDependencyNames?.Count ?? 0) == 0 && (_pendingReferences?.Count ?? 0) == 0;
+
         /// <summary>
         /// FE-4a: whether the seed's content is empty, decided WITHOUT folding: its own sets and every
         /// seed it holds by reference (transitively) are empty. Reads only; a seed held by reference is

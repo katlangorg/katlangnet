@@ -902,6 +902,83 @@ internal sealed class FrontEndTraversalObservations
         => SettlementFootprintWork = checked(SettlementFootprintWork + memberships);
 
     /// <summary>
+    /// Summaries of the level in progress checked when a kept nested settlement is reused
+    /// (<c>PropertyExposureResolver.PendingResolution</c>): one per summary the kept
+    /// settlement read, each also one unit of static work, counted and charged before the check runs (also when it
+    /// then finds one changed and the settlement is computed again).
+    /// </summary>
+    public long SettlementLiveReadChecks { get; private set; }
+
+    internal void RecordSettlementLiveReadChecks(long names)
+        => SettlementLiveReadChecks = checked(SettlementLiveReadChecks + names);
+
+    /// <summary>Names copied into admitted live snapshots, including the level's own open walks.</summary>
+    public long SettlementSnapshotNames { get; private set; }
+
+    internal void RecordSettlementSnapshotNames(int names)
+        => SettlementSnapshotNames = checked(SettlementSnapshotNames + names);
+
+    /// <summary>
+    /// Entries the live-read name interners of exposure settlement created (<c>PropertyExposureResolver.PendingResolution</c>,
+    /// LIVE READS): names, canonical branches and memoized unions, each one unit of static work. A completed insertion
+    /// or union charges its new entries before handing its result to a frame, whether or not a snapshot is kept.
+    /// </summary>
+    public long SettlementLiveNameEntries { get; private set; }
+
+    /// <summary>The most entries one level solve's live-read name interner held (<see cref="SettlementLiveNameEntries"/>).</summary>
+    public long SettlementLiveNamePeakEntries { get; private set; }
+
+    internal void RecordSettlementLiveNameEntries(long created, long held)
+    {
+        SettlementLiveNameEntries = checked(SettlementLiveNameEntries + created);
+        SettlementLiveNamePeakEntries = Math.Max(SettlementLiveNamePeakEntries, held);
+    }
+
+    /// <summary>
+    /// Level solves whose live-read name interner reached its capacity: from there on their settlements record their live
+    /// reads as unknown and are reused only inside their own Run.
+    /// </summary>
+    public long SettlementLiveNameSaturations { get; private set; }
+
+    internal void RecordSettlementLiveNameSaturation()
+        => SettlementLiveNameSaturations = checked(SettlementLiveNameSaturations + 1);
+
+    /// <summary>Observe the identity of a live member snapshot first kept while its solve had room.</summary>
+    internal Action<object>? LiveSnapshotStoredBeforeSaturation { get; init; }
+
+    /// <summary>Observe the identity of a kept snapshot whose live summary changed and whose solve is saturated.</summary>
+    internal Action<object>? LiveSnapshotStaleAfterSaturation { get; init; }
+
+    /// <summary>
+    /// Whole settlements that read summaries of the level in progress kept for the rest of that level's solve
+    /// (<c>PropertyExposureResolver.PendingResolution</c>, LIVE SETTLEMENTS; the unbound open walks are kept apart and
+    /// not counted here).
+    /// </summary>
+    public long SettlementLiveStores { get; private set; }
+
+    internal void RecordSettlementLiveStore()
+        => SettlementLiveStores = checked(SettlementLiveStores + 1);
+
+    /// <summary>
+    /// Settlement frames answered by a kept LIVE settlement (<see cref="SettlementLiveStores"/>) whose views and live
+    /// summaries still stood: each is one of <see cref="RequiredAncestorSettlementFrames"/> and settles nothing below
+    /// itself.
+    /// </summary>
+    public long SettlementLiveHits { get; private set; }
+
+    internal void RecordSettlementLiveHit()
+        => SettlementLiveHits = checked(SettlementLiveHits + 1);
+
+    /// <summary>
+    /// Seed-part work of exposure settlement and anchoring (<c>PropertyExposureResolver.PendingResolution</c>, SEED
+    /// PARTS): the classifications, widths of part-edge scans and inputs to kept requirement sets, in static work units.
+    /// </summary>
+    public long SettlementSeedPartWork { get; private set; }
+
+    internal void RecordSettlementSeedPartWork(long units)
+        => SettlementSeedPartWork = checked(SettlementSeedPartWork + units);
+
+    /// <summary>
     /// Bound-owner work for settlement keys (<c>BoundOwnerSet</c>): one per owner offered to a set and the
     /// set's count when distinct sets with the same count and fingerprint reach the membership comparison.
     /// </summary>
@@ -1496,6 +1573,8 @@ internal enum FrontEndCancellationCheckpoint
     ExposureLevelEvaluation,
     /// <summary>One frame pushed by an exposure settlement (<c>PendingResolution.Run</c>).</summary>
     ExposureSettlementFrame,
+    /// <summary>One previously uncombined branch pair of a live-read name union during exposure settlement.</summary>
+    ExposureLiveNameUnion,
     /// <summary>
     /// One unit of the exposure pass's summary channel: an algorithm summarized, a property of a level's summary
     /// graph, or a frame pushed by the level-expansion driver.

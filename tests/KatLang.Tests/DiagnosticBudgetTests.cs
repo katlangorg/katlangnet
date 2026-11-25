@@ -28,7 +28,7 @@ namespace KatLang.Tests;
 /// Boundaries use small configured limits so every assertion is exact; nothing here measures
 /// elapsed time.
 /// </summary>
-public class DiagnosticBudgetTests
+public class DiagnosticBudgetTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
     // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
@@ -1829,12 +1829,15 @@ public class DiagnosticBudgetTests
     }
 
     // The front end's allocation for a source making two equal reports with a two-diagnostic list, minus that with a
-    // one-diagnostic list, which stores only the first: the cost of building ONE stored message (each run warmed first).
-    private static long OneStoredMessage(string source)
+    // one-diagnostic list, which stores only the first: the cost of building ONE stored message (both runs warmed first).
+    // On the 10,000-leaf lifted-pattern workload, changing JIT tiers between the windows displaced one difference
+    // by about 800 KB on both 7de84650 and the exposure candidate. The historical 217,208-byte first-leaf measurement
+    // did not reproduce on either build. Record three adjacent pairs in execution order and use their median so a
+    // single displaced pair in either direction cannot decide whether the message meets its allocation bound.
+    private long OneStoredMessage(string source)
     {
         long Allocated(int limit)
         {
-            _ = Elaborate(source, limit);
             var before = GC.GetAllocatedBytesForCurrentThread();
             var (diagnostics, _) = Elaborate(source, limit);
             var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
@@ -1842,7 +1845,14 @@ public class DiagnosticBudgetTests
             return allocated;
         }
 
-        return Allocated(2) - Allocated(1);
+        _ = Elaborate(source, 2);
+        _ = Elaborate(source, 1);
+        Span<long> differences = stackalloc long[3];
+        for (var pair = 0; pair < differences.Length; pair++)
+            differences[pair] = Allocated(2) - Allocated(1);
+        output.WriteLine($"Stored-message allocation differences (bytes): {differences[0]}, {differences[1]}, {differences[2]}");
+        differences.Sort();
+        return differences[1];
     }
 
     [Fact]

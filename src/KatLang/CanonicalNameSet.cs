@@ -40,7 +40,7 @@ internal readonly struct CanonicalNameSet : IEquatable<CanonicalNameSet>
 /// static or ambient: one interner serves one pass run, and is garbage afterwards except for the
 /// immutable sets a run hands out.
 /// </summary>
-internal sealed class NameSetInterner(FrontEndTraversalObservations? observations = null, ValidationWork? work = null)
+internal class NameSetInterner(FrontEndTraversalObservations? observations = null, ValidationWork? work = null)
     : CanonicalSetInterner<string>(StringComparer.Ordinal)
 {
     /// <summary>The empty set.</summary>
@@ -52,6 +52,14 @@ internal sealed class NameSetInterner(FrontEndTraversalObservations? observation
     /// </summary>
     public CanonicalNameSet With(CanonicalNameSet set, IEnumerable<string> names)
         => new(WithElements(set.Root, names));
+
+    /// <summary>
+    /// <paramref name="set"/> with the one name <paramref name="name"/> added: the same canonical node as
+    /// <see cref="With(CanonicalNameSet, IEnumerable{string})"/>, without building a key list. A name already present
+    /// returns <paramref name="set"/> itself.
+    /// </summary>
+    public CanonicalNameSet WithName(CanonicalNameSet set, string name)
+        => new(WithElement(set.Root, name));
 
     /// <summary>The canonical set of the names in <paramref name="first"/> or <paramref name="second"/>.</summary>
     public CanonicalNameSet Union(CanonicalNameSet first, CanonicalNameSet second)
@@ -136,6 +144,13 @@ internal abstract class CanonicalSetInterner<TElement>(IEqualityComparer<TElemen
     private readonly Dictionary<(int First, int Second), Node?> _differences = [];
     private int _lastNodeId;
 
+    /// <summary>
+    /// The entries this interner holds: one per distinct element (its key and leaf), canonical branch and memoized union
+    /// or difference. Its tables only grow, so this is also its peak; an owner that must bound what it retains reads it
+    /// after each operation (<c>PropertyExposureResolver</c>'s live-read names).
+    /// </summary>
+    internal int Entries => _keys.Count + _branches.Count + _unions.Count + _differences.Count;
+
     /// <summary>Observation hook: one element fed into canonicalization (<see cref="WithElements"/>).</summary>
     protected virtual void RecordElementCanonicalized()
     {
@@ -171,6 +186,18 @@ internal abstract class CanonicalSetInterner<TElement>(IEqualityComparer<TElemen
         }
 
         return UnionRoots(set, Build(keys, 0, distinct - 1));
+    }
+
+    /// <summary>
+    /// The canonical root of <paramref name="set"/> with the one element <paramref name="element"/> added: the node
+    /// <see cref="WithElements"/> builds for it, through the same insertion path. An element already present returns
+    /// <paramref name="set"/> itself.
+    /// </summary>
+    protected Node WithElement(Node? set, TElement element)
+    {
+        RecordElementCanonicalized();
+        var key = KeyOf(element);
+        return set is null ? _leaves[key] : Insert(set, key);
     }
 
     /// <summary>The canonical root of the elements in <paramref name="first"/> or <paramref name="second"/>.</summary>
