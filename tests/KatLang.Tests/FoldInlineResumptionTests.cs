@@ -85,15 +85,20 @@ public sealed class FoldInlineResumptionTests
                     return new Observed(SixRouteAgreement.Neutral(result.Value.Value), budget!, calls, Environment.CurrentManagedThreadId, allocated);
                 }
 
-                if (!customScheduler)
+                // glibc can reuse a larger stack. Keep the requested headroom while the fold runs.
+                AstStructuralDepthProcessTests.RunBelowExcessStack(stackBytes, () =>
                 {
-                    observed = Evaluate();
-                    return;
-                }
-
-                var task = new Task<Observed>(Evaluate);
-                task.RunSynchronously(new InlineOnlyScheduler());
-                observed = task.GetAwaiter().GetResult();
+                    if (customScheduler)
+                    {
+                        var task = new Task<Observed>(Evaluate);
+                        task.RunSynchronously(new InlineOnlyScheduler());
+                        observed = task.GetAwaiter().GetResult();
+                    }
+                    else
+                    {
+                        observed = Evaluate();
+                    }
+                });
             }
             catch (Exception error)
             {

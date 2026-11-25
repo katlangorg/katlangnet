@@ -1991,7 +1991,7 @@ public class AstStructuralDepthProcessTests
     // On the new thread: the padding consumes whatever stack the operating system gave beyond the
     // request, so the body sees the headroom of a freshly allocated stack of exactly that size.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static void RunBelowExcessStack(int maxStackBytes, Action body)
+    internal static void RunBelowExcessStack(int maxStackBytes, Action body)
     {
         var excess = (ThreadStackSize.OfCurrentThread() ?? maxStackBytes) - maxStackBytes;
         if (excess < 0)
