@@ -37,12 +37,12 @@ through the fuel core and production, and the consequences for `structureNormal`
 
 GENERATED text, never edited by hand: from `EvaluatorMemoLinks.lean` (the `link_tac` procedure and
 its body lemmas under a renaming) by
-`tests/KatLang.Tests/LeanProofModules/EvaluatorPublicationsLeanArtifactTests.cs`; the relation, its
+`dotnet/tests/KatLang.Tests/LeanProofModules/EvaluatorPublicationsLeanArtifactTests.cs`; the relation, its
 API lemmas and `pubDisc_projectionStep` are hand-written in that generator's `Header`, `Step` and
 `Tail` texts, and are edited there. After a change to the generator, or to the copied part of
 `EvaluatorMemoLinks.lean`, regenerate from the repo root with
   $env:KATLANG_REGENERATE_EVALUATOR_PUBLICATIONS = "1"
-  dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter EvaluatorPublicationsLeanArtifact
+  dotnet test ./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj --filter EvaluatorPublicationsLeanArtifact
 (that run writes this file and then fails by design), then run `lake build KatLangArityLaws`: the
 generator writes the text, and only Lean checks the proofs.
 

@@ -1,7 +1,7 @@
 {
   "stryker-config": {
     "project": "KatLang.csproj",
-    "test-projects": [ "tests/KatLang.Tests/KatLang.Tests.csproj" ],
+    "test-projects": [ "dotnet/tests/KatLang.Tests/KatLang.Tests.csproj" ],
     "mutate": [
       "**/Result.cs",
       "**/ParameterDetector.cs",

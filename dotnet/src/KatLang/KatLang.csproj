@@ -1,0 +1,109 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!-- The single authoritative KatLang version; see KatLangVersion.props. -->
+	<Import Project="..\..\..\KatLangVersion.props" />
+
+	<PropertyGroup>
+		<TargetFramework>net11.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<RootNamespace>KatLang</RootNamespace>
+
+		<!--
+		  KatLang's finite variant hierarchies (`Expr`, `RunResult`, `EvalError`, `Result`,
+		  `Algorithm`, `Pattern`, `ParameterPattern`, `CallableBindingNode`, `ErrorContext`,
+		  and the code-link results `CodeLinkEncoding` and `CodeLinkDecoding`)
+		  are C# `closed` records: a switch expression over one of them that names every variant is
+		  compiler-exhaustive without a catch-all arm. The compiler reports a MISSING
+		  variant only as warning CS8509 (and an unhandled `null` input as CS8655), so
+		  both are errors here — adding a variant must fail the build at every exhaustive
+		  dispatch until the new case is decided, never degrade to a runtime
+		  SwitchExpressionException.
+		-->
+		<WarningsAsErrors>$(WarningsAsErrors);CS8509;CS8655</WarningsAsErrors>
+
+		<!--
+		  The package ships its XML documentation beside the assembly, so NuGet consumers
+		  get the public API's contract text (units, null/default meaning, exceptions,
+		  sync/async and cancellation rules) in IntelliSense. CS1591 (a public member
+		  without a comment) is not enforced: the repository documents contract-bearing
+		  members, not every positional record component or enum member. Every
+		  documentation diagnostic that means a comment is WRONG is an error instead —
+		  malformed XML, an unresolvable or ambiguous cref, a param/paramref naming no
+		  parameter, or a partially documented parameter list — so the shipped docs can
+		  never point at a removed or renamed API.
+		-->
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+		<WarningsAsErrors>$(WarningsAsErrors);CS0419;CS1570;CS1571;CS1572;CS1573;CS1574;CS1580;CS1581;CS1584;CS1658;CS1734;CS1735</WarningsAsErrors>
+
+		<!--
+		  NativeAOT and trimming are a supported consumer scenario (the katlang CLI itself
+		  ships NativeAOT). Declaring the library AOT-compatible runs the trim, AOT, and
+		  single-file analyzers over it on every build and marks the assembly trimmable,
+		  so that support is a checked property of the package rather than an accident.
+		-->
+		<IsAotCompatible>true</IsAotCompatible>
+
+		<PackageId>KatLang</PackageId>
+		<Version>$(KatLangVersion)</Version>
+		<Authors>katlangorg</Authors>
+		<Company>Logics Research Centre SIA</Company>
+		<Copyright>Copyright © Logics Research Centre SIA and Contributors</Copyright>
+		<Product>KatLang</Product>
+
+		<Description>KatLang is a domain-specific programming language for calculations. This package provides the core parser, evaluator, and semantic model.</Description>
+		<PackageTitle>KatLang</PackageTitle>
+		<PackageTags>katlang;dsl;calculations;mathematics;physics</PackageTags>
+
+		<PackageProjectUrl>https://katlang.org</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/katlangorg/katlangnet</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageLicenseFile>LICENSE</PackageLicenseFile>
+
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+
+		<PackageReleaseNotes></PackageReleaseNotes>
+
+		<Title>KatLang</Title>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="KatLang.Tests" />
+		<InternalsVisibleTo Include="KatLang.Benchmarks" />
+		<InternalsVisibleTo Include="KatLang.ParserFuzz" />
+		<!-- SEC-07: CLI presentation uses KatLangError.RenderDiagnostic so only the
+		     owning renderer can authorize structural diagnostic line separators. -->
+		<InternalsVisibleTo Include="KatLang.CLI" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- The frozen primer of code-link format 1 (CodeLinkModel): every format-1 link depends on
+		     these exact bytes, so the file is never edited. A new primer is a new format. -->
+		<EmbeddedResource Include="CodeLinks\code-link-primer-1.txt" LogicalName="KatLang.CodeLinks.code-link-primer-1.txt" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Include="..\..\..\LICENSE">
+	    <Pack>True</Pack>
+	    <PackagePath>\</PackagePath>
+	  </None>
+	  <None Include="..\..\..\README.md">
+	    <Pack>True</Pack>
+	    <PackagePath>\</PackagePath>
+	  </None>
+	  <None Include="..\..\..\NOTICE">
+		<Pack>True</Pack>
+		<PackagePath>\</PackagePath>
+	  </None>
+	  <None Include="..\..\..\PATENTS">
+		<Pack>True</Pack>
+		<PackagePath>\</PackagePath>
+	  </None>
+	</ItemGroup>
+
+</Project>

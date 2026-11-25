@@ -16,7 +16,7 @@ REFERENCE of the `ScopeCtx` object (D3-B). The levels here are UNANNOTATED (no h
 Lean values keyed structurally, with no claim about C# objects. Since HOST-LEAN-O6 a host level that
 stands for a C# object carries that object's token (`PropertyIdentity.host`), and Lean separates exactly
 what C# separates — see `CoreTests/HostScopeIdentity.lean` (guard 5b with provenance) and the generated
-`CoreTests/HostParentDifferential.lean`. C# twin: `tests/KatLang.Tests/HostScopePropertyCacheTests.cs`.
+`CoreTests/HostParentDifferential.lean`. C# twin: `dotnet/tests/KatLang.Tests/HostScopePropertyCacheTests.cs`.
 
 Evidence technique (EXPORTED-DETACHED, November 2026): `P = tick()`. Each EVALUATION of `P` returns
 the next tick, so a cache hit returns the first evaluation's `1` and a second owner returns `2`: the

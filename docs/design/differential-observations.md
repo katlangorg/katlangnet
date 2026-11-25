@@ -206,7 +206,7 @@ values that both engines can represent. It does not cover:
 - Decimal128 representation (the spelling `1.0` against `1.00`): neutral text
   and C#-side checks keep that;
 - unpaired UTF-16 surrogates: a Lean `String` cannot hold them, see the Lean
-  string boundary in `tests/KatLang.Tests/LeanAstEncoder.cs` (`Quote`);
+  string boundary in `dotnet/tests/KatLang.Tests/LeanAstEncoder.cs` (`Quote`);
 - host-visible object identity (as in KL-01): the format deliberately gives
   equal subtrees the same text, whatever their CLR identity.
 

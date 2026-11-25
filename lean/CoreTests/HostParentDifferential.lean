@@ -5,7 +5,7 @@ import CoreTests.StructuralIdentity
 GENERATED FILE - DO NOT EDIT BY HAND.
 
 HOST-DIFF-1: Lean/C# differential corpus of HOST-BUILT ASTs with pre-wired `ScopeCtx`
-parent chains (tests/KatLang.Tests/HostParentDifferential/HostParentDifferentialCorpus.cs).
+parent chains (dotnet/tests/KatLang.Tests/HostParentDifferential/HostParentDifferentialCorpus.cs).
 Each program below is `LeanAstEncoder`'s encoding of the SAME constructed C# AST the C#
 evaluator ran on every route (plain, counted, generic, optimized, suspending async); each
 `#guard` pins the C# neutral observation and the C# published zero-argument cache entries

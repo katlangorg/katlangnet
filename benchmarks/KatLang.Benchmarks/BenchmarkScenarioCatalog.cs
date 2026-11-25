@@ -45,7 +45,7 @@ internal static class BenchmarkScenarioCatalog
 			id: "repeated-zero-arg-property-reuse",
 			displayName: "Repeated zero-arg property reuse",
 			description: "Repeated reuse of a single zero-argument property derived from the existing evaluator regression test.",
-			origin: "tests/KatLang.Tests/EvaluatorTests.cs (Eval_RepeatedEligiblePropertyWithinSingleRun)",
+			origin: "dotnet/tests/KatLang.Tests/EvaluatorTests.cs (Eval_RepeatedEligiblePropertyWithinSingleRun)",
 			resourceName: "KatLang.Benchmarks.Scenarios.repeated-zero-arg-property-reuse.kat",
 			expectedAtoms: [1200m]));
 
@@ -63,7 +63,7 @@ internal static class BenchmarkScenarioCatalog
 			id: "nested-property-chains",
 			displayName: "Nested property chains",
 			description: "Repeated one-hop nested receiver property lookup across multiple contexts (deliberately one hop; dot chains of any depth are legal).",
-			origin: "tests/KatLang.Tests/EvaluatorTests.cs (Eval_Distinguishes_HigherOrderAlgorithmContexts)",
+			origin: "dotnet/tests/KatLang.Tests/EvaluatorTests.cs (Eval_Distinguishes_HigherOrderAlgorithmContexts)",
 			resourceName: "KatLang.Benchmarks.Scenarios.nested-property-chains.kat",
 			expectedAtoms: [69m]));
 
@@ -90,7 +90,7 @@ internal static class BenchmarkScenarioCatalog
 			id: "realistic-while-calculation",
 			displayName: "Realistic while calculation",
 			description: "The existing sum-of-multiples loop benchmark exercises while, if, dot-call, and selection together.",
-			origin: "tests/KatLang.Tests/EvaluatorTests.cs (Eval_While_DotCall_SumMultiplesOf3Or5)",
+			origin: "dotnet/tests/KatLang.Tests/EvaluatorTests.cs (Eval_While_DotCall_SumMultiplesOf3Or5)",
 			resourceName: "KatLang.Benchmarks.Scenarios.realistic-while-calculation.kat",
 			expectedAtoms: [233168m]));
 
@@ -99,7 +99,7 @@ internal static class BenchmarkScenarioCatalog
 			id: "gcd-while-loop",
 			displayName: "GCD while loop",
 			description: "A compact Euclidean GCD loop that repeatedly threads two state values and a continuation flag.",
-			origin: "tests/KatLang.Tests/EvaluatorTests.cs (Eval_While_GcdDotCall_ProjectsFinalState)",
+			origin: "dotnet/tests/KatLang.Tests/EvaluatorTests.cs (Eval_While_GcdDotCall_ProjectsFinalState)",
 			resourceName: "KatLang.Benchmarks.Scenarios.gcd-while-loop.kat",
 			expectedAtoms: [21m]));
 
@@ -117,7 +117,7 @@ internal static class BenchmarkScenarioCatalog
 			id: "nested-captured-parent-loop",
 			displayName: "Nested captured parent loop",
 			description: "A nested while step that mutates one state value while reading parent parameters and a sibling property.",
-			origin: "tests/KatLang.Tests/EvaluatorTests.cs (Eval_While_NestedStepUsesMutableStateAndCapturedParentValues)",
+			origin: "dotnet/tests/KatLang.Tests/EvaluatorTests.cs (Eval_While_NestedStepUsesMutableStateAndCapturedParentValues)",
 			resourceName: "KatLang.Benchmarks.Scenarios.nested-captured-parent-loop.kat",
 			expectedAtoms: [2493m]));
 

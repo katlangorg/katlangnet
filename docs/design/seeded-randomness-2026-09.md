@@ -11,8 +11,8 @@ consumes observable.
 
 The public contract lives on `RunOptions.RandomSeed`; the compact rule is in
 `AGENTS.md` and `docs/design/language-rules/evaluator-and-hosting.md`
-(§ Seeded randomness); the implementation is `src/KatLang/Evaluation/RandomSource.cs`
-and the two samplers in `src/KatLang/Evaluator.Expressions.cs`.
+(§ Seeded randomness); the implementation is `dotnet/src/KatLang/Evaluation/RandomSource.cs`
+and the two samplers in `dotnet/src/KatLang/Evaluator.Expressions.cs`.
 
 ## 1. Seed → initial state
 
@@ -219,7 +219,7 @@ cryptographically secure.
 
 `RandomSourceTests` pins §§1–4 and §7 against published SplitMix64 vectors, an
 independent BigInteger derivation, and the test-side reference implementation
-(`tests/KatLang.Tests/Randomness/ReferenceRandomOracle.cs`, which re-derives
+(`dotnet/tests/KatLang.Tests/Randomness/ReferenceRandomOracle.cs`, which re-derives
 §§2–5 from this document without calling production code). `RandomFractionSamplingTests`
 and `RandomIntSamplingTests` script the bounded and 128-bit seams respectively
 and keep the pre-seeding mathematical coverage. `SeededRandomnessTests`,

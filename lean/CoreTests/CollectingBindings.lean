@@ -10,7 +10,7 @@ open KatLang (Pattern CondBranch)
 -- Collecting bindings collect lists (a collector cell; `collectSegment` is its value)
 --------------------------------------------------------------------------------
 -- Required matrix for the collect model: capture / collect / open are distinct
--- operations. C# parity: tests/KatLang.Tests/DeconstructionBindingTests.cs and
+-- operations. C# parity: dotnet/tests/KatLang.Tests/DeconstructionBindingTests.cs and
 -- EvaluatorTests variadic sections; binder laws: KatLangArityLaws.lean.
 
 -- Parser-elaborated deconstruction helper: `targets = RHS` binds through its

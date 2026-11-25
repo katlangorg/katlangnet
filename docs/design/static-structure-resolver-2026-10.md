@@ -625,7 +625,7 @@ never partly on two models for one capability.
 
 ## 9. Stage soundness (B3-1, 2026-10-28)
 
-### 9.1 Identity: implemented and tested (`src/KatLang/StaticKeys.cs`, `StaticKeyTests`)
+### 9.1 Identity: implemented and tested (`dotnet/src/KatLang/StaticKeys.cs`, `StaticKeyTests`)
 
 - **One key per written body across passes.** Every written `User`/`Conditional` body keeps its `DeclarationIdentity`
   through detection and resolution: the passes rewrite with `with`, and alias formation passes the written body's

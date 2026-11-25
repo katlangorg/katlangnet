@@ -62,13 +62,13 @@ scripts/
 ```
 
 The harness project stays outside `KatLang.slnx`, with two deliberate exceptions: the
-self-contained `Metamorphic/` and `Utf16/` folders are compiled into `tests/KatLang.Tests` as
+self-contained `Metamorphic/` and `Utf16/` folders are compiled into `dotnet/tests/KatLang.Tests` as
 shared source, so `MetamorphicFuzzHarnessTests` and `Utf16FuzzHarnessTests` exercise exactly the
 decoder, template, executor and replay driver the campaign runs instead of a second copy. `Utf16/`
 also pulls in the four harness files it reuses rather than reimplements — `SourceSpanValidator.cs`,
 `FuzzInvariants.cs`, `FrontEndInvariants.cs`, `FrontEndFingerprint.cs`. The SEM-2B `Semantic/`
 folder is shared the same way, and in the other direction this project links the test project's
-symbol-addressed grammar model (`tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` and
+symbol-addressed grammar model (`dotnet/tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` and
 `StructuralFuzzer.cs`) so its `semantic-*` commands rebuild cases with exactly the generator the
 tests run. Nothing else in `fuzz/` is part of normal validation, and none of the shared files may
 reference SharpFuzz. The whole harness is still compiled on every pull request: the build-only
@@ -1420,7 +1420,7 @@ passing — and normalizing source text is never a blanket fix.
   units but not arbitrary *structure*, so deeply nested or very long shapes arrive only by mutation.
 * Evaluation is limited to the string bridge. This is not evaluator fuzzing.
 * No module loading, no downloader, no network path, in any mode.
-* Editor-tooling surfaces (`src/KatLang/Semantics/`) are covered by their own target — see
+* Editor-tooling surfaces (`dotnet/src/KatLang/Semantics/`) are covered by their own target — see
   [Editor-tooling fuzzing](#editor-tooling-fuzzing).
 * The `Unexpected character` diagnostic embeds the offending code unit verbatim, so for an isolated
   surrogate the message string is itself ill-formed UTF-16. Faithful in memory, and U+FFFD at any
@@ -1433,7 +1433,7 @@ passing — and normalizing source text is never a blanket fix.
 
 ### What it is
 
-The editor target fuzzes the **semantic model** editor tooling in `src/KatLang/Semantics/`
+The editor target fuzzes the **semantic model** editor tooling in `dotnet/src/KatLang/Semantics/`
 (`SemanticModelBuilder` / `SemanticModel`) — the layer KatLangWeb builds classification, hover,
 symbol lookup, go-to-definition, document-symbol and signature data from. It proves that editor
 tooling, over arbitrary and malformed source: never crashes; stays deterministic; returns only valid
@@ -1591,7 +1591,7 @@ structural model.
 
 | Piece | File |
 |---|---|
-| Grammar model (symbols, scopes, renderer; SEM-2B adds dot edges, postfix selection, list literals, fixed-name primitives, binary operators, META parameters and list patterns; the tick block adds symbol-addressed member reads, `MExpr.MemberRead`) | `tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` (linked into this project) |
+| Grammar model (symbols, scopes, renderer; SEM-2B adds dot edges, postfix selection, list literals, fixed-name primitives, binary operators, META parameters and list patterns; the tick block adds symbol-addressed member reads, `MExpr.MemberRead`) | `dotnet/tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` (linked into this project) |
 | Productions (8 families), contexts, invalid productions | `Semantic/SemanticGrammar.cs` |
 | The named tick block (`sys/tick/<group>/<shape>`): its shapes, rules and rejected readings | `Semantic/SemanticTickShapes.cs` |
 | The wide nested-pattern production of `seed-nested-wide` | `Semantic/SemanticNestedWide.cs` |
@@ -1609,7 +1609,7 @@ structural model.
 | Per-id case builders, recording/replaying choosers, generation spans, the reducer, `kl-sem2b-reduction` records (SEM-2C) | `Semantic/SemanticReduction.cs` |
 | The bounded seeded or exhaustive `semantic-campaign` and its `kl-sem2c-campaign` summary (SEM-2C) | `Semantic/SemanticCampaign.cs` |
 | Batch-only classification, persisted batch reproducers, sequence reduction and `semantic-batch-replay` | `Semantic/SemanticBatchReproduction.cs` |
-| Tests | `tests/KatLang.Tests/SemanticTesting/` |
+| Tests | `dotnet/tests/KatLang.Tests/SemanticTesting/` |
 
 ### Case kinds
 
@@ -1863,7 +1863,7 @@ anchor on every structure-projecting run (pinned by `UniformlyWrongImplementatio
 
 ### Per-case Lean guards (identity-prelude members)
 
-`tests/KatLang.Tests/SemanticTesting/SemanticGeneratedLeanArtifactTests.cs` generates
+`dotnet/tests/KatLang.Tests/SemanticTesting/SemanticGeneratedLeanArtifactTests.cs` generates
 `lean/CoreTests/SemanticGeneratedCases.lean` (imported by the canonical `CoreTests` target) with one
 `#guard` per VALID case of `SemanticCorpus.All()`; the invalid front-end cases are excluded by kind
 and the exact-id exclusion map is empty. Lean models no host operations, so for each case the test
@@ -2348,7 +2348,7 @@ Each step is bounded by `--max-attempts` executions and the time budget; the scr
 judged candidate is removed. `semantic-batch-replay MANIFEST` replays any of these reproducers in one
 supervised batch child, copying it to a temporary directory first, and prints every member's verdict.
 
-The test-only PLANTED-FAULT seam (`tests/KatLang.Tests/SemanticTesting/SemanticPlantedFault.cs`) adds
+The test-only PLANTED-FAULT seam (`dotnet/tests/KatLang.Tests/SemanticTesting/SemanticPlantedFault.cs`) adds
 one host event the program never performed (`trace:4242`) to `base@sync-optimized`: a wrong
 observation that is well-formed for a success, an expected runtime failure and an intended refusal
 alike, so a supervised worker writes it and the result reader judges an ordinary `Mismatch`

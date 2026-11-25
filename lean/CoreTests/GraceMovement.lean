@@ -1,7 +1,7 @@
 /-!
 # Grace movement (PAR-06; X-49, decided 2026-10-08) — standalone specification model
 
-Grace is a C#-only front-end operation (`src/KatLang/GraceMovement.cs`, applied by the parameter
+Grace is a C#-only front-end operation (`dotnet/src/KatLang/GraceMovement.cs`, applied by the parameter
 detector to an owner's OWN inferred parameters): the Lean semantics receives the elaborated
 parameter list and never sees Grace, so this module imports nothing from `KatLang` and changes
 nothing in the evaluator model. It states the movement law over first-occurrence identities

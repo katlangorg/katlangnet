@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$project = "./tests/KatLang.Tests/KatLang.Tests.csproj"
+$project = "./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj"
 $testClass = "KatLang.Tests.CancellationTokenParameterOrderTests"
 # The scan itself; the class's other test proves the scan detects violations.
 $requiredTest = "$testClass.EveryParameterListOfTheKatLangAssembly_EndsWithItsCancellationTokens"

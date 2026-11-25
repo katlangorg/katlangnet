@@ -3,8 +3,8 @@
 A code link carries a KatLang program in a URL: `https://katlang.org/#<format>/<payload>`, for
 example `https://katlang.org/#1/4MWjDBlNE4PH` for `100 - 3 * 5 ^ 2`. This document specifies the
 link and its format 1 completely enough to implement them again. The implementation is
-`src/KatLang/CodeLinks/` (`KatLang.CodeLink`); the fixtures in
-`tests/KatLang.Tests/CodeLinks/Fixtures/` were made with an independent reference implementation of
+`dotnet/src/KatLang/CodeLinks/` (`KatLang.CodeLink`); the fixtures in
+`dotnet/tests/KatLang.Tests/CodeLinks/Fixtures/` were made with an independent reference implementation of
 this text and pin its results exactly.
 
 ## Versions

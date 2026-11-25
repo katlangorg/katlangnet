@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$project = "./tests/KatLang.Tests/KatLang.Tests.csproj"
+$project = "./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj"
 # Fresh-process stack probes (SubprocessProbe children asserting exit code 0, a success marker and
 # no "Stack overflow" text), plus two in-process checks: the async-twin stack-shape characterization,
 # whose overflow would kill the test host, and the planned-loop frame nesting check, which compares

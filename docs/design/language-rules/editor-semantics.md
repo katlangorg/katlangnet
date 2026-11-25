@@ -6,11 +6,11 @@ The full statement of the rules that AGENTS.md indexes in compact form — conse
 
 **Summary.** The rules of this section in dense form, with their implementation anchors and pinning tests; the sections below hold the full statements.
 
-- `src/KatLang/Semantics/` derives editor-facing meaning from parsed and elaborated ASTs.
+- `dotnet/src/KatLang/Semantics/` derives editor-facing meaning from parsed and elaborated ASTs.
 - Build semantic models from `Parser.Parse(...)` / `ParseResult`, not from raw syntax — whatever the parse's configuration: a result with a missing module is a provisional elaboration the builder models (it never throws for an unresolved `load`).
 - Only source-backed identifiers may produce semantic sites, resolutions, declarations, or spans. The parser's unique, unwritable, spanless recovery binders declare no symbol (`SemanticModelBuilder.CreateScope`); editor signatures show their missing slots as `?`, never internal names.
 - Synthetic constructs must not invent source spans.
-- If editor-visible behavior changes, update `src/KatLang/Semantics/` and `tests/KatLang.Tests/SemanticModelTests.cs` together.
+- If editor-visible behavior changes, update `dotnet/src/KatLang/Semantics/` and `dotnet/tests/KatLang.Tests/SemanticModelTests.cs` together.
 - Preserve exact source-span invariants for hover, references, go-to-definition, classification, and callable-property metadata.
 
 ## Scope visibility and module provenance

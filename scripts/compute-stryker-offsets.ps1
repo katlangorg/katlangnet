@@ -17,7 +17,7 @@ param([switch]$Update)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$evaluatorPath = Join-Path $repoRoot 'src/KatLang/Evaluator.cs'
+$evaluatorPath = Join-Path $repoRoot 'dotnet/src/KatLang/Evaluator.cs'
 $configPath = Join-Path $repoRoot 'stryker-config.json'
 $text = [System.IO.File]::ReadAllText($evaluatorPath)
 

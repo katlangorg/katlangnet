@@ -9,15 +9,15 @@
     consumer reads $(KatLangVersion) from here:
 
       KatLangVersion.props
-        src/KatLang/KatLang.csproj            package and assembly version
-        src/KatLang.CLI/KatLang.CLI.csproj    CLI assembly version
-        tests/KatLang.CLI.Tests/*.csproj      IntendedKatLangVersion assembly metadata
+        dotnet/src/KatLang/KatLang.csproj            package and assembly version
+        dotnet/src/KatLang.CLI/KatLang.CLI.csproj    CLI assembly version
+        dotnet/tests/KatLang.CLI.Tests/*.csproj      IntendedKatLangVersion assembly metadata
 
     It is imported EXPLICITLY by exactly those three projects rather than
     dropped in as a Directory.Build.props, so it versions the KatLang product
     and leaves the benchmarks, demo app, fuzz host, and library tests alone.
 
-    Releasing is therefore: change the number here, pack src/KatLang, publish.
+    Releasing is therefore: change the number here, pack dotnet/src/KatLang, publish.
     The CLI builds against the KatLang PROJECT, so it always carries the
     runtime built from this same number and cannot drift onto a previously
     published one.

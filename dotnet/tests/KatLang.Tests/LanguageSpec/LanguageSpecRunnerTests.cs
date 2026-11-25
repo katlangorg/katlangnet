@@ -1,0 +1,608 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
+
+namespace KatLang.Tests.LanguageSpec;
+
+/// <summary>
+/// Executes every canonical language-spec case through the production front
+/// end and evaluator, and validates the corpus schema and partition
+/// identities. A failure here means either the implementation drifted from
+/// the canonical specification or a canonical case was edited incorrectly —
+/// both require review, never regeneration.
+/// </summary>
+public class LanguageSpecRunnerTests
+{
+    private static readonly IReadOnlyList<SpecCase> Cases = LanguageSpecCorpus.AllCases();
+
+    private static readonly IReadOnlyDictionary<string, SpecCase> CasesById =
+        Cases.ToDictionary(c => c.Id);
+
+    public static TheoryData<string> CaseIds()
+    {
+        var data = new TheoryData<string>();
+        foreach (var specCase in Cases)
+            data.Add(specCase.Id);
+        return data;
+    }
+
+    // ----- Execution ----------------------------------------------------------
+
+    [Theory]
+    [MemberData(nameof(CaseIds))]
+    public void Case_MatchesCanonicalExpectations(string caseId)
+    {
+        var specCase = CasesById[caseId];
+
+        if (specCase.Outcome == SpecOutcome.ParseError)
+        {
+            var parsed = Parser.Parse(specCase.Source);
+            Assert.True(parsed.HasErrors, $"{caseId}: expected a parse error, but the source parsed.");
+            SemanticExplorerHarness.RequireEngineParseFailure(caseId, parsed, KatLangEngine.Run(specCase.Source));
+
+            if (specCase.ExpectedParseDiagnosticFragment is { } fragment)
+            {
+                Assert.True(
+                    parsed.Diagnostics.Any(d => d.Message.Contains(fragment, StringComparison.Ordinal)),
+                    $"{caseId}: no parse diagnostic contains \"{fragment}\"; got: "
+                    + string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
+            }
+
+            if (specCase.ExpectedDiagnosticCode is { } expectedCode)
+            {
+                Assert.True(
+                    parsed.Diagnostics.Any(d =>
+                        d.Severity == DiagnosticSeverity.Error && d.Code == expectedCode),
+                    $"{caseId}: no error diagnostic carries code {expectedCode}; got: "
+                    + string.Join(" | ", parsed.Diagnostics.Select(d => $"[{d.Code}] {d.Message}")));
+            }
+
+            return;
+        }
+
+        var observation = SemanticExplorerHarness.Observe(specCase.Id, specCase.Source);
+
+        if (specCase.Outcome == SpecOutcome.EvalError)
+        {
+            Assert.True(observation.Outcome == "err",
+                $"{caseId}: expected evaluation error ({specCase.ExpectedErrorCategory}), observed {observation.Neutral}.");
+            Assert.Equal(specCase.ExpectedErrorCategory, observation.ErrorCategory);
+            if (specCase.ExpectedErrorPayload is { } expectedPayload)
+                Assert.Equal(expectedPayload, observation.ErrorPayload);
+            return;
+        }
+
+        Assert.True(observation.Outcome == "ok",
+            $"{caseId}: expected successful evaluation, observed {observation.Neutral}.");
+        Assert.Equal(specCase.CanonicalNeutral, observation.Neutral);
+        Assert.Equal(specCase.ExpectedDisplay, observation.Display!.ReplaceLineEndings("\n"));
+    }
+
+    public static TheoryData<string> CachePilotCaseIds()
+    {
+        var data = new TheoryData<string>();
+        foreach (var specCase in Cases.Where(c => c.ExpectedCachePublications is not null))
+            data.Add(specCase.Id);
+        return data;
+    }
+
+    /// <summary>
+    /// KL-06 pilot: a case's hand-written <see cref="SpecCase.ExpectedCachePublications"/> is what
+    /// C# publishes on the cache-recording routes (generic, optimized, suspending async), each of
+    /// which must give the case's canonical neutral observation. The generated Lean guards pin the
+    /// same canonical entries on Lean.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CachePilotCaseIds))]
+    public void Case_MatchesCanonicalCachePublications(string caseId)
+    {
+        var specCase = CasesById[caseId];
+        var root = SourceProvenance.ParseValid(specCase.Source).Root;
+        var observed = ZeroArgPublicationObserver.ObservePilotCase(
+            "Language-spec", caseId, root, specCase.CanonicalNeutral!, specCase.ExpectedCachePublications!);
+        Assert.Equal(specCase.ExpectedCachePublications!.Total, observed.Total);
+    }
+
+    public static TheoryData<string, int> ProbeIds()
+    {
+        var data = new TheoryData<string, int>();
+        foreach (var specCase in Cases)
+        {
+            for (var i = 0; i < specCase.Probes.Count; i++)
+                data.Add(specCase.Id, i);
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(ProbeIds))]
+    public void Probe_MatchesCanonicalNeutral(string caseId, int probeIndex)
+    {
+        var probe = CasesById[caseId].Probes[probeIndex];
+        var observation = SemanticExplorerHarness.Observe($"{caseId}@probe{probeIndex}", probe.Probe);
+        Assert.Equal(probe.ExpectedNeutral, observation.Neutral);
+    }
+
+    // ----- Schema validation --------------------------------------------------
+
+    [Fact]
+    public void Schema_IdsAreUniqueKebabCase()
+    {
+        var idPattern = new Regex("^[a-z0-9]+(-[a-z0-9]+)*$");
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var specCase in Cases)
+        {
+            Assert.True(idPattern.IsMatch(specCase.Id), $"'{specCase.Id}' is not kebab-case.");
+            Assert.True(seen.Add(specCase.Id), $"Duplicate case id '{specCase.Id}'.");
+        }
+    }
+
+    [Fact]
+    public void Schema_IdsDoNotCollideWithExplorerCorpus()
+    {
+        var explorerIds = SemanticExplorerCorpus.AllCases().Select(c => c.Id)
+            .Concat(SemanticExplorerCorpus.InternalNodeCases().Select(c => $"internal__{c.Id}"))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var specCase in Cases)
+        {
+            Assert.False(explorerIds.Contains(specCase.Id),
+                $"Spec case id '{specCase.Id}' collides with a semantic-explorer case id; the two corpora must stay disjoint authorities.");
+        }
+    }
+
+    [Fact]
+    public void Schema_CategoriesAreDeclared()
+    {
+        foreach (var specCase in Cases)
+        {
+            Assert.True(LanguageSpecCorpus.Categories.Contains(specCase.Category),
+                $"{specCase.Id}: unknown category '{specCase.Category}'.");
+        }
+    }
+
+    [Fact]
+    public void Schema_ExpectationFieldsMatchOutcome()
+    {
+        foreach (var specCase in Cases)
+        {
+            Assert.True(specCase.ExpectedErrorPayload is null || specCase.Outcome == SpecOutcome.EvalError,
+                $"{specCase.Id}: supplementary error payloads require EvalError.");
+            Assert.True(specCase.ExpectedCachePublications is null || specCase.IsLeanRepresentable,
+                $"{specCase.Id}: a cache expectation requires a Lean-guarded case (it is pinned on both sides).");
+            switch (specCase.Outcome)
+            {
+                case SpecOutcome.Evaluates:
+                    Assert.True(specCase.ExpectedDisplay is not null, $"{specCase.Id}: Evaluates requires ExpectedDisplay.");
+                    Assert.True(specCase.ExpectedRaw is not null, $"{specCase.Id}: Evaluates requires ExpectedRaw.");
+                    Assert.True(specCase.ExpectedEmittedCount is not null, $"{specCase.Id}: Evaluates requires ExpectedEmittedCount.");
+                    Assert.True(specCase.ExpectedErrorCategory is null, $"{specCase.Id}: Evaluates forbids ExpectedErrorCategory.");
+                    Assert.True(specCase.ExpectedParseDiagnosticFragment is null, $"{specCase.Id}: Evaluates forbids ExpectedParseDiagnosticFragment.");
+                    Assert.True(specCase.ExpectedDiagnosticCode is null, $"{specCase.Id}: Evaluates forbids ExpectedDiagnosticCode.");
+                    break;
+                case SpecOutcome.EvalError:
+                    Assert.True(specCase.ExpectedErrorCategory is not null, $"{specCase.Id}: EvalError requires ExpectedErrorCategory.");
+                    Assert.True(specCase.ExpectedDisplay is null && specCase.ExpectedRaw is null && specCase.ExpectedEmittedCount is null,
+                        $"{specCase.Id}: EvalError forbids value expectations.");
+                    Assert.True(specCase.ExpectedParseDiagnosticFragment is null, $"{specCase.Id}: EvalError forbids ExpectedParseDiagnosticFragment.");
+                    Assert.True(specCase.ExpectedDiagnosticCode is null, $"{specCase.Id}: EvalError forbids ExpectedDiagnosticCode.");
+                    break;
+                case SpecOutcome.ParseError:
+                    Assert.True(specCase.ExpectedDisplay is null && specCase.ExpectedRaw is null
+                        && specCase.ExpectedEmittedCount is null && specCase.ExpectedErrorCategory is null,
+                        $"{specCase.Id}: ParseError forbids value/error expectations.");
+                    // Every diagnostic-level case pins its structured family, so
+                    // new parse-error cases cannot regress to message-only
+                    // expectations.
+                    Assert.True(specCase.ExpectedDiagnosticCode is not null,
+                        $"{specCase.Id}: ParseError requires ExpectedDiagnosticCode.");
+                    Assert.True(specCase.ExpectedDiagnosticCode != DiagnosticCode.Unspecified,
+                        $"{specCase.Id}: ExpectedDiagnosticCode must be a deliberate non-default family.");
+                    Assert.True(specCase.LeanProgram is null,
+                        $"{specCase.Id}: parse-error cases are C#-only (Lean has no surface parser).");
+                    break;
+            }
+        }
+    }
+
+    [Fact]
+    public void Schema_LeanPartitionIsExplicit()
+    {
+        foreach (var specCase in Cases)
+        {
+            if (specCase.LeanExclusionReason is { } reason)
+            {
+                Assert.False(string.IsNullOrWhiteSpace(reason),
+                    $"{specCase.Id}: LeanExclusionReason must explain why the case is outside the Lean model.");
+            }
+
+            if (specCase.LeanProgram is not null)
+            {
+                Assert.True(specCase.LeanExclusionReason is null,
+                    $"{specCase.Id}: LeanExclusionReason must be null when LeanProgram is set.");
+            }
+            else if (specCase.Outcome != SpecOutcome.ParseError
+                || specCase.ExpectedDiagnosticCode == DiagnosticCode.UnsupportedDoubleQuotedString)
+            {
+                Assert.True(specCase.LeanExclusionReason is not null,
+                    $"{specCase.Id}: non-parse-error cases and STR-03 lexical rejections must state a LeanExclusionReason.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Hand-authored Lean programs are the exception, never the ordinary path:
+    /// an override must carry a reviewed reason, a reason must belong to an
+    /// override, and an override never combines with a C#-only exclusion.
+    /// </summary>
+    [Fact]
+    public void Schema_LeanOverridesAreExplicitAndExceptional()
+    {
+        foreach (var specCase in Cases)
+        {
+            if (specCase.LeanProgramOverride is not null)
+            {
+                Assert.False(string.IsNullOrWhiteSpace(specCase.LeanProgramOverride),
+                    $"{specCase.Id}: LeanProgramOverride cannot be blank.");
+                Assert.False(string.IsNullOrWhiteSpace(specCase.LeanOverrideReason),
+                    $"{specCase.Id}: a hand-authored LeanProgramOverride requires a non-blank LeanOverrideReason.");
+                Assert.True(specCase.LeanExclusionReason is null,
+                    $"{specCase.Id}: LeanProgramOverride and LeanExclusionReason are mutually exclusive.");
+            }
+            else
+            {
+                Assert.True(specCase.LeanOverrideReason is null,
+                    $"{specCase.Id}: LeanOverrideReason without a LeanProgramOverride is meaningless.");
+            }
+        }
+    }
+
+    [Fact]
+    public void FidelityExclusions_ArePinnedByExactIdAndCategory()
+    {
+        string[] expectedParseLevel =
+        [
+            "decon-two-collecting-rejected",
+            "expression-position-block-closed-list-is-diagnosed",
+            "conditional-branch-inline-open-does-not-leak-to-sibling-branches",
+            "conditional-branch-local-library-does-not-leak-to-sibling-branches",
+            "grace-line-final-marker-after-call-rejected",
+            "retired-colon-selection-rejected",
+            "open-capture-target-rejected",
+            // Constitution PV-11 / PV-25 / PV-49 (September 2026): open-target heads and
+            // steps, open placement after clause definitions, and Grace in a branch
+            // deconstruction are front-end rejections, parse-level by construction.
+            "open-reference-private-member-keeps-private-names",
+            "open-target-head-must-name-an-algorithm",
+            "open-inline-headed-path-must-resolve",
+            // E-18 owner decision Q3 (2026-11-14): a block-headed reference resolves like a named one.
+            "open-block-headed-reference-target-must-resolve",
+            "open-after-clause-definition-rejected",
+            "grace-in-branch-deconstruction-rejected",
+            // Q-16 G-O (2026-10-07): Grace eligibility is a front-end decision of the marker's
+            // OWNER; a branch binder captured by a nested block is no inferred parameter there.
+            "grace-on-branch-binder-in-nested-block-rejected",
+            "ownership-same-owner-parameter-beats-property",
+            "ownership-nearer-property-beats-outer-parameter",
+            "ownership-same-owner-nested-reference-rejected",
+            "ownership-same-owner-later-property-rejected",
+            "ownership-branch-binder-property-collision",
+            "ownership-lifted-parameter-property-collision",
+            // Q-04: a forwarded parameter never gives a closed body's written name a meaning.
+            "forwarded-parameter-names-nothing-in-a-closed-body",
+            // FWD-02 bare forwarding (decided September 30 2026): an unforwardable parameter is a
+            // front-end rejection, parse-level by construction.
+            "bare-forwarding-never-renames-a-parameter",
+            "bare-forwarding-never-adds-a-parameter",
+            "bare-forwarding-never-reshapes-a-structural-parameter",
+            "bare-forwarding-never-manufactures-a-sequence",
+            // Static-open ownership (SYN-03 / F2): a parameter-owned open head is a
+            // front-end rejection, so these are parse-level by construction.
+            "ownership-open-target-parameter-rejected",
+            "ownership-open-target-parameter-without-farther-declaration",
+            "ownership-open-qualified-target-parameter-rejected",
+            "ownership-open-target-enclosing-parameter-rejected",
+            // ... and every other binding that owns an open head: a branch binder, a collecting
+            // parameter, a grouped binder, a binder captured by a nested body, an inferred parameter.
+            "ownership-open-target-branch-binder-rejected",
+            "ownership-open-target-collecting-parameter-rejected",
+            "ownership-open-target-grouped-binder-rejected",
+            "ownership-open-target-captured-branch-binder-rejected",
+            "ownership-open-target-inferred-parameter-rejected",
+            "open-parameterized-provider-rejected",
+            "semicolon-not-expression-syntax",
+            "spread-not-binary-operand",
+            "trailing-comma-in-parens-rejected",
+            // The singleton rule (structural patterns, September 2026): a one-item sequence
+            // pattern is a front-end rejection, parse-level by construction.
+            "singleton-sequence-pattern-is-invalid",
+            // PAT-05 (corrected 2026-10-09): an expression is not a pattern; the pattern
+            // grammar rejects it, parse-level by construction (Lean's Pattern has no
+            // expression constructor).
+            "expression-is-not-a-pattern",
+            // The same-line separator rule (SYN-07A): surface-lexical,
+            // parse-level by construction.
+            "same-line-slots-need-comma",
+            "same-line-call-arguments-need-comma",
+            "same-line-declaration-begins-a-line",
+            "same-line-slot-before-spread-needs-comma",
+            "same-line-parameter-patterns-need-comma",
+            // The marker attachment law (SYN-07B follow-up): surface-lexical,
+            // parse-level by construction.
+            "spread-marker-must-be-attached",
+            // Q-65: surface grammar, outside Lean's parser-free model.
+            "unary-minus-must-be-attached",
+            "negative-pattern-sign-must-be-attached",
+            "line-final-star-at-eof-is-incomplete",
+            // CallReference S1: the contextual `meta` modifier's placement rule is a
+            // front-end rejection, parse-level by construction.
+            "meta-modifies-one-plain-parameter-name",
+            "grace-marker-must-be-attached",
+            "collect-marker-must-be-attached",
+            // The declaration-head line rule (F7) and the Grace effectiveness
+            // rule (F10): front-end rejections, parse-level by construction.
+            "declaration-head-never-spans-lines",
+            "grace-on-bound-name-rejected",
+            "grace-under-explicit-list-rejected",
+            // Clause-family arity agreement (pattern and output arity): front-end
+            // rejections, parse-level by construction.
+            "conditional-clauses-share-top-level-arity",
+            "conditional-clauses-share-top-level-output-arity",
+            // Final audit (September 2026): a builtin open target and the owed-closer
+            // recovery are front-end rejections, parse-level by construction.
+            "open-builtin-target-rejected",
+            "owed-closer-recovery-keeps-later-declarations",
+            // `not` below the comparisons (September 2026): a `not` where a tighter
+            // operand is required is a parser precedence diagnostic.
+            "not-cannot-be-a-tighter-operand",
+            // The unified formula-lifting law (September 2026): a clause family its clauses
+            // do not name is a front-end rejection where a formula would lift it.
+            "unliftable-clause-family",
+            // S-10 F1 (November 2026): a block in a preserved root row is elaborated, so its
+            // front-end errors are reported.
+            "root-row-block-head-reports-front-end-errors",
+            // Callable aliases as binding indirection (October 2026): a closed lone row whose
+            // callable names no parameter (narrowed Q-77) and `open` of a callable alias are
+            // front-end rejections.
+            "bare-forwarding-needs-parameter-names",
+            "open-of-a-callable-alias-is-refused",
+            // Dot semantics (Q-18 C-B3 / Q-75 F-A, October 2026): a call written after an
+            // argument-bearing dot edge is a parser diagnostic, and a CERTAIN fallback name under a
+            // closed list or clause branch is a front-end rejection — parse-level by construction
+            // (FORMAL-02: Lean models no front-end rule).
+            "call-after-argument-bearing-dot-edge-is-a-parse-error",
+            "closed-list-must-fallback-name-is-checked",
+            "branch-must-fallback-name-is-checked",
+            // Open provider identity and static ambiguity (Q-19 D-I / Q-29 A-U, decided
+            // 2026-10-06): a WRITTEN name two different providers supply at one open level is a
+            // front-end rejection, parse-level by construction (Lean's evaluator keeps the
+            // run-time ambiguity only for lookups the receiver decides).
+            "open-distinct-declarations-stay-distinct-providers",
+            "open-local-only-member-is-a-second-provider",
+            "open-identical-inline-blocks-two-providers",
+            "ambiguous-open-written-use-is-static",
+            "inline-headed-open-paths-keep-distinct-providers",
+            // One string literal form (STR-03, November 2026): a double quote outside a comment or
+            // a single-quoted string is a LEXER diagnostic — C#-only and parse-level by construction
+            // (lexing is implemented in C# alone; Lean has no lexer or surface parser, and no Lean
+            // equivalent is fabricated for it).
+            "string-double-quotes-are-not-supported",
+            "string-interpolation-is-not-supported",
+            "string-double-quote-run-ends-with-its-line",
+            // M4★ (ALIAS-UNIFY-1 second review): OD-D's target chase and a member miss decide what a
+            // closed body's certain fallback name is checked against — front-end rejections,
+            // parse-level by construction.
+            "reference-to-a-carrier-that-leads-back-is-no-alias",
+            "member-miss-makes-the-body-its-own-structure",
+            // M4★ (ALIAS-UNIFY-1 third review): an open path into a parameterized body opens the runtime
+            // reference's own namespace — a front-end rejection, parse-level by construction.
+            "open-path-into-a-parameterized-body-is-its-own-namespace",
+            // S-10 F3 (November 2026): an open target that is a lone dot row is judged by the provider rule, or is
+            // unresolved when only an open provides a reference's head — front-end rejections, parse-level by
+            // construction.
+            "open-calculation-link-is-refused",
+            "open-reference-to-a-calculation-link-reports-the-target-refusal",
+            "open-parameterized-fallback-row-is-refused",
+            "open-link-over-a-head-only-an-open-provides-is-unresolved",
+            // Declaration-level output spreading (November 2026): the marker's attachment, its family rule, and the
+            // declarations it is not allowed on are front-end rejections, parse-level by construction.
+            "output-spread-marker-on-an-alias-is-an-error",
+            "output-spread-marker-must-be-attached",
+            "output-spread-marker-on-every-clause-or-none",
+            "output-spread-marker-not-on-a-deconstruction-target",
+            // D2: a bare reference to a marked declaration whose lift only parameter inference decides, where a later
+            // builtin slot's role depends on it, is a front-end rejection too.
+            "output-spread-reference-needs-call",
+            // EXPORTED-DETACHED exposure-shape family (November 2026): an inline block written directly as an open
+            // target whose `Sub` reads `y` in its output row is a provider that takes a parameter — a front-end
+            // rejection (IllegalInOpen), parse-level by construction.
+            "exposure-shape-inline-head-dotted-open-row-capture-refused-open",
+            "exposure-shape-inline-head-enclosing-open-row-capture-refused-open",
+        ];
+        string[] expectedModelDivergences =
+        [
+            // The Decimal128-vs-Lean-Int numeric family (see the numeric row in
+            // dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md). If the Lean numeric model
+            // ever grows past Int, these are the exclusions to revisit.
+            "avg-decimal-mean",
+            "decimal-fraction-arithmetic",
+            "division-decimal-quotient",
+            "nan-equality-vs-ordering",
+            "negative-zero-display",
+            "overflow-produces-infinity",
+            "pow-integer-exponent-inexact-accuracy",
+            "pow-zero-base-negative-exponent",
+            "range-integral-bound-quantum",
+            // G-3: a truncated `div` quotient beyond 34 significant digits is rounded
+            // toward zero in Decimal128; the Int core keeps the exact integer.
+            "integer-division-beyond-consecutive-integers",
+            // The unmodeled Math-native surface.
+            "native-argument-value-demand",
+            // Model C moves Q-15 to actual runtime demand; this previously parser-only
+            // case now reaches native Math, which Lean does not execute. The pure-core
+            // counterpart remains derived and guarded.
+            "closed-list-strict-value-forwarding",
+            "native-flat-callback-binding",
+            // Final audit (September 2026): Decimal128-only observations (quantum-visible
+            // sort stability, the MaxDecimalPlaces tie rule, near-1 logarithm accuracy).
+            "order-is-stable",
+            "max-decimal-places-rounds-ties-away-from-zero",
+            "logarithm-near-one-is-accurate",
+            // The decimal-places display rule (owner decision 2026-11-12): C#-only host
+            // presentation over fractional Decimal128 values; Lean models no rendering.
+            "min-decimal-places-pads-and-never-rounds",
+            "equal-min-and-max-decimal-places-fix-the-places",
+            "decimal-places-show-the-value-not-the-stored-digits",
+            // Numeric audit #6 (September 2026): the correctly rounded exact mean and the
+            // sign-symmetric delegated power are Decimal128 accuracy properties.
+            "avg-is-the-correctly-rounded-exact-mean",
+            "negative-near-one-base-power-is-sign-symmetric",
+            // The signed-zero extremum freeze (September 2026): Lean's Int has one zero.
+            "min-max-signed-zero",
+            // Q-28 N-F (October 2026): which equally rich contribution's representation a
+            // repeated name retains, and decimal / signed-zero literal patterns, are
+            // Decimal128-tier observations; Int has one representation per value.
+            "repeated-name-keeps-first-equally-rich-representative",
+            "decimal-literal-patterns-match-by-value",
+        ];
+
+        Assert.Equal(
+            expectedParseLevel.OrderBy(id => id, StringComparer.Ordinal),
+            Cases.Where(c => c.Outcome == SpecOutcome.ParseError)
+                .Select(c => c.Id).OrderBy(id => id, StringComparer.Ordinal));
+        Assert.Equal(
+            expectedModelDivergences.OrderBy(id => id, StringComparer.Ordinal),
+            Cases.Where(c => c.Outcome != SpecOutcome.ParseError && c.LeanExclusionReason is not null)
+                .Select(c => c.Id).OrderBy(id => id, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// M11 coverage ratchet. Every Lean-guarded case's program is derived from
+    /// the source's real elaborated AST (<see cref="SpecCase.DerivedLeanProgram"/>,
+    /// same-program fidelity by construction) unless it is an explicit
+    /// hand-authored override. The pinned numbers may only be RAISED (or
+    /// lowered in a reviewed diff that deliberately removes a corpus case);
+    /// an encoder coverage regression cannot pass silently, because a case
+    /// that stops encoding fails corpus construction loudly, and a case moved
+    /// to the excluded/override channels changes the counts asserted here.
+    /// </summary>
+    [Fact]
+    public void FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink()
+    {
+        const int MinimumEncoderDerivedCases = 344;
+        const int MaximumHandAuthoredOverrides = 0;
+        const int MaximumCSharpOnlyCases = 24;
+
+        var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
+        var overrides = Cases.Count(c => c.LeanProgramOverride is not null);
+        // A parse-level case may document its lexical exclusion explicitly (STR-03),
+        // but still belongs only to the parse-level partition, never to model divergences.
+        var excluded = Cases.Count(c => c.Outcome != SpecOutcome.ParseError && c.LeanExclusionReason is not null);
+        var parseLevel = Cases.Count(c => c.Outcome == SpecOutcome.ParseError);
+        var leanGuarded = Cases.Count(c => c.IsLeanRepresentable);
+
+        string Summary() =>
+            $"language-spec fidelity accounting: {Cases.Count} surface cases = "
+            + $"{derived} encoder-derived + {overrides} hand-authored overrides + "
+            + $"{excluded} explicit C#-only exclusions + {parseLevel} parse-level cases; "
+            + $"Lean-guarded partition = {leanGuarded}. Excluded reasons: "
+            + string.Join("; ", Cases.Where(c => c.Outcome != SpecOutcome.ParseError && c.LeanExclusionReason is not null)
+                .Select(c => $"{c.Id}: {c.LeanExclusionReason}"))
+            + ". Override reasons: "
+            + string.Join("; ", Cases.Where(c => c.LeanProgramOverride is not null)
+                .Select(c => $"{c.Id}: {c.LeanOverrideReason}"));
+
+        Assert.True(derived + overrides + excluded + parseLevel == Cases.Count,
+            $"Fidelity partition does not cover the corpus. {Summary()}");
+        Assert.True(derived + overrides == leanGuarded,
+            $"Lean-guarded cases must be exactly the derived + override cases. {Summary()}");
+
+        Assert.True(derived >= MinimumEncoderDerivedCases,
+            $"Encoder-derived fidelity coverage shrank below the pinned minimum {MinimumEncoderDerivedCases}. {Summary()}");
+        Assert.True(overrides <= MaximumHandAuthoredOverrides,
+            $"A new hand-authored Lean override entered the corpus; overrides are exceptional and this pin must be "
+            + $"raised in a reviewed diff. {Summary()}");
+        Assert.True(excluded <= MaximumCSharpOnlyCases,
+            $"A new C#-only exclusion entered the corpus; each exclusion is a deliberate model-divergence decision and "
+            + $"this pin must be raised in a reviewed diff. {Summary()}");
+    }
+
+    [Fact]
+    public void Schema_ProbeNeutralsAreWellFormed()
+    {
+        var neutralPattern = new Regex(@"^(ok raw=.+ n=\d+|err [A-Za-z0-9]+)$");
+        foreach (var specCase in Cases)
+        {
+            var seenProbes = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var probe in specCase.Probes)
+            {
+                Assert.True(seenProbes.Add(probe.Probe), $"{specCase.Id}: duplicate probe program.");
+                Assert.True(neutralPattern.IsMatch(probe.ExpectedNeutral),
+                    $"{specCase.Id}: probe expectation '{probe.ExpectedNeutral}' is not a neutral observation.");
+            }
+        }
+    }
+
+    // ----- Partition reconciliation --------------------------------------------
+
+    [Fact]
+    public void Partition_CountsReconcile()
+    {
+        var surface = Cases.Count;
+        var parseLevel = Cases.Count(c => c.Outcome == SpecOutcome.ParseError);
+        var leanGuarded = Cases.Count(c => c.IsLeanRepresentable);
+        var csharpOnly = Cases.Count(c => !c.IsLeanRepresentable && c.Outcome != SpecOutcome.ParseError);
+
+        Assert.Equal(surface, parseLevel + leanGuarded + csharpOnly);
+
+        // Parse-level cases are never Lean-guarded (schema also enforces this).
+        Assert.Equal(0, Cases.Count(c => c.Outcome == SpecOutcome.ParseError && c.IsLeanRepresentable));
+
+        WriteReport(surface, parseLevel, leanGuarded, csharpOnly);
+    }
+
+    private static void WriteReport(int surface, int parseLevel, int leanGuarded, int csharpOnly)
+    {
+        var report = new
+        {
+            corpus = "LanguageSpecCorpus",
+            // The language-spec partitions. These are DISJOINT from the
+            // semantic-explorer corpus partitions (reported separately below);
+            // totals from the two corpora must never be blended.
+            partition = new
+            {
+                surfaceCases = surface,
+                parseLevelCases = parseLevel,
+                leanGuardedCases = leanGuarded,
+                encoderDerivedCases = Cases.Count(c => c.DerivedLeanProgram is not null),
+                handAuthoredOverrides = Cases.Count(c => c.LeanProgramOverride is not null),
+                csharpOnlyCases = csharpOnly,
+                probeObservations = Cases.Sum(c => c.Probes.Count),
+                generatorPromptCases = Cases.Count(c => c.IncludeInGeneratorPrompt),
+                byCategory = Cases.GroupBy(c => c.Category)
+                    .OrderBy(g => g.Key, StringComparer.Ordinal)
+                    .ToDictionary(g => g.Key, g => g.Count()),
+                csharpOnlyReasons = Cases.Where(c => !c.IsLeanRepresentable && c.Outcome != SpecOutcome.ParseError)
+                    .ToDictionary(c => c.Id, c => c.LeanExclusionReason),
+            },
+            semanticExplorerPartition = new
+            {
+                surfaceCases = SemanticExplorerCorpus.AllCases().Count,
+                leanRepresentable = SemanticExplorerCorpus.AllCases().Count(c => c.LeanProgram is not null),
+                internalNodeCases = SemanticExplorerCorpus.InternalNodeCases().Count,
+            },
+            cases = Cases.Select(c => new
+            {
+                id = c.Id,
+                category = c.Category,
+                outcome = c.Outcome.ToString(),
+                leanGuarded = c.IsLeanRepresentable,
+                canonicalNeutral = c.CanonicalNeutral,
+                probes = c.Probes.Count,
+                generatorPrompt = c.IncludeInGeneratorPrompt,
+            }),
+        };
+
+        var path = Path.Combine(AppContext.BaseDirectory, "LanguageSpecReport.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+    }
+}

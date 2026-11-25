@@ -11,20 +11,20 @@ the semantic explorer described in
 
 The rules `AGENTS.md` § Executable language specification summarizes, in full. The sections below are the maintainer detail.
 
-- `tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs` is the canonical executable specification: named cases with stable IDs and HAND-WRITTEN canonical expectations. Never regenerate its expectations from observed behavior — a failing `LanguageSpec*` test means either fix the implementation or edit the canonical case in a reviewed diff.
-- Same-program fidelity: the Lean program of every Lean-comparable case in BOTH differential corpora (`LanguageSpecCorpus` and `SemanticExplorerCorpus`, internal-node cases included) is DERIVED from the source's real elaborated AST through `tests/KatLang.Tests/LeanAstEncoder.cs` — never authored by hand and never rebuilt by test-side parser-rule templates. C#-only cases carry an explicit non-blank `LeanExclusionReason`, a hand-authored LanguageSpec Lean program requires the exceptional `LeanProgramOverride` + `LeanOverrideReason` (currently unused), and per-corpus exact-ID exclusions plus `FidelityRatchet_*` tests pin the derived-case partitions. The host-built AST corpus `HostParentDifferentialCorpus` (HOST-DIFF-1, pre-wired `ScopeCtx` parents, `lean/CoreTests/HostParentDifferential.lean`) encodes the SAME constructed graph C# evaluates, one host-scope token per original `ScopeCtx` object; every case is comparable (a future reviewed divergence is pinned on both sides by exact id); its three coverage floors in `HostParentDifferentialTests` are the CURRENT counts, so raise them in the diff that adds cases (a coverage-drop control fails while a floor is stale). ZERO-ARGUMENT CACHE PUBLICATIONS (KL-06) are compared on every host-parent case and on a four-case pilot in each source corpus (`CachePublicationPilotTests`): no observation, a completed run with an empty cache and a completed run with entries are three different states, and a `SpecCase.ExpectedCachePublications` is hand-written like every canonical expectation (`docs/design/differential-observations.md` § Cache publications). A PUBLICATION is the first establishment of a zero-argument property's reusable value in its owning invocation (F01, owner decision 2026-11-21): a planned loop round keeps a step property in its frame slot and reports that store (`LoopRunFrame.EstablishTempSlot`, `IPlannedLoopPublicationObserver`), so it counts like a cache store on every route and in Lean (`PlannedLoopPublicationTests`, hand-maintained `lean/CoreTests/PlannedLoopPublications.lean`; the generated temp family `PlannedLoopTempFamilyTests` / `lean/CoreTests/PlannedLoopTempFamily.lean` checks planned, fallback, exported and undemanded temps against constructed expectations, `docs/design/differential-observations.md` § Planned-loop temp family). The third generated corpus, `lean/CoreTests/SemanticGeneratedCases.lean` (SEM-2C, `SemanticGeneratedLeanArtifactTests`), covers every valid SEM-2B generated case (`SemanticCorpus.All()`, kinds `ValidSuccess`/`ValidRuntimeFailure`; invalid front-end cases are excluded by kind): for each case the test builds an IDENTITY-PRELUDE member, the base source with `trace(x) = x` and `wait(x) = x` prepended in place of the host operations Lean does not model, checks that its parse is clean and its C# result is the generator's constructed expectation, and encodes its real elaborated AST; the member is built only in that test (never a `SemanticCase.Members` entry). The case's `alpha-rename` and `declaration-reorder` members get the same prelude and guard, checked in C# against the SEM-2B runner's member relation (SemanticEqual to the base, `Normalized` errors), each guard pinning the base member's neutral text; the host-operation programs, host events, async and optimizer paths stay C# evidence. The encoder is FAIL-LOUD: extend it deliberately (with reviewed goldens in `LeanAstEncoderTests`) rather than approximating, and expected strings in encoder tests are manually reviewed constants. See § 5.
+- `dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs` is the canonical executable specification: named cases with stable IDs and HAND-WRITTEN canonical expectations. Never regenerate its expectations from observed behavior — a failing `LanguageSpec*` test means either fix the implementation or edit the canonical case in a reviewed diff.
+- Same-program fidelity: the Lean program of every Lean-comparable case in BOTH differential corpora (`LanguageSpecCorpus` and `SemanticExplorerCorpus`, internal-node cases included) is DERIVED from the source's real elaborated AST through `dotnet/tests/KatLang.Tests/LeanAstEncoder.cs` — never authored by hand and never rebuilt by test-side parser-rule templates. C#-only cases carry an explicit non-blank `LeanExclusionReason`, a hand-authored LanguageSpec Lean program requires the exceptional `LeanProgramOverride` + `LeanOverrideReason` (currently unused), and per-corpus exact-ID exclusions plus `FidelityRatchet_*` tests pin the derived-case partitions. The host-built AST corpus `HostParentDifferentialCorpus` (HOST-DIFF-1, pre-wired `ScopeCtx` parents, `lean/CoreTests/HostParentDifferential.lean`) encodes the SAME constructed graph C# evaluates, one host-scope token per original `ScopeCtx` object; every case is comparable (a future reviewed divergence is pinned on both sides by exact id); its three coverage floors in `HostParentDifferentialTests` are the CURRENT counts, so raise them in the diff that adds cases (a coverage-drop control fails while a floor is stale). ZERO-ARGUMENT CACHE PUBLICATIONS (KL-06) are compared on every host-parent case and on a four-case pilot in each source corpus (`CachePublicationPilotTests`): no observation, a completed run with an empty cache and a completed run with entries are three different states, and a `SpecCase.ExpectedCachePublications` is hand-written like every canonical expectation (`docs/design/differential-observations.md` § Cache publications). A PUBLICATION is the first establishment of a zero-argument property's reusable value in its owning invocation (F01, owner decision 2026-11-21): a planned loop round keeps a step property in its frame slot and reports that store (`LoopRunFrame.EstablishTempSlot`, `IPlannedLoopPublicationObserver`), so it counts like a cache store on every route and in Lean (`PlannedLoopPublicationTests`, hand-maintained `lean/CoreTests/PlannedLoopPublications.lean`; the generated temp family `PlannedLoopTempFamilyTests` / `lean/CoreTests/PlannedLoopTempFamily.lean` checks planned, fallback, exported and undemanded temps against constructed expectations, `docs/design/differential-observations.md` § Planned-loop temp family). The third generated corpus, `lean/CoreTests/SemanticGeneratedCases.lean` (SEM-2C, `SemanticGeneratedLeanArtifactTests`), covers every valid SEM-2B generated case (`SemanticCorpus.All()`, kinds `ValidSuccess`/`ValidRuntimeFailure`; invalid front-end cases are excluded by kind): for each case the test builds an IDENTITY-PRELUDE member, the base source with `trace(x) = x` and `wait(x) = x` prepended in place of the host operations Lean does not model, checks that its parse is clean and its C# result is the generator's constructed expectation, and encodes its real elaborated AST; the member is built only in that test (never a `SemanticCase.Members` entry). The case's `alpha-rename` and `declaration-reorder` members get the same prelude and guard, checked in C# against the SEM-2B runner's member relation (SemanticEqual to the base, `Normalized` errors), each guard pinning the base member's neutral text; the host-operation programs, host events, async and optimizer paths stay C# evidence. The encoder is FAIL-LOUD: extend it deliberately (with reviewed goldens in `LeanAstEncoderTests`) rather than approximating, and expected strings in encoder tests are manually reviewed constants. See § 5.
 - GENERATED from it (do not edit by hand): `lean/LanguageSpecCases.lean` and the `=== BEGIN GENERATED: katlang-spec-examples ===` block in both generator files; regenerate all three together ([testing-and-validation.md](../testing-and-validation.md) § Regenerating generated artifacts). `lean/SemanticExplorerCases.lean` is the second GENERATED Lean/C# differential corpus (from `SemanticExplorerCorpus`; see `docs/design/sequence-boundary-audit-2026-07.md`): a failing `#guard` there is a Lean/C# divergence — or a Lean-internal plain/counted mismatch — on that case; after an intentional semantics change regenerate it the same way.
 - Tutorial examples marked `<!-- spec:case-id -->` are verified against the corpus (source and expected output) by `TutorialSpecTests`; when changing a linked example, update the canonical case and the tutorial together.
 - EVERY tutorial fence followed by a `**Result(s):**` claim is executable documentation: `TutorialResultSweepTests` runs it through `KatLangEngine.Run` and display-matches the claim — no marker needed, so an ordinary new example enters the sweep automatically. A genuinely non-standalone example (e.g. one needing a network downloader) carries `<!-- spec:skip nonblank reason -->` before the fence; the skip inventory is exact-pinned, and result-bearing coverage is monotonic (pinned minimum baseline — removing an existing claim requires a reviewed ratchet reduction, while additions need no pin edit). The shared grammar lives in `TutorialCorpus` and fails loudly on malformed/detached claims, so a result claim can never silently drop out of verification. Every tutorial example is a complete program followed by its `[Open in Playground](https://katlang.org/#1/…)` line, the code link of its exact source (`TutorialPlaygroundLinkTests`); after changing an example, regenerate the links (`KATLANG_REGENERATE_TUTORIAL_PLAYGROUND_LINKS`, [testing-and-validation.md](../testing-and-validation.md) § Regenerating generated artifacts).
-- Output-only verification is not a semantic pin (SYN-12): a tutorial example can print the documented number for the wrong reason (an indented `Inner = v + 1` beneath `Outer(v) = Inner` is a ROOT property whose `v` is forwarded through the closed list, not a nested property reading the parameter of its owner). The high-risk explanations — lexical ownership, visibility/export, property-first dot-call resolution, clause-family arity, sequence-value pattern kinds, the call/value boundary, Grace order — are therefore ALSO pinned by `tests/KatLang.Tests/LanguageSpec/TutorialSemanticContractTests.cs` through the elaborated AST (`Property.Exposure`, `Params`), the semantic model (`FindResolutionAt` declaration spans), and structured `DiagnosticCode`/`KatLangErrorCode` values; extend it, and the corpus, when such an explanation changes.
+- Output-only verification is not a semantic pin (SYN-12): a tutorial example can print the documented number for the wrong reason (an indented `Inner = v + 1` beneath `Outer(v) = Inner` is a ROOT property whose `v` is forwarded through the closed list, not a nested property reading the parameter of its owner). The high-risk explanations — lexical ownership, visibility/export, property-first dot-call resolution, clause-family arity, sequence-value pattern kinds, the call/value boundary, Grace order — are therefore ALSO pinned by `dotnet/tests/KatLang.Tests/LanguageSpec/TutorialSemanticContractTests.cs` through the elaborated AST (`Property.Exposure`, `Params`), the semantic model (`FindResolutionAt` declaration spans), and structured `DiagnosticCode`/`KatLangErrorCode` values; extend it, and the corpus, when such an explanation changes.
 - When language behavior intentionally changes, update the affected canonical cases in the same task as the Lean/C#/tutorial/generator changes.
 - Maintainer guide: the sections below (partitions, counts, how to add cases, worked example).
 
 ## 1. Where the canonical cases live
 
-`tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs` is the single
+`dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs` is the single
 authoritative source. Each `SpecCase` (schema:
-`tests/KatLang.Tests/LanguageSpec/SpecCase.cs`) carries a stable kebab-case
+`dotnet/tests/KatLang.Tests/LanguageSpec/SpecCase.cs`) carries a stable kebab-case
 `Id`, a `Category`, the KatLang `Source`, an expected `Outcome`
 (Evaluates / EvalError / ParseError), and **hand-written canonical
 expectations**: exact engine display, emitted count, raw value shape in the
@@ -102,7 +102,7 @@ Every case is in exactly one of three partitions (identity enforced by
   `LeanExclusionReason` naming the reviewed model divergence (the
   Decimal128-vs-Lean-Int numeric family or the unmodeled Math-native
   surface; the numeric boundary itself is defined by the "Core numeric
-  semantics" row in `src/KatLang/SEMANTIC-ALIGNMENT.md`). An integer-looking
+  semantics" row in `dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md`). An integer-looking
   source is not automatically Lean-comparable: Decimal128 precision/range can
   diverge from unbounded `Int` before the result is observed.
 
@@ -195,7 +195,7 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   case/program/byte caps sized from the measured Lean build cost, and the
   injective `case_…` name mangling (with `_alpha`/`_reorder` member
   suffixes) are pinned by the test class. Regenerate with
-  `$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter SemanticGeneratedLeanArtifact`
+  `$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"; dotnet test ./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj --filter SemanticGeneratedLeanArtifact`
 - `lean/CoreTests/FrontEndDecisionCases.lean` (imported by the canonical
   `CoreTests` target) — the FRONT-END DECISION differential. The corpora
   above evaluate a tree C# already elaborated; this artifact guards the
@@ -229,7 +229,7 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   to equal the definition the corpus module holds, and every program without a
   guard is excluded by a counted rule. Regenerate AFTER any of the six corpus
   artifacts with
-  `$env:KATLANG_REGENERATE_MAY_CAPTURE_CALLS = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter MayCaptureCallsLeanArtifact`
+  `$env:KATLANG_REGENERATE_MAY_CAPTURE_CALLS = "1"; dotnet test ./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj --filter MayCaptureCallsLeanArtifact`
 - `lean/CoreTests/ModuleDifferential.lean` (MODULE-DIFF-1, imported by the
   canonical `CoreTests` target) evaluates seven elaborated programs from the
   module identity, hygiene, and open-provider fixtures. Three C#-only cases cover
@@ -237,14 +237,14 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   `ModuleDifferentialTests` compares the C# and Lean observations against the
   corpus's hand-written expectations. The channel inventory is in
   `docs/design/differential-observations.md` § Module programs. Regenerate with
-  `$env:KATLANG_REGENERATE_MODULE_DIFFERENTIAL = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter ModuleDifferential`
+  `$env:KATLANG_REGENERATE_MODULE_DIFFERENTIAL = "1"; dotnet test ./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj --filter ModuleDifferential`
 - `lean/CoreTests/PlannedLoopTempFamily.lean` (the KL-06 F01 temp family, imported
   by the canonical `CoreTests` target) evaluates the 36 generated planned and
   fallback `repeat`/`while` steps of `PlannedLoopTempFamily`, each guarded on its
   neutral observation, per-name publications, publication total and `tick()`
   count at the expectation the generator constructs. `PlannedLoopTempFamilyTests`
   checks the same expectations on the C# routes. Regenerate with
-  `$env:KATLANG_REGENERATE_PLANNED_LOOP_TEMP_FAMILY = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter PlannedLoopTempFamilyTests.GeneratedLeanModule`
+  `$env:KATLANG_REGENERATE_PLANNED_LOOP_TEMP_FAMILY = "1"; dotnet test ./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj --filter PlannedLoopTempFamilyTests.GeneratedLeanModule`
 
 The six evaluation artifacts above embed the same observation machinery (`neutral`,
 `errCategory`, `runCountedM`, `obs`, and Q-67's `sharedError`/`errorObs`),
@@ -281,9 +281,9 @@ content did not change): it is a regeneration, not a verification, and its
 result must never read as green. `scripts/validate-all.ps1` removes every
 `KATLANG_REGENERATE_*` variable from its process before it builds, so it never
 regenerates anything. The shared contract and the flag registry are
-`tests/KatLang.Tests/Infrastructure/ArtifactRegeneration.cs`; the same
+`dotnet/tests/KatLang.Tests/Infrastructure/ArtifactRegeneration.cs`; the same
 discipline governs the public API baseline
-(`tests/KatLang.Formatting.PublicApi.Tests/PublicApiBaseline.txt`,
+(`dotnet/tests/KatLang.Formatting.PublicApi.Tests/PublicApiBaseline.txt`,
 `KATLANG_REGENERATE_PUBLIC_API`).
 
 After any regeneration: review the diff, clear the flag, rerun the normal
@@ -460,7 +460,7 @@ nondeterministic output (e.g. `Math.Random`) must not carry an exact
 sweep and the canonical corpora run unseeded, the corpora carry no per-case
 `RunOptions`, and no random case belongs in `LanguageSpecCorpus` or the
 semantic-explorer corpus (Lean models no random execution). Seeded random
-behavior is pinned by the C#-only `tests/KatLang.Tests/Randomness/` suites
+behavior is pinned by the C#-only `dotnet/tests/KatLang.Tests/Randomness/` suites
 against a test-side oracle instead (`docs/design/seeded-randomness-2026-09.md`).
 
 Blank lines inside a fenced Results block remain presentation-only grouping

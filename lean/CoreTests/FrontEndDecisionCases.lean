@@ -5,17 +5,17 @@ GENERATED FILE - DO NOT EDIT BY HAND.
 
 Front-end decision differential: the Lean front-end specification functions of `lean/KatLang.lean`
 against the decisions the C# front end made on every program of four corpora: the semantic explorer
-(tests/KatLang.Tests/SemanticExplorerCorpus.cs), the language specification
-(tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs), the SEM-2B generated corpus
+(dotnet/tests/KatLang.Tests/SemanticExplorerCorpus.cs), the language specification
+(dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs), the SEM-2B generated corpus
 (fuzz/KatLang.ParserFuzz/Semantic/SemanticCorpus.cs, every base, alpha-rename and declaration-reorder source with
 `trace(x) = x` and `wait(x) = x` prepended, as lean/CoreTests/SemanticGeneratedCases.lean encodes it) and
 the tutorial's source fences (tutorial.md, by ordinal); and on the front-end witnesses
-(tests/KatLang.Tests/FrontEndWitnesses.cs), each a base program with its alpha-rename and its
+(dotnet/tests/KatLang.Tests/FrontEndWitnesses.cs), each a base program with its alpha-rename and its
 declaration-reorder, the two SEM-2B transformations. Lean has no front end: the other generated
 corpora evaluate a tree C# already elaborated, so they take these decisions as INPUT. Here each
 decision is an expectation. FD-F1 and FD-F2 below record the by-shape supply at each named occurrence.
 
-What is compared (generator: tests/KatLang.Tests/FrontEndDecisionCorpus.cs):
+What is compared (generator: dotnet/tests/KatLang.Tests/FrontEndDecisionCorpus.cs):
 - `selectOwnedDeclaration` — C#'s owned-binding fact for the name in its scope (parameter or
   property, with the deciding level's position in the chain; the fact parameter detection's rewrite
   and `ElaboratedScopeLookup.SelectOwnedDeclaration` read);

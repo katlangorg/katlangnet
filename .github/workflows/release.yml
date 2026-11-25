@@ -212,7 +212,7 @@ jobs:
         env:
           RID: ${{ matrix.rid }}
         run: |
-          dotnet publish ./src/KatLang.CLI/KatLang.CLI.csproj `
+          dotnet publish ./dotnet/src/KatLang.CLI/KatLang.CLI.csproj `
               --configuration Release `
               --runtime $env:RID `
               --self-contained true `
@@ -317,7 +317,7 @@ jobs:
                   -DestinationName $name
           }
 
-          $assetsPath = Join-Path $env:GITHUB_WORKSPACE 'src/KatLang.CLI/obj/project.assets.json'
+          $assetsPath = Join-Path $env:GITHUB_WORKSPACE 'dotnet/src/KatLang.CLI/obj/project.assets.json'
           if (-not (Test-Path -LiteralPath $assetsPath -PathType Leaf)) {
               throw "Publish did not produce the dependency inventory: $assetsPath"
           }

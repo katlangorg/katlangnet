@@ -226,7 +226,7 @@ beyond the available headroom still returns a structured resource error.
 
 ## Divergence pinning
 
-`tests/KatLang.Tests/AsyncEvaluation/`:
+`dotnet/tests/KatLang.Tests/AsyncEvaluation/`:
 
 - `AsyncTwinDifferentialTests` — the language-spec and semantic-explorer corpora
   through the twin path with OUTCOME equality against the sync default strategies and
@@ -507,7 +507,7 @@ operations fall back to the generic loop — pinned by test).
   runtime-native wrapper, leaving general dotted algorithm identity unchanged;
   a same-named ambient value is never forwarded to host code (pinned by
   `DirectFlatCallbackReference_BindsCallbackArguments_LikeMathMembers`).
-- Editor semantic models (`src/KatLang/Semantics/`) keep their static prelude: hover/
+- Editor semantic models (`dotnet/src/KatLang/Semantics/`) keep their static prelude: hover/
   resolution does not surface host operations yet. Engine and evaluator behavior is
   complete; semantic-model awareness is deferred until an editor host needs it.
 - `RunFlat`/`RunFlatAsync` have no host-operation overloads; use the engine
@@ -531,7 +531,7 @@ operations fall back to the generic loop — pinned by test).
 
 ## Divergence pinning
 
-`tests/KatLang.Tests/Hosting/`:
+`dotnet/tests/KatLang.Tests/Hosting/`:
 
 - `HostOperationApiTests` — construction validation, synchronous engine/evaluator
   behavior, argument order and full-value passing, shadowing, `Data` vs `Data()`

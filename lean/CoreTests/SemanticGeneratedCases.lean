@@ -37,7 +37,7 @@ guards below):
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"
-  dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter SemanticGeneratedLeanArtifact
+  dotnet test ./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj --filter SemanticGeneratedLeanArtifact
 -/
 
 namespace SemanticGeneratedCases

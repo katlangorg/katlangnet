@@ -40,7 +40,7 @@
 --   pinned as C#-only canonical cases in the executable language spec
 --   (the LanguageSpecCorpus model-divergence family) and stay excluded from
 --   the Lean-guarded corpora. The routing rule for numeric changes is the
---   "Core numeric semantics" row in src/KatLang/SEMANTIC-ALIGNMENT.md.
+--   "Core numeric semantics" row in dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md.
 --
 -- Open declarations:
 --   `open` is a DECLARATION keyword, not a property assignment.

@@ -622,7 +622,7 @@ try {
             # One TRX per test project: the logger reserves each prefix_framework_timestamp file
             # with CreateNew and moves to the next free name, so projects never overwrite each other.
             $testResults = Join-Path $diagnosticsDirectory "test-results"
-            $testProjects = (Select-String -LiteralPath "./KatLang.slnx" -Pattern 'Path="tests/' -AllMatches).Matches.Count
+            $testProjects = (Select-String -LiteralPath "./KatLang.slnx" -Pattern 'Path="dotnet/tests/' -AllMatches).Matches.Count
             $tierFilter = switch ($Tier) {
                 "Fast" { "Tier!=Slow" }
                 "Slow" { "Tier=Slow" }

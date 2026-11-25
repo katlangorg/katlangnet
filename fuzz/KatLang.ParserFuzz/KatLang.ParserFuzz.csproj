@@ -29,7 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\KatLang\KatLang.csproj" />
+    <ProjectReference Include="..\..\dotnet\src\KatLang\KatLang.csproj" />
   </ItemGroup>
 
   <!--
@@ -38,8 +38,8 @@
     so semantic-replay/semantic-worker reconstruct a case with exactly the generator the tests run.
   -->
   <ItemGroup>
-    <Compile Include="..\..\tests\KatLang.Tests\StructuralFuzz\StructuralModel.cs" Link="StructuralFuzz\StructuralModel.cs" />
-    <Compile Include="..\..\tests\KatLang.Tests\StructuralFuzz\StructuralFuzzer.cs" Link="StructuralFuzz\StructuralFuzzer.cs" />
+    <Compile Include="..\..\dotnet\tests\KatLang.Tests\StructuralFuzz\StructuralModel.cs" Link="StructuralFuzz\StructuralModel.cs" />
+    <Compile Include="..\..\dotnet\tests\KatLang.Tests\StructuralFuzz\StructuralFuzzer.cs" Link="StructuralFuzz\StructuralFuzzer.cs" />
   </ItemGroup>
 
   <!-- Seed corpus files are data, never compiled. -->

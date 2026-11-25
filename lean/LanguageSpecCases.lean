@@ -4,7 +4,7 @@ import KatLang
 GENERATED FILE - DO NOT EDIT BY HAND.
 
 Canonical executable language specification, Lean half
-(source corpus: tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs).
+(source corpus: dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs).
 
 Each `#guard` pins the CANONICAL expectation of one specification case —
 not an observed value. The C# runner (LanguageSpecRunnerTests) asserts the

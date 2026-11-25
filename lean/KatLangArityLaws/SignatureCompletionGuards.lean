@@ -19,7 +19,7 @@ namespace KatLang.SignatureCompletion.Guards
 
 /-! ## The agreement guard -/
 
-def committedOutcomes : String := include_str "../../tests/KatLang.Tests/SignatureCompletion/lean-model-outcomes.txt"
+def committedOutcomes : String := include_str "../../dotnet/tests/KatLang.Tests/SignatureCompletion/lean-model-outcomes.txt"
 
 /- `bridge_outcomes_are_the_models`: the committed outcomes ARE this kernel's, line for line. -/
 #guard renderCorpus bridgeCases == committedOutcomes

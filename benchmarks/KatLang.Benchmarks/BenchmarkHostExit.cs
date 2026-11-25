@@ -21,7 +21,7 @@ internal readonly record struct BenchmarkSummaryOutcome(
 /// BenchmarkDotNet returns summaries and never fails the process itself: a build failure, a benchmark that
 /// throws or a rejected configuration ends as <c>NA</c> rows or as no summary at all. A run cited as
 /// performance evidence must not exit 0 in that state, so the host decides the exit code here.
-/// This file is shared as source with <c>tests/KatLang.Tests</c> (<c>BenchmarkHostExitTests</c>) and must stay
+/// This file is shared as source with <c>dotnet/tests/KatLang.Tests</c> (<c>BenchmarkHostExitTests</c>) and must stay
 /// free of BenchmarkDotNet types.
 /// </remarks>
 internal readonly record struct BenchmarkHostExit(int ExitCode, string? Message)

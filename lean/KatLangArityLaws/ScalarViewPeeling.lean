@@ -11,7 +11,7 @@ Lean's `Result.asInt?` and `Result.asBool?` inspect the normal form of a sequenc
 both views immediately. The two general equivalences below cover every Lean `Result`.
 
 DEFINITIONS. `scalarViewTerminalForLaw`, `numberOfForLaw` and `booleanOfForLaw` are LOCAL models
-of `ScalarViewTerminal`, `NumberOf` and `BooleanOf`, read from `src/KatLang/Result.cs`. C# has one
+of `ScalarViewTerminal`, `NumberOf` and `BooleanOf`, read from `dotnet/src/KatLang/Result.cs`. C# has one
 `CallReference` class for both of Lean's opaque constructors `callRef` and `argView`; both
 decisions give `null` / `none` for it. `singletonWrapForLaw k r` is `r` under `k` redundant
 singleton sequence boundaries, and `singletonDepthForLaw r` counts the boundaries the terminal

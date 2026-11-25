@@ -163,7 +163,7 @@ def ifSelects (cond : KatLang.Expr) (expected : Int) : Bool :=
 --------------------------------------------------------------------------------
 -- List values (`[]` syntax)
 --------------------------------------------------------------------------------
--- C# parity: tests/KatLang.Tests/ListValueTests.cs. Binder laws:
+-- C# parity: dotnet/tests/KatLang.Tests/ListValueTests.cs. Binder laws:
 -- KatLangArityLaws.lean list bridge laws (exact list values are
 -- intentionally not modeled in the CoreArityAlgebra paper artifact).
 

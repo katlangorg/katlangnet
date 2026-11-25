@@ -23,4 +23,4 @@ fuzz/katlang.dict     text eol=lf
 
 # This test source embeds literal NUL bytes (the UTF-16 lexer contract), which
 # makes git's auto-detection call it binary; keep it under the LF policy anyway.
-tests/KatLang.Tests/Utf16LexerContractTests.cs text eol=lf
+dotnet/tests/KatLang.Tests/Utf16LexerContractTests.cs text eol=lf

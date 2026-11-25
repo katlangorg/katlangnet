@@ -61,10 +61,10 @@ second step's `reprStr`-built key with the first's, and `Std.Format.pretty` is o
 
 GENERATED text, never edited by hand. The generator — this header, the instance templates and the
 instance tables — is
-`tests/KatLang.Tests/LeanProofModules/MemberRereadInstancesLeanArtifactTests.cs`. To change an
+`dotnet/tests/KatLang.Tests/LeanProofModules/MemberRereadInstancesLeanArtifactTests.cs`. To change an
 instance or a statement, edit it there and regenerate from the repo root with
   $env:KATLANG_REGENERATE_MEMBER_REREAD_INSTANCES = "1"
-  dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter MemberRereadInstancesLeanArtifact
+  dotnet test ./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj --filter MemberRereadInstancesLeanArtifact
 (that run writes this file and then fails by design), then run `lake build KatLangArityLaws`: the
 generator writes the text, and only Lean checks the proofs.
 -/

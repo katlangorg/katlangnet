@@ -15,7 +15,7 @@ C# retains invocation plans only in a run whose admitted program may capture cal
 (J7, `AstStructuralPreflight.MayCaptureCalls`, decided by the admission walk
 `CheckAdmittedProgram`). `Expr.mayCaptureCalls` (`MayCaptureCalls.lean`) is the Lean form of
 that gate. Each `#guard` below pins C#'s verdict on one program of a differential corpus
-(tests/KatLang.Tests/MayCaptureCallsLeanArtifactTests.cs): a failing guard is a program on
+(dotnet/tests/KatLang.Tests/MayCaptureCallsLeanArtifactTests.cs): a failing guard is a program on
 which the two gates disagree.
 
 The Lean program of a guard is the definition the corpus's own generated module holds for
@@ -40,7 +40,7 @@ deferred region); a hand-authored Lean program.
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_MAY_CAPTURE_CALLS = "1"
-  dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter MayCaptureCallsLeanArtifact
+  dotnet test ./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj --filter MayCaptureCallsLeanArtifact
 -/
 
 namespace KatLang.MayCaptureCallsCorpus

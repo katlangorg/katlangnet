@@ -71,7 +71,7 @@ def test33 : Bool :=
 -- the remaining slots BEFORE evaluating the current spread slot, so two failing
 -- spread arguments reported the RIGHTMOST failure while C# reported the leftmost.
 -- C# parity:
--- tests/KatLang.Tests/SpreadArgumentEvaluationOrderTests.cs and the generated
+-- dotnet/tests/KatLang.Tests/SpreadArgumentEvaluationOrderTests.cs and the generated
 -- LanguageSpecCases guards `spread-arguments-fail-left-to-right` /
 -- `spread-arguments-keep-written-order`.
 --------------------------------------------------------------------------------

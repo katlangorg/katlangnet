@@ -36,10 +36,10 @@ whole-run invariant).
 
 GENERATED text, never edited by hand. The generator — this header, the instance template and the
 instance table — is
-`tests/KatLang.Tests/LeanProofModules/PublishedCallableInstancesLeanArtifactTests.cs`. To change an
+`dotnet/tests/KatLang.Tests/LeanProofModules/PublishedCallableInstancesLeanArtifactTests.cs`. To change an
 instance or a statement, edit it there and regenerate from the repo root with
   $env:KATLANG_REGENERATE_PUBLISHED_CALLABLE_INSTANCES = "1"
-  dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter PublishedCallableInstancesLeanArtifact
+  dotnet test ./dotnet/tests/KatLang.Tests/KatLang.Tests.csproj --filter PublishedCallableInstancesLeanArtifact
 (that run writes this file and then fails by design), then run `lake build KatLangArityLaws`: the
 generator writes the text, and only Lean checks the proofs.
 -/

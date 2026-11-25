@@ -4,7 +4,7 @@ import KatLang
 GENERATED FILE - DO NOT EDIT BY HAND.
 
 Differential corpus for the small-state semantic explorer
-(tests/KatLang.Tests/SemanticExplorerCorpus.cs). Each case is the Lean AST
+(dotnet/tests/KatLang.Tests/SemanticExplorerCorpus.cs). Each case is the Lean AST
 construction equivalent to a KatLang source program, and each `#guard` pins
 the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
@@ -17475,7 +17475,7 @@ Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
 the surface parser never produces it and its value evaluation drops `()`
 leaves, unlike written parentheses. These cases pin that internal behavior
 against the C# evaluator's observations of the same hand-constructed ASTs
-(see tests/KatLang.Tests/SequenceConstructContainmentTests.cs and
+(see dotnet/tests/KatLang.Tests/SequenceConstructContainmentTests.cs and
 SemanticExplorerCorpus.InternalNodeCases).
 -/
 -- internal__sc_e_1: SequenceConstruct[(), 1] drops the () leaf and singleton-collapses

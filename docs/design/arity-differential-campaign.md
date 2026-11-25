@@ -5,11 +5,11 @@ KatLang implementation against an independent executable mirror of the
 list-aware Core Arity Algebra, across the meaningful combinations of value
 shape × receiver × binding form × spread multiplicity.
 
-Everything lives in `tests/KatLang.Tests/ArityDifferential/`:
+Everything lives in `dotnet/tests/KatLang.Tests/ArityDifferential/`:
 
 | File | Role |
 |---|---|
-| `AlgebraOracle.cs` | Test-only executable oracle: `OracleVal` (atom/seq/list) plus `items`, `normalize`, `capture`, `collect`, `structureItems?`, `openLoneStructure`, `bindPats`/`bindArgs`/`bindDeconstruct` (`bindArgs` is `bindPats` itself: values stay values), the repeated-spread composition, `valueCount`, and the root-row rule. Each member's doc comment names its Lean anchor. References nothing from `src/KatLang`. |
+| `AlgebraOracle.cs` | Test-only executable oracle: `OracleVal` (atom/seq/list) plus `items`, `normalize`, `capture`, `collect`, `structureItems?`, `openLoneStructure`, `bindPats`/`bindArgs`/`bindDeconstruct` (`bindArgs` is `bindPats` itself: values stay values), the repeated-spread composition, `valueCount`, and the root-row rule. Each member's doc comment names its Lean anchor. References nothing from `dotnet/src/KatLang`. |
 | `ArityDifferentialModel.cs` | The dimensions (`ReceiverKind`, `BindingForm`, `SpreadMultiplicity`), the `ReceiverLaw` taxonomy with Lean references, and the case records. |
 | `ArityDifferentialMatrix.cs` | The deterministic generator: value-shape catalog, receiver templates, relational families, diagnostic matrix, and the exclusion ledger that accounts for every theoretical cell. |
 | `ArityDifferentialTests.cs` | The xunit runner: per-case theories, relational checks, diagnostics, receiver-once budget probes, oracle self-checks, determinism check, coverage accounting, and the `ArityDifferentialReport.json` side-car. |

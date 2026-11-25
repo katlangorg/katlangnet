@@ -20,14 +20,14 @@ validator, and the reference for the invariants that validator enforces.
 > Canonical arity capture and output-slot combination remain sequence-centered.
 > Variadic/collecting binding now uses exact immutable list collection instead. The semantic descriptions below have been updated;
 > the corpus/accounting history remains the July 2026 audit record. See
-> AGENTS.md and `src/KatLang/CALLABLES.md` for the operational rules.
+> AGENTS.md and `dotnet/src/KatLang/CALLABLES.md` for the operational rules.
 
 The validator itself lives in:
 
-- `tests/KatLang.Tests/SemanticExplorerCorpus.cs` — bounded value space x receiver templates (shared corpus),
-- `tests/KatLang.Tests/SemanticExplorerHarness.cs` — neutral observation format (raw structure, emitted count, error category),
-- `tests/KatLang.Tests/SemanticExplorerTests.cs` — C#-side structural invariants + machine-readable report,
-- `tests/KatLang.Tests/SemanticExplorerLeanArtifactTests.cs` — generator/pin for the differential artifact,
+- `dotnet/tests/KatLang.Tests/SemanticExplorerCorpus.cs` — bounded value space x receiver templates (shared corpus),
+- `dotnet/tests/KatLang.Tests/SemanticExplorerHarness.cs` — neutral observation format (raw structure, emitted count, error category),
+- `dotnet/tests/KatLang.Tests/SemanticExplorerTests.cs` — C#-side structural invariants + machine-readable report,
+- `dotnet/tests/KatLang.Tests/SemanticExplorerLeanArtifactTests.cs` — generator/pin for the differential artifact,
 - `lean/SemanticExplorerCases.lean` — generated Lean AST corpus with `#guard`s pinned to C#-observed results (`lake build SemanticExplorerCases` fails on any Lean/C# divergence).
 
 ## 1. The current boundary model (as implemented)
@@ -669,7 +669,7 @@ same change.
 
 - C# invariants + JSON report: `dotnet test .\KatLang.slnx --filter SemanticExplorer`
   (also runs in the full suite; report at
-  `tests/KatLang.Tests/bin/<cfg>/net10.0/SemanticExplorerReport.json`).
+  `dotnet/tests/KatLang.Tests/bin/<cfg>/net10.0/SemanticExplorerReport.json`).
 - Lean differential: `lake build SemanticExplorerCases` (wired into
   `scripts/validate-all.ps1`).
 - Regenerate after intentional semantics changes:

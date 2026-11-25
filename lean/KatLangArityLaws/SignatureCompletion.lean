@@ -7,9 +7,9 @@ open KatLang
 
 THIS IS A FRONT-END REFERENCE MODEL, NOT THE LEAN EVALUATOR AND NOT THE C# COMPILER. `KatLang.lean` models no
 signature construction (FORMAL-02: Lean sees elaborated programs). This module is a small total model of the finite
-equation system the C# front end hands to `SignatureSelector` (`src/KatLang/SignatureSelection.cs`): a theorem here is
+equation system the C# front end hands to `SignatureSelector` (`dotnet/src/KatLang/SignatureSelection.cs`): a theorem here is
 a theorem about THIS model. Its relation to C# is finite executable agreement on the bridge corpus
-(`SignatureCompletionGuards.lean`, `tests/KatLang.Tests/SignatureCompletion/`), never a proof about the C# code.
+(`SignatureCompletionGuards.lean`, `dotnet/tests/KatLang.Tests/SignatureCompletion/`), never a proof about the C# code.
 
 What it reuses from the authoritative model, by name and not by copy: `ParameterPattern`, the zero-supply rule
 `ParameterPattern.minimumSuppliedSlots` and the X-02 validator `ParameterPattern.signatureViolation?`.
