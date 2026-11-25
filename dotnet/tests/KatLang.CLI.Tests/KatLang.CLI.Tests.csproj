@@ -58,7 +58,7 @@
   -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\KatLang.CLI\KatLang.CLI.csproj" />
-    <ProjectReference Include="..\..\..\tools\KatLang.TestProbeHost\KatLang.TestProbeHost.csproj" />
+    <ProjectReference Include="..\..\tools\KatLang.TestProbeHost\KatLang.TestProbeHost.csproj" />
   </ItemGroup>
 
 </Project>
