@@ -191,6 +191,59 @@ provider whose structure depends on whether one of the level's opened names is a
 the names whose deferred presence runs before it settles (K = N = 128: 33,924 witness entries, before 34,441).
 `OpenLevelPresenceReuseTests`, `StaticStructureWitnessTests`.
 
+**Waiting open levels (2026-11-25, baseline `e4398204`).** Three things keep a level's index Unknown once ordinary
+work is quiescent. A provider can depend on one of the level's own names (SELF-DEPENDENT: `R = C`, where C's input
+`q` is the level's input unless an open provides it). A target can wait on an open receiver-expansion verdict
+(VERDICT: a target `T = C1` over a ring of member-path bodies, `Ci = Ai.M.abs`). A target can wait on another level's
+emptiness certificate (CERTIFICATE: `G.Sub = W`, where `W` comes from G's own open, which an open target's reference
+never resolves through, `UnresolvedOpenTarget`). At such a level every name still built all 2K − 1 witness ranges.
+With one target unsettled, each tree's other ranges had already settled, and each present name's preserved-presence
+certificate solved a certificate node for every earlier target. Three changes remove that repeated work:
+- A witness range of two or more targets first reads Q2's provider range over the same targets (`ProviderRange`,
+  shared by every name). In a settled range with no occurrence of the public name the answer is absent. With one
+  occurrence its ordinary leaf certificate can establish pending presence. At a second occurrence the query reads
+  its two child witnesses. This bounds subscriptions even when many certificates for the same name settle one at
+  a time. At 32/64/128 repeats of one provider in a waiting level, subscribing to every match visited
+  1,809/4,978/15,411 tree nodes. Splitting visits 1,226/2,488/5,028, with at most four evaluations of any witness
+  on those inputs. With one unsettled target and at most one occurrence in each settled sibling, a tree uses at most
+  2⌈log2(K + 1)⌉ + 1 ranges.
+- `PreservedOpenPresence` reads a settled earlier target directly. The certificate graph for an undecided earlier
+  target also retains an empty public namespace of the identity being certified. Q2 keeps the first written view
+  of a provider, so an empty first view can hide every name a later view of the same identity offers.
+- A deferred presence is a LATE decision observer (`IsLateDecisionObserver`, a third observer queue in
+  `StaticQueryEngine`). It runs after every other pending decision observer and before the namespace certificates,
+  so a verdict that settles the index runs first.
+
+The shortcuts consume Q2's existing facts and Q4's public members. An earlier empty host view formerly allowed a
+premature presence that conflicted with the closed index. Both certificate paths now respect that first view.
+`OpenWitnessSettlementTests` compares the facts with the generic paths through two test seams (an engine-order
+test is in `ReceiverExpansionReturnTests`). Older and newer builds agree on 67,050 programs (diagnostics and editor
+digests): the test literals, 40,000 generated open-heavy programs and 10,000 generated waiting levels. Measured on
+detection of one program (Release harness, deterministic counters):
+- Self-dependent level, K = N = 128: 33,924 → 2,244 witness ranges, 64,168 → 16,530 evaluations, 39,784 → 7,852
+  entries, 115,760 → 48,468 certificate work, 39.2 → 9.7 MB.
+- Verdict level, K = 64, N = 32: 4,128 → 0 witness ranges, 10,335 → 3,357 evaluations.
+- Certificate level, K = N = 128: 32,896 → 2,176 witness ranges, 58,574 → 12,372 evaluations.
+- At 128 settled providers and 128 opened names, detection creates 3,457 entries and visits no witness nodes.
+  With 64 libraries of 64 public members and no queried opened name it creates 8,324 entries and visits no witness nodes.
+
+The self-dependent series counts actual Q2 tree nodes visited by the settled-range scans, including revisits.
+Allocation is measured on the detection thread after syntax parsing, with observations enabled.
+
+| Providers × names | Baseline witness keys | Final witness keys | Final node visits | Detection MB, baseline → final |
+| --- | ---: | ---: | ---: | ---: |
+| 8 × 8 | 204 | 108 | 593 | 1.00 → 0.94 |
+| 32 × 32 | 2,340 | 468 | 7,545 | 4.02 → 2.86 |
+| 128 × 32 | 9,252 | 612 | 32,079 | 12.49 → 7.03 |
+| 128 × 128 | 33,924 | 2,244 | 112,153 | 39.19 → 9.73 |
+
+Limits that remain:
+- A certificate-waiting level still reads witnesses, because a closure observer runs after every decision observer.
+  Moving the presences below the namespace certificates would let those over-approximate the names' undecided
+  bindings, so that is a separate settlement-policy decision.
+- A tree still splits towards each unsettled target, so a level whose targets all wait keeps 2K − 1 ranges per name.
+- A preserved-presence certificate still checks every earlier target per present name (O(K) cheap reads).
+
 **Owner-by-name audit (2026-11-22, investigation baseline `8947d21e`).** Q1 carries a query per
 lexical level. Q6 tests a candidate's outer ownership through `InferenceBinding`. The detector and
 lookup adapters use `OwnedBinding` for parameter/property selection. Open heads use

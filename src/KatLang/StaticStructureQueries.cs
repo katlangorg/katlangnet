@@ -286,6 +286,13 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
     public bool IsDecisionObserver(StaticQueryKey key) => key.Projection is StaticQueryProjection.ReceiverExpansionVerdict
         or StaticQueryProjection.OpenReceiverExpansionVerdict or StaticQueryProjection.DeferredOpenPresence;
 
+    // A deferred open presence yields to the pending verdicts: a verdict can settle an open target, and so the level's
+    // closed index the presence answers from, while a presence decided first built its witnesses over that still
+    // unsettled target (a target `T = C1` over a ring of member-path bodies, `Ci = Ai.M.abs`, made every name of the
+    // level build its 2K − 1 ranges). It still runs before the certificates.
+    public bool IsLateDecisionObserver(StaticQueryKey key)
+        => key.Projection == StaticQueryProjection.DeferredOpenPresence && LateDeferredPresenceForTesting;
+
     public StaticFact Initial(StaticQueryKey key) => StaticFact.Unknown;
     public StaticFact PathCycleValue => StaticFact.Refused;
     public bool IsRefinement(StaticFact before, StaticFact after) => before.IsUnknown || ValueEquals(before, after)

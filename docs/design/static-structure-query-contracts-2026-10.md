@@ -149,7 +149,11 @@ The original seven-family key catalog is too coarse to name distinct equations t
 Q2 provider ranges use immutable trees and flatten/deduplicate once, avoiding repeated wide scans as shared reference
 tails settle. Q1's name-match ranges can decide known presence/ambiguity before the full list settles; a name reads
 them only while its level's closed member index is still Unknown once ordinary work is quiescent (`DeferredOpenPresence`,
-a decision observer), so a level whose list settles before that observer runs builds no per-name range. A wide-level
+a decision observer that yields to the other pending decision observers), so a level whose list settles before that
+observer runs builds no per-name range. A witness consults Q2's settled range in its own stratum. Zero or one matching
+position needs at most one preserved-presence certificate. A second occurrence uses the two child witnesses, keeping
+fan-in bounded even when many written opens name the same provider. The certificate considers an earlier view of the
+same provider capable of hiding a name even when that view has an empty public namespace. A wide-level
 adapter can also read a closed index from the unit's frozen facts. A unique hit uses Q4's first public declaration
 and the current unit's provider for the same key, preserving its written target and declaring scope. Unknown identity
 must not be treated as missing: it blocks target selection but can already rule out promotion. Pure member/input-syntax

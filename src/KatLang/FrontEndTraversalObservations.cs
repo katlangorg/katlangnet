@@ -109,6 +109,15 @@ internal sealed class FrontEndTraversalObservations
     /// </summary>
     public long StaticSettledOpenSelections { get; private set; }
     internal void RecordStaticSettledOpenSelection() => StaticSettledOpenSelections++;
+
+    /// <summary>
+    /// Presence-witness range evaluations answered directly from settled targets, and actual Q2 tree nodes visited
+    /// while checking for matching occurrences, including scans stopped at a second occurrence.
+    /// </summary>
+    public long StaticSettledWitnessRanges { get; private set; }
+    public long StaticSettledWitnessNodeVisits { get; private set; }
+    internal void RecordStaticSettledWitnessRange() => StaticSettledWitnessRanges++;
+    internal void RecordStaticSettledWitnessNodeVisit() => StaticSettledWitnessNodeVisits++;
     internal void RecordStaticQueryEvaluation(StaticQueryKey key)
     {
         StaticQueryEvaluationCount++;

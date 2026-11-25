@@ -24,8 +24,8 @@ internal sealed partial class StaticStructureQueries
     /// <summary>
     /// A closed conservative graph certificate for an observer, never a selected identity or OD-D verdict.
     /// Each local equation is positive set union. Its complete least closure conservatively retains every
-    /// member-bearing endpoint and blocking failure. Empty endpoints are omitted; runtime and static miss
-    /// agree for these observers. This is not a complete target-identity domain. Only after quiescence may
+    /// member-bearing endpoint and blocking failure. A presence certificate also retains an empty earlier view
+    /// of its own provider. This is not a complete target-identity domain. Only after quiescence may
     /// the observer prove absence/participation. Ordinary engine lower bounds prune alternatives conclusively;
     /// Unknown expands them. No speculative Follow, Boolean assignments or incomplete cycle-cut cache.
     /// </summary>
@@ -53,6 +53,7 @@ internal sealed partial class StaticStructureQueries
         private Node? _running;
         private int _liveEntries;
         private int _temporaryEntries;
+        private StaticScopeKey? _preservedProvider;
 
         private int Total(int extra = 0) => NamespaceCertificateTotal(_liveEntries, _temporaryEntries, extra);
         private void Work() => reader.ChargeAuxiliary(Total());
@@ -90,11 +91,16 @@ internal sealed partial class StaticStructureQueries
         private void Own(Outcomes result, StaticScopeKey scope, bool open)
         {
             Work();
-            // Empty own endpoints have the same observer result as an empty set. Do not copy every transparent
-            // prefix's empty namespace into every predecessor: a chain shares only its member-bearing terminals.
+            // Presence also observes a prior view of the same provider: an empty first namespace hides a
+            // later view's name. Other empty namespaces contribute no members to a certificate.
             var members = queries.ContextOf(scope).Members;
-            if (open ? members.HasPublicMembers : members.HasMembers) Add(result, scope);
+            if ((open ? members.HasPublicMembers : members.HasMembers) || (open && IsPreservedProvider(scope)))
+                Add(result, scope);
         }
+
+        private bool IsPreservedProvider(StaticScopeKey scope)
+            => _preservedProvider is { } identity && ReferenceEquals(identity.Declaration, scope.Declaration)
+                && ReferenceEquals(identity, queries.Keys.ProviderScope(scope, queries.Resources, queries.OperationToken));
 
         private static StaticQueryKey Namespace(StaticScopeKey scope, StaticCycleCheck stratum, bool open)
             => Project(StaticQueryKind.TargetWalk, scope, open ? StaticQueryProjection.OpenStructure : StaticQueryProjection.Default, stratum: stratum);
@@ -188,6 +194,8 @@ internal sealed partial class StaticStructureQueries
         /// A conclusive provider with this public name guarantees presence unless an earlier view of the SAME
         /// language provider can hide it with a namespace that lacks the name. This proves presence only, never
         /// the first view or a member binding. Unknown successors are explored by the same closed certificate.
+        /// A settled earlier target supplies its exact provider directly. An unsettled target's graph also retains
+        /// a view with an empty public namespace when it could be the provider whose presence is being certified.
         /// </summary>
         internal StaticFact PreservedOpenPresence(StaticScopeKey scope, int index, string name, StaticCycleCheck stratum)
         {
@@ -195,21 +203,35 @@ internal sealed partial class StaticStructureQueries
             var exact = reader.Read(Project(StaticQueryKind.OpenProviders, scope, StaticQueryProjection.OpenTarget, stratum: stratum, node: opens[index]));
             if (exact.Data is not StaticScopeKey[] { Length: 1 } current || queries.ContextOf(current[0]).Members.Public(name) is null)
                 return StaticFact.Unknown;
-            var identity = queries.Keys.ProviderScope(current[0], queries.Resources, queries.OperationToken);
+            _preservedProvider = queries.Keys.ProviderScope(current[0], queries.Resources, queries.OperationToken);
             for (var i = 0; i < index; i++)
             {
                 Work();
-                var alternatives = Solve(Project(StaticQueryKind.OpenProviders, scope, StaticQueryProjection.OpenTarget, stratum: stratum, node: opens[i]));
+                var target = Project(StaticQueryKind.OpenProviders, scope, StaticQueryProjection.OpenTarget, stratum: stratum, node: opens[i]);
+                var settled = queries.SettledOpenTargetReuseForTesting ? reader.Read(target) : StaticFact.Unknown;
+                if (!settled.IsUnknown)
+                {
+                    foreach (var provider in (StaticScopeKey[])settled.Data!)
+                    {
+                        Work();
+                        if (HidesName(provider, name)) return StaticFact.Unknown;
+                    }
+                    continue;
+                }
+                var alternatives = Solve(target);
                 if (alternatives.Unresolved) return StaticFact.Unknown;
                 foreach (var provider in alternatives.Scopes)
                 {
                     Work();
-                    if (ReferenceEquals(identity, queries.Keys.ProviderScope(provider, queries.Resources, queries.OperationToken))
-                        && queries.ContextOf(provider).Members.Public(name) is null) return StaticFact.Unknown;
+                    if (HidesName(provider, name)) return StaticFact.Unknown;
                 }
             }
             return StaticFact.Yes;
         }
+
+        // An earlier view of the provider identity whose public namespace lacks the name.
+        private bool HidesName(StaticScopeKey provider, string name)
+            => IsPreservedProvider(provider) && queries.ContextOf(provider).Members.Public(name) is null;
 
         internal StaticFact FallbackParticipation(StaticScopeKey scope, Expr.DotCall edge)
         {
@@ -297,6 +319,8 @@ internal sealed partial class StaticStructureQueries
             var open = referenceReceiver || key.Projection == StaticQueryProjection.OpenStructure;
             var fact = reader.Read(referenceReceiver ? Namespace(key.Scope, key.Stratum, open: true) : key);
             if (fact.Kind == StaticFactKind.Structure) { Own(result, fact.Scope!, open && !referenceReceiver); return result; }
+            // OpenProviders keeps the direct target itself for a refused open-structure walk.
+            if (fact.Kind == StaticFactKind.Refused && open && IsPreservedProvider(key.Scope)) Add(result, key.Scope);
             if (fact.Kind == StaticFactKind.Runtime) { result.Runtime = true; return result; }
             if (!fact.IsUnknown) return result;
             Own(result, key.Scope, open && !referenceReceiver); // eligibility failure, calculation and OD-D refusal all keep own structure

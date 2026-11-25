@@ -839,4 +839,38 @@ public sealed class ReceiverExpansionReturnTests
         Assert.Equal([3, 1, 2], order.Where(static key => key != 0));
         Assert.Equal(0, order[0]);
     }
+
+    // Key 0 reads the observers 4, 1, 5, 2, 3 in that order: 1 and 2 are closure observers, 3 and 5 decision
+    // observers, 4 a late decision observer (a deferred open presence).
+    private sealed class LateObserved(List<int> order) : IStaticQueryDefinition<int, int>
+    {
+        public StaticQueryStep<int> Compute(int key, StaticQueryReader<int, int> reader)
+        {
+            order.Add(key);
+            if (key == 0) foreach (var observer in new[] { 4, 1, 5, 2, 3 }) reader.Read(observer);
+            return StaticQueryStep.Complete(key == 0 ? 0 : 1);
+        }
+
+        public int Initial(int key) => 0;
+        public bool IsClosureObserver(int key) => key != 0;
+        public bool IsDecisionObserver(int key) => key is 3 or 4 or 5;
+        public bool IsLateDecisionObserver(int key) => key == 4;
+        public int PathCycleValue => -1;
+        public bool ValueEquals(int left, int right) => left == right;
+        public bool IsRefinement(int before, int after) => before == 0 || before == after;
+    }
+
+    /// <summary>
+    /// A late decision observer (a deferred open presence) runs after every other pending decision observer, FIFO, and
+    /// before the remaining closure observers: a verdict that can settle the presence's index runs first.
+    /// </summary>
+    [Fact]
+    public void ALateDecisionObserverRunsAfterTheOtherDecisionObservers_AndBeforeTheClosureObservers()
+    {
+        var order = new List<int>();
+        var engine = new StaticQueryEngine<int, int>(new LateObserved(order));
+        engine.Get(0);
+        Assert.Equal([5, 3, 4, 1, 2], order.Where(static key => key != 0));
+        Assert.Equal(0, order[0]);
+    }
 }

@@ -46,6 +46,13 @@ internal interface IStaticQueryDefinition<TKey, TValue>
     /// </summary>
     bool IsDecisionObserver(TKey key) => false;
 
+    /// <summary>
+    /// A decision observer that yields to the other decision observers: such observers run, FIFO, after every other
+    /// pending decision observer and before the remaining closure observers, so a decision another observer would make
+    /// for it is made first. Scheduling only, as above.
+    /// </summary>
+    bool IsLateDecisionObserver(TKey key) => false;
+
     TValue PathCycleValue { get; }
 
     bool ValueEquals(TValue left, TValue right);
@@ -166,6 +173,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
     private readonly HashSet<Entry>.AlternateLookup<TKey> _entryByKey;
     private readonly Queue<Entry> _pending = [];
     private readonly Queue<Entry> _decisionPending = [];
+    private readonly Queue<Entry> _lateDecisionPending = [];
     private readonly Queue<Entry> _observerPending = [];
     private readonly List<Entry> _newEntries = [];
     private readonly HashSet<Entry> _readsThisRun = [];
@@ -221,7 +229,8 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         {
             _cancellationToken.ThrowIfCancellationRequested();
             var entry = EntryOf(key);
-            while (_pending.TryDequeue(out var next) || _decisionPending.TryDequeue(out next) || _observerPending.TryDequeue(out next))
+            while (_pending.TryDequeue(out var next) || _decisionPending.TryDequeue(out next) || _lateDecisionPending.TryDequeue(out next)
+                || _observerPending.TryDequeue(out next))
             {
                 _cancellationToken.ThrowIfCancellationRequested();
                 Resources.Work(cancellationToken: _cancellationToken);
@@ -452,8 +461,9 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         if (entry.Queued)
             return;
         entry.Queued = true;
-        (!_definition.IsClosureObserver(entry.Key) ? _pending : _definition.IsDecisionObserver(entry.Key) ? _decisionPending : _observerPending).Enqueue(entry);
-        _maxPending = Math.Max(_maxPending, _pending.Count + _decisionPending.Count + _observerPending.Count);
+        (!_definition.IsClosureObserver(entry.Key) ? _pending : !_definition.IsDecisionObserver(entry.Key) ? _observerPending
+            : _definition.IsLateDecisionObserver(entry.Key) ? _lateDecisionPending : _decisionPending).Enqueue(entry);
+        _maxPending = Math.Max(_maxPending, _pending.Count + _decisionPending.Count + _lateDecisionPending.Count + _observerPending.Count);
     }
 
     private void Compute(Entry entry)

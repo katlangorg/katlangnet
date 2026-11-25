@@ -158,7 +158,12 @@ internal sealed partial class StaticStructureQueries
         return new(StaticFactKind.Providers, Data: result);
     }
 
-    /// <summary>Searches for stable public-name witnesses; it never selects an invocation/member identity.</summary>
+    /// <summary>
+    /// Searches for stable public-name witnesses; it never selects an invocation/member identity. A range of two or more
+    /// targets first reads Q2's provider range for those positions in the same stratum, shared by every name.
+    /// A settled range with at most one occurrence of the public name needs at most one certificate.
+    /// Ranges with multiple occurrences combine their halves to keep certificate subscriptions bounded.
+    /// </summary>
     private StaticFact OpenPresenceWitnesses(BodyContext context, StaticQueryKey key, StaticQueryReader<StaticQueryKey, StaticFact> reader)
     {
         if (key.Length == 0) return EmptyMatches;
@@ -175,10 +180,21 @@ internal sealed partial class StaticStructureQueries
             if (members.IsUnknown)
                 return OpenMemberIsAbsent(context, key, reader) ? EmptyMatches : members;
             if (((StaticMembers)members.Data!).Public(key.Name!) is null) return EmptyMatches;
-            var preserved = reader.Read(StaticQueryKey.Project(StaticQueryKind.OpenProviders, context.Key,
-                StaticQueryProjection.PreservedOpenPresence, key.Name, key.Stratum, offset: key.Offset));
-            return preserved.Kind != StaticFactKind.Yes ? StaticFact.Unknown
-                : new(StaticFactKind.OpenMatch, Data: new StaticOpenMatch(Keys.ProviderScope(scopes[0], Resources, _cancellationToken), true));
+            return CertifiedPresence(key, scopes[0], key.Offset, reader);
+        }
+        if (SettledOpenTargetReuseForTesting)
+        {
+            var settled = reader.Read(StaticQueryKey.Project(StaticQueryKind.OpenProviders, context.Key, StaticQueryProjection.ProviderRange,
+                stratum: key.Stratum, offset: key.Offset, length: key.Length));
+            if (!settled.IsUnknown)
+            {
+                (StaticScopeKey? Provider, int Offset) match = default;
+                if (!HasMultipleOpenOccurrences(key.Name!, (StaticProviderTree)settled.Data!, key.Offset, key.Length, ref match))
+                {
+                    Observations?.RecordStaticSettledWitnessRange();
+                    return match.Provider is { } providerScope ? CertifiedPresence(key, providerScope, match.Offset, reader) : EmptyMatches;
+                }
+            }
         }
         var half = key.Length / 2;
         var left = reader.Read(StaticQueryKey.Project(key.Kind, key.Scope, key.Projection, key.Name, key.Stratum, offset: key.Offset, length: half));
@@ -191,6 +207,60 @@ internal sealed partial class StaticStructureQueries
         var pending = a.Pending || b.Pending;
         return provider is null && pending ? StaticFact.Unknown
             : new(StaticFactKind.OpenMatch, Data: new StaticOpenMatch(provider, pending));
+    }
+
+    /// <summary>
+    /// A target that offers the name is a presence witness once its certificate holds. The closed index selects the binding.
+    /// </summary>
+    private StaticFact CertifiedPresence(StaticQueryKey key, StaticScopeKey provider, int offset,
+        StaticQueryReader<StaticQueryKey, StaticFact> reader)
+    {
+        var preserved = reader.Read(StaticQueryKey.Project(StaticQueryKind.OpenProviders, key.Scope,
+            StaticQueryProjection.PreservedOpenPresence, key.Name, key.Stratum, offset: offset));
+        return preserved.Kind != StaticFactKind.Yes ? StaticFact.Unknown
+            : new(StaticFactKind.OpenMatch, Data: new StaticOpenMatch(Keys.ProviderScope(provider, Resources, _cancellationToken), true));
+    }
+
+    /// <summary>
+    /// Test-only: false restores the generic paths that the reuse of settled open targets must agree with: every witness
+    /// range combines its subranges, and a preserved-presence certificate solves
+    /// every earlier target. Set it before the first query.
+    /// </summary>
+    internal bool SettledOpenTargetReuseForTesting { get; set; } = true;
+
+    /// <summary>
+    /// Test-only: false schedules a deferred open presence with the other decision observers again
+    /// (<see cref="IsLateDecisionObserver"/>). Set it before the first query.
+    /// </summary>
+    internal bool LateDeferredPresenceForTesting { get; set; } = true;
+
+    /// <summary>Test-only: runs before each range node a settled witness range visits, so a test can cancel inside that walk.</summary>
+    internal Action? SettledRangeVisitForTesting { get; set; }
+
+    // Scan immutable Q4 namespaces in written order. Stop at a second occurrence, even of the same provider:
+    // each written position has its own preserved-presence certificate. Tree depth is bounded by ceil(log2(length)).
+    private bool HasMultipleOpenOccurrences(string name, StaticProviderTree part, int offset, int length,
+        ref (StaticScopeKey? Provider, int Offset) match)
+    {
+        SettledRangeVisitForTesting?.Invoke();
+        Resources.Metadata(0, cancellationToken: _cancellationToken);
+        Observations?.RecordStaticSettledWitnessNodeVisit();
+        if (length > 1)
+        {
+            if (part.Left is not { } left || part.Right is not { } right)
+                throw new InvalidOperationException("A settled provider range must split as its witness range does.");
+            var half = length / 2;
+            return HasMultipleOpenOccurrences(name, left, offset, half, ref match)
+                || HasMultipleOpenOccurrences(name, right, offset + half, length - half, ref match);
+        }
+        if (part.Leaves is not { } scopes)
+            throw new InvalidOperationException("A settled provider range must end in one target's providers.");
+        if (scopes.Length == 0) return false;
+        if (scopes.Length != 1) throw new InvalidOperationException("One written open target must select at most one provider.");
+        if (ContextOf(scopes[0]).Members.Public(name) is null) return false;
+        if (match.Provider is not null) return true;
+        match = (scopes[0], offset);
+        return false;
     }
 
     private bool SameProvider(StaticScopeKey? left, StaticScopeKey? right)
