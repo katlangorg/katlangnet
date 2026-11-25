@@ -1,0 +1,90 @@
+[
+  {
+    "id": "ownership-open-provided-captured-member-read-by-sibling-is-local-only",
+    "category": "access-boundaries",
+    "source": "Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    public Y = X\n    Y\n}\nOuter.Y",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    public Y = X\n    Y\n}\nOuter(4)",
+        "expectedNeutral": "ok raw=4 n=1"
+      },
+      {
+        "source": "Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    public Y = { X }\n    Y\n}\nOuter.Y",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(p) = {\n    open Lib\n    Lib = { public X = 7 }\n    public Z = X\n    Z + p\n}\nOuter.Z",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "An open-provided member that reads a captured ancestor parameter (`X = p`) is local-only, and so is every sibling that reads it: `Y = X` depends on `p` exactly as `Y = p` would, so `Outer.Y` from outside the owner is refused by the one accessibility check while `Outer(4)` reads it with `p` active. The requirement is settled through the same visible-name resolution a direct property reference uses, whatever the read's spelling; an opened member that captures nothing stays exported."
+  },
+  {
+    "id": "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
+    "category": "access-boundaries",
+    "source": "Outer(p) = {\n    Mid = {\n        Lib = { public X = p }\n        Inner = {\n            open Lib\n            X\n        }\n        Inner\n    }\n    Mid\n}\nOuter.Mid",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "Outer(p) = {\n    Mid = {\n        Lib = { public X = p }\n        Inner = {\n            open Lib\n            X\n        }\n        Inner\n    }\n    Mid\n}\nOuter(1), Outer(2)",
+        "expectedNeutral": "ok raw=S[1, 2] n=2"
+      },
+      {
+        "source": "Outer(p) = {\n    Lib = { public X = p }\n    Mid = {\n        Lib = { public X = 100 }\n        Inner = {\n            open Lib\n            X\n        }\n        Inner\n    }\n    Mid\n}\nOuter.Mid",
+        "expectedNeutral": "ok raw=100 n=1"
+      }
+    ],
+    "explanation": "An `open` target is resolved from the opener's direct lexical chain outward, so a head declared at a level BETWEEN the opener and the level that settles the exposure is the provider, and the provided member's capture of `p` makes every reader up to that level local-only: `Outer.Mid` from outside the owner is refused, while `Outer(1), Outer(2)` reads each activation's own `p`. The nearest declaration of the head wins, exactly as it does for the evaluator's lookup."
+  },
+  {
+    "id": "grace-in-redundant-group-is-grace-on-the-name",
+    "category": "name-resolution",
+    "source": "V(x) = x * 2\nF = b + (~a).V\nF(5, 1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "11"
+      }
+    ],
+    "expectedRaw": "11",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "V(x) = x * 2\nF = b + (a).V\nF(5, 1)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Obj = {\n    public V = 7\n    1\n}\nV(x) = x * 2\nF = (~a).V\nF(Obj)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Obj = {\n    public V = 7\n    1\n}\nV(x) = x * 2\nF = a.V\nF(Obj)",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "Parentheses group syntax, and Grace is a parameter-order annotation that never changes selection: `(~a).V` is `~a.V` — it orders `a` before `b` exactly like `~a` would, and the edge is the ordinary structural-first dot edge on `a`, so a bound algorithm's own `V` is read and a number falls back to the lexical `V(x)`, exactly as `a.V` and `(a).V` do. The marker is stripped before evaluation; it can never change which receiver is navigated."
+  },
+  {
+    "id": "open-builtin-target-rejected",
+    "category": "name-resolution",
+    "source": "open count\nQ = 5\nQ",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "IllegalInOpen",
+    "expectedParseDiagnosticFragment": "'count' cannot be opened because it is a builtin callable",
+    "explanation": "A prelude builtin is not an open provider: `open` imports the members of an algorithm that needs no call, and a builtin callable has no members to import, so `open count` is refused at the target rather than silently accepted. To use a builtin, call it.",
+    "notes": "Front-end rejection by the same rule that refuses a parameterized provider (a builtin's arity lives in registry metadata, not in `Params`, so it is refused by kind); both evaluators refuse the target with `illegalInOpen` at open resolution (Lean `resolveAlgForOpen`) as soon as a lookup demands the list. Before the final audit the front end accepted the target and only the editor flagged it."
+  },
+  {
+    "id": "owed-closer-recovery-keeps-later-declarations",
+    "category": "parser-layout",
+    "source": "F(a) = a\nA = F(1, )\nB = 2\nB",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnexpectedToken",
+    "expectedParseDiagnosticFragment": "Unexpected ')'",
+    "explanation": "A trailing comma before a closing delimiter is a missing operand, reported once at the closer the enclosing construct is waiting for; recovery leaves that closer to its owner, so later declarations stay in the scope they were written in.",
+    "notes": "Recovery contract, pinned in `RootStrayCloserRecoveryTests`: the one report is at the `)`, the recovered slot stays inside the call, and `B` is a ROOT declaration. Before the final audit the `)` was consumed as junk, the call stayed open to the end of input, and every later declaration was swallowed into it with cascading reports."
+  }
+]

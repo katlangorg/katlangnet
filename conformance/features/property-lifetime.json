@@ -1,0 +1,115 @@
+[
+  {
+    "id": "inner-property-lifetime-every-call-is-fresh",
+    "category": "name-resolution",
+    "source": "F(x) = {\n    T = tick()\n    T + x\n}\n\nF(1), F(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2\n4"
+      }
+    ],
+    "expectedRaw": "S[2, 4]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(x) = {\n    T = tick()\n    T + T + x\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[3, 6] n=2"
+      },
+      {
+        "source": "F(y) = {\n    T = tick()\n    P = T + 1\n    P + y\n}\nF(1), F(2), F.P",
+        "expectedNeutral": "ok raw=S[3, 5, 4] n=3"
+      },
+      {
+        "source": "F(y) = {\n    public A = tick()\n    y\n}\nF(10), F(20), tick()",
+        "expectedNeutral": "ok raw=S[10, 20, 1] n=3"
+      },
+      {
+        "source": "Step(s) = {\n    T = tick()\n    s + T + T\n}\nStep(0).repeat(3)",
+        "expectedNeutral": "ok raw=12 n=1"
+      }
+    ],
+    "explanation": "`T = tick()` is declared inside `F`, so every call of `F` works it out afresh: the first call's `T` is 1, the second call's is 2. It makes no difference that `T`'s definition does not use `x`. Inside one call `T` is worked out once, however often the call reads it.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026). Formerly (2, 3), and (3, 4, 2) for the second probe: `T` uses nothing of the call, so it was worked out once for the whole run and every later call reused it.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "inner-property-lifetime-inside-and-outside-a-call",
+    "category": "name-resolution",
+    "source": "F(y) = {\n    public A = tick()\n    A, F.A\n}\nB = F.A + 0\nC = F.A + 0\n\nB, F(10), F(20), C, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n(2, 2)\n(3, 3)\n1\n4"
+      }
+    ],
+    "expectedRaw": "S[1, S[2, 2], S[3, 3], 1, 4]",
+    "expectedEmittedCount": 5,
+    "probes": [
+      {
+        "source": "F(y) = {\n    public A = tick()\n    A, F.A\n}\nF(10), F(20), F.A, F.A, tick()",
+        "expectedNeutral": "ok raw=S[S[1, 1], S[2, 2], 3, 3, 4] n=5"
+      },
+      {
+        "source": "F(y) = {\n    public A = tick()\n    A, F.A\n}\nF.A, F(10), F.A, tick()",
+        "expectedNeutral": "ok raw=S[1, S[2, 2], 1, 3] n=4"
+      },
+      {
+        "source": "F(y) = {\n    open Lib\n    Lib = { public U = tick() }\n    T = tick()\n    H = T + 0\n    G(k) = T + k\n    T, H, G(0), [0, 0].map(G), U, Lib.U\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[S[1, 1, 1, L[1, 1], 2, 2], S[3, 3, 3, L[3, 3], 4, 4]] n=2"
+      }
+    ],
+    "explanation": "Inside a call of `F`, the plain name `A` and the path `F.A` mean the same `A` — the one of that call — so each call gives a pair of equal numbers, and each call works out its own (2, then 3). `B` and `C` read `F.A` from outside every call of `F`: they share the one `A` that belongs to the run (1), which no call supplies and no call replaces. `y` is never used, and that changes nothing.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026). Formerly (1, (1, 1), (1, 1), 1, 2): one `A` for the whole run."
+  },
+  {
+    "id": "inner-property-lifetime-explicit-call-from-outside",
+    "category": "name-resolution",
+    "source": "F(y) = {\n    public A = tick()\n    A\n}\n\nF.A(), F.A, F.A(), F.A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1\n2\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 2, 1]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "F(y) = {\n    public A = tick()\n    A\n}\nF.A, F.A(), F.A",
+        "expectedNeutral": "ok raw=S[1, 2, 1] n=3"
+      },
+      {
+        "source": "F(y) = {\n    A = tick()\n    A(), A, A(), A\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[S[1, 1, 2, 1], S[3, 3, 4, 3]] n=2"
+      },
+      {
+        "source": "B = {\n    T = tick()\n    T + T\n}\nB, B(), B(), B",
+        "expectedNeutral": "ok raw=S[2, 4, 6, 2] n=4"
+      }
+    ],
+    "explanation": "Outside every call of `F`, `F.A()` runs `A` afresh each time (1, then 2). The first one finds no value established for the run and establishes its own, so the bare `F.A` after it reads 1; the second call runs afresh, gives 2, and replaces nothing, so the last `F.A` still reads 1.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026) keeps CACHE-PUB-1 for the run's outside value: an explicit call runs afresh, establishes the value only where none is established, and never reads or replaces an established one."
+  },
+  {
+    "id": "inner-property-lifetime-alias-in-every-call",
+    "category": "name-resolution",
+    "source": "Cap(meta r) = if(tick() > 0, r, r)\nInc(x) = x + 1\nF(y) = {\n    A = Cap(Inc(5)).Algorithm\n    P = A(1) + 0\n    P + y, A(1), tick()\n}\n\nF(1), F(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(3, 2, 2)\n(4, 2, 4)"
+      }
+    ],
+    "expectedRaw": "S[S[3, 2, 2], S[4, 2, 4]]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Cap(meta r) = if(tick() > 0, r, r)\nInc(x) = x + 1\nF(y) = {\n    public A = Cap(Inc(5)).Algorithm\n    A(1), tick()\n}\nF.A(1), F(1), F.A(1), tick()",
+        "expectedNeutral": "ok raw=S[2, S[2, 3], 2, 4] n=4"
+      }
+    ],
+    "explanation": "`A = Cap(Inc(5)).Algorithm` names what `Cap(Inc(5))` gives, and working that out runs `tick()` once. In the first call `P` and the row's `A(1)` use the same `A`, so the row's own `tick()` is the second one. The second call works out its own `A` — the third `tick()` — so its row's `tick()` is the fourth. An alias and a property declared inside an owner follow the same rule: one per call of the owner.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026). Under ALIAS-CELL-LIFETIME alone (from 2026-11-15) this was ((3, 2, 2), (4, 2, 3)): one `A` for the whole run, so the second call's `Cap(Inc(5))` did not run again."
+  }
+]

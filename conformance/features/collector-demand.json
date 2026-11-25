@@ -1,0 +1,466 @@
+[
+  {
+    "id": "collector-alias-keeps-known-slice",
+    "category": "variadic-calls",
+    "source": "Coll(*ys) = 0\nF(*xs) = {\n    A = xs\n    Coll(A*)\n}\nF(1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = Coll(xs*)\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    A = xs\n    B = A\n    C = B\n    Coll(C*)\n}\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nPass(v) = {\n    A = v\n    Coll(A*)\n}\nOuter(*fs) = Pass(fs)\nOuter(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = ys\nF(*xs) = {\n    A = xs\n    Coll(0, A*, 9)\n}\nF(1, 2)",
+        "expectedNeutral": "ok raw=L[0, 1, 2, 9] n=1"
+      },
+      {
+        "source": "Coll(*ys) = ys.count\nF(*xs) = {\n    A = xs\n    Coll(A*)\n}\nF()",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = ys\nF(*xs) = {\n    A = xs\n    G(*xs) = Coll(A*)\n    G(7, 8)\n}\nF(1, 2)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(t, *xs) = {\n    A = xs\n    Coll(A*) + t + tick()\n}\nF(0, tick())",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "A transparent reference to a collecting parameter is that parameter's known slice: `A*` transfers the very cells `xs*` does, through any number of unbraced hops, so an unused failing argument is never evaluated and the second `tick()` still reads 1."
+  },
+  {
+    "id": "collector-alias-keeps-callable-elements",
+    "category": "variadic-calls",
+    "source": "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = {\n    A = fs\n    Apply(A*)\n}\nFwd(Inc)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = f(9)\nPass(v) = {\n    A = v\n    Apply(A*)\n}\nOuter(*fs) = Pass(fs)\nOuter(Inc)",
+        "expectedNeutral": "ok raw=10 n=1"
+      }
+    ],
+    "explanation": "The transferred cell keeps its CALLABLE channel: re-spreading a collected callable through a transparent reference hands it to `Apply` unforced, exactly as `fs*` does."
+  },
+  {
+    "id": "collector-alias-demand-raises-the-element-failure",
+    "category": "errors",
+    "source": "Coll(*ys) = ys\nF(*xs) = {\n    A = xs\n    Coll(A*)\n}\nF(1 / 0, 2)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "Transfer defers a failure to the operation that demands the cell, never suppresses it: a read of `ys` as a value materializes the collector, whose first element is the original division."
+  },
+  {
+    "id": "collector-carrier-spread-is-arbitrary",
+    "category": "errors",
+    "source": "Coll(*ys) = 0\nF(*xs) = {\n    A = { xs }\n    Coll(A*)\n}\nF(1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "probes": [
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    A = xs\n    B = { A }\n    Coll(B*)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    A = { Helper = 0\n        xs }\n    Coll(A*)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    A = xs + 0\n    Coll(A*)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    A = [xs*]\n    Coll(A*)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(x) = {\n    A = x\n    Coll(A*)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "Written braces make a distinct carrier, and a calculation or a fixed parameter holding an ordinary computation is no collector: each is an arbitrary spread, evaluated during supply formation, whatever value it would have."
+  },
+  {
+    "id": "collector-reference-argument-keeps-known-slice",
+    "category": "variadic-calls",
+    "source": "Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = Pass(xs)\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Pass(Box.A)\n}\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nPass(v) = Coll(v*)\nRelay(w) = {\n    B = w\n    Pass(B)\n}\nF(*xs) = {\n    A = xs\n    Relay(A)\n}\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = ys\nPass(v) = Coll(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF()",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Coll(*ys) = ys\nPass(v) = Coll(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF([1], 2)",
+        "expectedNeutral": "ok raw=L[L[1], 2] n=1"
+      }
+    ],
+    "explanation": "A transparent reference passed as one ordinary argument stays that one argument, and it keeps its way to the collector's original computations: the later explicit `v*` opens them unevaluated, exactly as with `Pass(xs)`, so the failing `1 / 0` is never demanded."
+  },
+  {
+    "id": "collector-reference-argument-is-one-argument",
+    "category": "variadic-calls",
+    "source": "Count(*ys) = ys.count\nPass(v) = Count(v), Count(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(1 / 0, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 3)"
+      }
+    ],
+    "expectedRaw": "S[1, 3]",
+    "expectedEmittedCount": 1,
+    "explanation": "Without a star the reference is one argument, however many elements the collector holds; only the explicit star opens its three positions."
+  },
+  {
+    "id": "collector-reference-argument-keeps-callable-elements",
+    "category": "variadic-calls",
+    "source": "Inc(x) = x + 1\nApply(f, *rest) = f(9)\nPass(v) = Apply(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(Inc, 1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "explanation": "The spread opens the original arguments, not their values, so the collected algorithm stays invocable and the unused failing element is never demanded."
+  },
+  {
+    "id": "collector-reference-argument-arity-precedes-elements",
+    "category": "errors",
+    "source": "Two(a, b) = a\nPass(v) = Two(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "The opened supply has a known count, so the wrong-arity call is rejected before the failing element could be demanded."
+  },
+  {
+    "id": "collector-reference-argument-carrier-stays-arbitrary",
+    "category": "errors",
+    "source": "Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    A = { xs }\n    Pass(A)\n}\nF(1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "probes": [
+      {
+        "source": "Coll(*ys) = 0\nPass(v) = Coll(v*)\nId(*zs) = zs\nF(*xs) = Pass(Id(xs))\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(x) = {\n    A = x\n    Pass(A)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Pass(v) = v\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "Written braces, a call and a fixed parameter holding an ordinary computation are computations, not references to a retained collector, so the spread evaluates them when it is formed; reading the collector as a whole value stays eager too."
+  },
+  {
+    "id": "selective-collector-count-reads-positions",
+    "category": "variadic-calls",
+    "source": "CountItems(*xs) = xs.count\nCountItems(1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "explanation": "A collecting parameter retains an exact slice of its argument computations. `count` reads that slice's length, one position per supplied argument, so it needs no element's value: the failing `1 / 0` is never demanded."
+  },
+  {
+    "id": "selective-collector-selection-demands-selected-positions",
+    "category": "variadic-calls",
+    "source": "F(*xs) = xs[1, 0, 1]\nF(10, 20, 1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(20, 10, 20)"
+      }
+    ],
+    "expectedRaw": "S[20, 10, 20]",
+    "expectedEmittedCount": 1,
+    "explanation": "Postfix selection validates each position of a retained collector, then demands that one element. Positions 1 and 0 run; the third element is never selected, so its failure stays dormant."
+  },
+  {
+    "id": "selective-collector-first-selects-one-element",
+    "category": "variadic-calls",
+    "source": "FirstItem(*xs) = xs[0]\nFirstItem(10, 1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "explanation": "Selecting position 0 needs only the first argument."
+  },
+  {
+    "id": "selective-collector-take-demands-its-prefix",
+    "category": "variadic-calls",
+    "source": "Prefix(*xs) = xs.take(1)\nPrefix(10, 1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[10]"
+      }
+    ],
+    "expectedRaw": "L[10]",
+    "expectedEmittedCount": 1,
+    "explanation": "`take` validates its count, then demands exactly the kept prefix in source order and builds an ordinary eager list from those values."
+  },
+  {
+    "id": "selective-collector-take-needs-the-prefix-element",
+    "category": "errors",
+    "source": "Prefix(*xs) = xs.take(2)\nPrefix(10, 1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "A requested element is demanded: the second position belongs to the prefix, so its failure is the failure of `take`."
+  },
+  {
+    "id": "selective-collector-effects-follow-first-demand",
+    "category": "variadic-calls",
+    "source": "F(*xs) = xs[1], xs[0], xs[1]\nF(tick(), tick())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2, 1)"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 1]",
+    "expectedEmittedCount": 1,
+    "explanation": "Selected positions decide first-demand order: position 1 runs first and draws 1, position 0 draws 2, and the repeated position 1 reuses its one completed outcome instead of running again."
+  },
+  {
+    "id": "selective-collector-reads-through-a-transparent-reference",
+    "category": "variadic-calls",
+    "source": "F(*xs) = {\n    A = xs\n    Box = {\n        public B = A\n        0\n    }\n    A.count, Box.B[0]\n}\nF(10, 1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(2, 10)"
+      }
+    ],
+    "expectedRaw": "S[2, 10]",
+    "expectedEmittedCount": 1,
+    "explanation": "A transparent reference reads the collector's own cell, so `A.count` and `Box.B[0]` observe the same retained slice as `xs.count` and `xs[0]`."
+  },
+  {
+    "id": "selective-collector-whole-value-stays-eager",
+    "category": "errors",
+    "source": "F(*xs) = xs\nF(1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "Reading the collector as a value still builds its whole exact list; only a qualified observer reads positions."
+  },
+  {
+    "id": "selective-collector-written-list-stays-eager",
+    "category": "errors",
+    "source": "F(*xs) = [xs*][0]\nF(10, 1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "A written list is ordinary eager data, even when it holds a collector's items and its selection needs only one of them."
+  },
+  {
+    "id": "selective-collector-carrier-stays-eager",
+    "category": "errors",
+    "source": "F(*xs) = {\n    A = { xs }\n    A.count\n}\nF(1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "A brace carrier is a computed value, not a transparent reference, so `count` receives its whole value."
+  },
+  {
+    "id": "collector-member-path-keeps-known-slice",
+    "category": "variadic-calls",
+    "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Y = Box.A\n    Coll(Y*)\n}\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        public B = A\n        0\n    }\n    Coll(Box.B*)\n}\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public Inner = {\n            public A = xs\n            0\n        }\n        0\n    }\n    Coll(Box.Inner.A*)\n}\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    R = Box\n    Coll(R.A*)\n}\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    C = {\n        public A = xs\n        xs\n    }\n    Coll(C.A*)\n}\nF(1 / 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = ys\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(0, Box.A*, 9)\n}\nF(1, 2)",
+        "expectedNeutral": "ok raw=L[0, 1, 2, 9] n=1"
+      },
+      {
+        "source": "Coll(*ys) = ys.count\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*)\n}\nF()",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Coll(*ys) = ys\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    G(*xs) = Coll(Box.A*)\n    G(7, 8)\n}\nF(1, 2)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(t, *xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*) + t + tick()\n}\nF(0, tick())",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "Selecting a member that is a transparent reference to a collecting parameter is that parameter's known slice too: `Box.A*` transfers the very cells `xs*` does, as `Y = Box.A` then `Y*` does. The receiver's own output is never read, even when it is the same collector."
+  },
+  {
+    "id": "collector-member-path-keeps-callable-elements",
+    "category": "variadic-calls",
+    "source": "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = {\n    Box = {\n        public A = fs\n        0\n    }\n    Apply(Box.A*)\n}\nFwd(Inc)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "explanation": "The transferred cell keeps its CALLABLE channel through a member path, exactly as through a name."
+  },
+  {
+    "id": "collector-member-path-demand-raises-the-element-failure",
+    "category": "errors",
+    "source": "Coll(*ys) = ys\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0, 2)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "A member path defers a failure to the operation that demands the cell, never suppresses it."
+  },
+  {
+    "id": "collector-member-nontransparent-spread-is-arbitrary",
+    "category": "errors",
+    "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = { xs }\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "probes": [
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        public B = { A }\n        0\n    }\n    Coll(Box.B*)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs + 0\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(x) = {\n    Box = {\n        public A = x\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A**)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A()*)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    Box = {\n        public A = { xs }\n        0\n    }\n    Pass(Box.A)\n}\nF(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Coll(*ys) = 0\nBox = {\n    public A = 1 / 0\n    0\n}\nColl(Box.A*)",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "A selected member keeps its own kind: written braces, a calculation or a fixed parameter holding an ordinary computation is no known slice, and neither is a stacked star or a call of the member, even when it is passed as one ordinary argument and spread by the callee."
+  },
+  {
+    "id": "collected-callable-survives-explicit-respread",
+    "category": "variadic-calls",
+    "source": "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = Apply(fs*)\nFwd(Inc)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nApplyFirst(*fs) = map([1, 2], fs*)\nApplyFirst(Inc)",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nIgnore(*xs) = 1\nIgnore(Inc)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nCollect(*xs) = xs\nCollect(Inc)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = Apply(fs)\nFwd(Inc)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = Apply([fs*]*)\nFwd(Inc)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Apply(f) = f(9)\nFwd(*fs) = Apply(fs*)\nFwd(5)",
+        "expectedNeutral": "err notAnAlgorithm"
+      }
+    ],
+    "explanation": "A collecting parameter keeps the arguments it receives exactly as they were supplied, and re-spreading it with `fs*` hands those same arguments on. A function passed through `Fwd` therefore reaches `Apply` still callable: `Fwd(Inc)` means `Apply(Inc)`, which is 10. Collecting evaluates nothing, so an unused collected function or failing calculation never runs. Reading the collector as a value (`xs`) builds its list, which evaluates every element, so a function that needs an argument reports its own error there. The collected list itself is a value, not a function, and a value never becomes callable by passing through a collector."
+  }
+]

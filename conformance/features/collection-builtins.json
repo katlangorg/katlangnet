@@ -1,0 +1,1757 @@
+[
+  {
+    "id": "take-prefix",
+    "category": "collection-builtins",
+    "source": "take((1, 2, 3, 4, 5), 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3]"
+      }
+    ],
+    "expectedRaw": "L[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "explanation": "`take` keeps the first `count` items and materializes them as one list value."
+  },
+  {
+    "id": "take-single-survivor",
+    "category": "collection-builtins",
+    "source": "take(((1, 2), (3, 4)), 1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[(1, 2)]"
+      }
+    ],
+    "expectedRaw": "L[S[1, 2]]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "count(take(((1, 2), (3, 4)), 1))",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "take(((1, 2), (3, 4)), 1) == (1, 2)",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "take(((1, 2), (3, 4)), 1)*, 997",
+        "expectedNeutral": "ok raw=S[S[1, 2], 997] n=2"
+      }
+    ],
+    "explanation": "Collection builtins materialize exact lists: one kept item forms the one-element list `[(1, 2)]` (never erased to the item), so its count is 1 and an explicit `value*` re-spreads the list to the kept pair.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "take-zero-empty",
+    "category": "collection-builtins",
+    "source": "take((1, 2, 3), 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[]"
+      }
+    ],
+    "expectedRaw": "L[]",
+    "expectedEmittedCount": 1,
+    "explanation": "Zero kept items form the empty list `[]` — one visible value, distinct from the empty sequence value `()`."
+  },
+  {
+    "id": "skip-prefix",
+    "category": "collection-builtins",
+    "source": "skip((1, 2, 3, 4, 5), 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[4, 5]"
+      }
+    ],
+    "expectedRaw": "L[4, 5]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "skip(((1, 2), (3, 4)), 1)",
+        "expectedNeutral": "ok raw=L[S[3, 4]] n=1"
+      },
+      {
+        "source": "skip((1, 2), 5)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      }
+    ],
+    "explanation": "`skip` drops the first `count` items and materializes the rest as one exact list: a single remaining item stays a one-element list, and skipping everything leaves the empty list `[]`."
+  },
+  {
+    "id": "filter-keeps-matching",
+    "category": "collection-builtins",
+    "source": "IsEven = x mod 2 == 0\nfilter((1, 2, 3, 4, 5, 6), IsEven)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[2, 4, 6]"
+      }
+    ],
+    "expectedRaw": "L[2, 4, 6]",
+    "expectedEmittedCount": 1,
+    "explanation": "`filter` requires one Boolean predicate result and keeps items for which it is `true`, returning one exact list value."
+  },
+  {
+    "id": "filter-single-survivor",
+    "category": "collection-builtins",
+    "source": "Big(a) = a > 2\nfilter((1, 2, 3), Big)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[3]"
+      }
+    ],
+    "expectedRaw": "L[3]",
+    "expectedEmittedCount": 1,
+    "explanation": "One surviving item forms the exact one-element list `[3]` — list results never erase the one-item boundary."
+  },
+  {
+    "id": "filter-none-empty",
+    "category": "collection-builtins",
+    "source": "No(a) = false\nfilter((1, 2, 3), No)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[]"
+      }
+    ],
+    "expectedRaw": "L[]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "No(a) = false\nfilter((1, 2, 3), No) == ()",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "No(a) = false\nfilter((1, 2, 3), No) == []",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "Zero survivors form the empty list `[]`, which is one visible value and never equals the empty sequence value `()`."
+  },
+  {
+    "id": "map-transforms-items",
+    "category": "collection-builtins",
+    "source": "Double = x * 2\nmap((1, 2, 3), Double)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[2, 4, 6]"
+      }
+    ],
+    "expectedRaw": "L[2, 4, 6]",
+    "expectedEmittedCount": 1,
+    "explanation": "`map` replaces each top-level item with the callback result, preserving order and count, and materializes the mapped items as one exact list."
+  },
+  {
+    "id": "map-single-item",
+    "category": "collection-builtins",
+    "source": "M(a) = a\nmap((7), M)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[7]"
+      }
+    ],
+    "expectedRaw": "L[7]",
+    "expectedEmittedCount": 1,
+    "explanation": "`(7)` is the atom 7 (singleton parens are transparent), so the supply has one item — and the exact list result keeps it as the one-element list `[7]`."
+  },
+  {
+    "id": "map-pair-callback",
+    "category": "collection-builtins",
+    "source": "Swap((a, b)) = (b, a)\nmap(((1, 2), (3, 4)), Swap)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[(2, 1), (4, 3)]"
+      }
+    ],
+    "expectedRaw": "L[S[2, 1], S[4, 3]]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Swap(a, b) = (b, a)\nmap(((1, 2), (3, 4)), Swap)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Swap((a, b)) = (b, a)\nmap([[1, 2]], Swap)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "LSwap([a, b]) = [b, a]\nmap([[1, 2]], LSwap)",
+        "expectedNeutral": "ok raw=L[L[2, 1]] n=1"
+      }
+    ],
+    "explanation": "Each callback item is one selected value, passed to the callback as ONE ordinary argument — exactly as the direct call `Swap(item)`. A pair-shaped callback therefore opens the row with an explicit structural pattern of the row's kind — `Swap((a, b))` for a sequence row, `LSwap([a, b])` for a list row; the flat two-parameter `Swap(a, b)` is the ordinary arity error for a one-argument call. Each callback returns its ordinary call result, preserved as one exact list element."
+  },
+  {
+    "id": "clause-family-multirow-callback-is-one-value",
+    "category": "collection-builtins",
+    "source": "F(0) = 1, 2\nF(n) = n, n\nmap([0, 3], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[(1, 2), (3, 3)]"
+      }
+    ],
+    "expectedRaw": "L[S[1, 2], S[3, 3]]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F(0) = 1, 2\nmap([0], F)",
+        "expectedNeutral": "ok raw=L[S[1, 2]] n=1"
+      },
+      {
+        "source": "F(0) = 1, 2\nF(n) = n, n\nG = F\nmap([3], G)",
+        "expectedNeutral": "ok raw=L[S[3, 3]] n=1"
+      },
+      {
+        "source": "F(0) = 1, 2\nF(n) = n, n\nApply(f, xs) = map(xs, f)\nApply(F, [0])",
+        "expectedNeutral": "ok raw=L[S[1, 2]] n=1"
+      },
+      {
+        "source": "F(0) = 1, 2\nF(n) = n, n\n[0, 3].map(F)",
+        "expectedNeutral": "ok raw=L[S[1, 2], S[3, 3]] n=1"
+      },
+      {
+        "source": "F(0) = 1, 2\nF(n) = n, n\nF(0)",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      },
+      {
+        "source": "F(0) = 1, 2\nF(n) = n, n\nmap([0, 3], { F(x) })",
+        "expectedNeutral": "ok raw=L[S[1, 2], S[3, 3]] n=1"
+      },
+      {
+        "source": "P(0) = true, true\nP(n) = false, false\nfilter([0, 3], P)",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "A clause family is an ordinary callable, and a `map` transform returns its ordinary call result (HO-03): the selected clause's two rows `1, 2` are the one value `(1, 2)` — exactly the family's ordinary call `F(0)` — and that value is ONE element of the result, never spread. An alias, a forwarded parameter, a dot call and the η-block `{ F(x) }` give the same result; `filter` still requires its predicate's value to be one Boolean."
+  },
+  {
+    "id": "clause-family-multirow-reduce-step-is-one-value",
+    "category": "collection-builtins",
+    "source": "R(e, 0) = e, 0\nR(e, acc) = e, acc\nreduce([1], R, 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 0)"
+      }
+    ],
+    "expectedRaw": "S[1, 0]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "R(e, 0) = e, 0\nreduce([1], R, 0)",
+        "expectedNeutral": "ok raw=S[1, 0] n=1"
+      },
+      {
+        "source": "R(e, 0) = e, 0\nR(e, acc) = e, acc\n[1].reduce(R, 0)",
+        "expectedNeutral": "ok raw=S[1, 0] n=1"
+      },
+      {
+        "source": "R(e, 0) = e, 0\nR(e, acc) = e, acc\nR(1, 0)",
+        "expectedNeutral": "ok raw=S[1, 0] n=1"
+      },
+      {
+        "source": "R(e, 0) = (e, 0)\nR(e, acc) = (e, acc)\nreduce([1], R, 0)",
+        "expectedNeutral": "ok raw=S[1, 0] n=1"
+      },
+      {
+        "source": "R(e, 0) = e, 0\nR(e, acc) = e, acc\nreduce([], R, 7)",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "A `reduce` step returns its ordinary call result (HO-03): a family step's selected clause rows `e, 0` are the one value `(1, 0)` — exactly the ordinary call `R(1, 0)` and the capture spelling `R(e, 0) = (e, 0)` — passed whole as the next accumulator."
+  },
+  {
+    "id": "clause-family-callback-single-value-accepted",
+    "category": "collection-builtins",
+    "source": "F(0) = 1, 2\nP(0) = (1, 2)\nP(n) = (n, n)\nL(0) = []\nL(n) = [n]\nmap([0, 3], P), map([0, 3], L), F(0) == P(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[(1, 2), (3, 3)]\n[[], [3]]\ntrue"
+      }
+    ],
+    "expectedRaw": "S[L[S[1, 2], S[3, 3]], L[L[], L[3]], true]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "P(0) = (1, 2)\nmap([0], P)",
+        "expectedNeutral": "ok raw=L[S[1, 2]] n=1"
+      },
+      {
+        "source": "D(x) = x, x\nF(0) = D(0)\nF(n) = D(n)\nmap([0, 3], F)",
+        "expectedNeutral": "ok raw=L[S[0, 0], S[3, 3]] n=1"
+      },
+      {
+        "source": "IsZero(0) = true\nIsZero(n) = false\nfilter([0, 1, 0], IsZero)",
+        "expectedNeutral": "ok raw=L[0, 0] n=1"
+      },
+      {
+        "source": "S(0) = 1, 2\nS(n) = n, n\nrepeat(S(0), 1)",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      }
+    ],
+    "explanation": "A callback result is its ordinary call result: a family clause's one value — a sequence `(1, 2)`, a list, `[]`, or an inner call's one value — is one mapped element, and the family's ordinary call is that same value (`F(0) == P(0)`). A loop step is no callback: its rows are the next state."
+  },
+  {
+    "id": "callback-result-is-the-ordinary-call-result",
+    "category": "collection-builtins",
+    "source": "D(x) = x, x\nG(x) = D(x)\nH(x) = (x, x)\nmap([1], D), map([1], G), map([1], H), map([1, 2], D) == [D(1), D(2)]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[(1, 1)]\n[(1, 1)]\n[(1, 1)]\ntrue"
+      }
+    ],
+    "expectedRaw": "S[L[S[1, 1]], L[S[1, 1]], L[S[1, 1]], true]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "D(x) = x, x\nmap([1, 2, 3], D).count",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "D(x) = x, x\nS(x) = { D(x)* }\nmap([1], S)",
+        "expectedNeutral": "ok raw=L[S[1, 1]] n=1"
+      },
+      {
+        "source": "R(x, acc) = x, acc\nreduce([1, 2], R, 0) == R(2, R(1, 0))",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "D(x) = x, x\nmap([], D)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      }
+    ],
+    "explanation": "A `map` transform or `reduce` step returns the result of an ordinary call (HO-03): several written rows arrive as ONE sequence value, `()` and `[]` are ordinary values, and the result is stored as one element (or passed as one accumulator), never spread. So `map(L, F)` is `[F(L[0]), F(L[1]), …]`, and two rows `x, x`, the capture `(x, x)` and the wrapper `G(x) = D(x)` all map to the same pairs. An extra output row written by mistake therefore produces a valid but unexpected sequence value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "lazy-list-selection-reads-only-the-selected-position",
+    "category": "lists",
+    "source": "[10, 1 / 0][0]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "[10, 1 / 0][1]",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "[10, 1 / 0].count",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "[10, 1 / 0].first",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "[10, 1 / 0][5]",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "(10, 1 / 0)[0]",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "A list literal evaluates its elements on demand: each ordinary written element is one deferred computation, evaluated at most once, when a consumer reads that position. Selection reads only the position it names, so the failing second element is never evaluated.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "lazy-map-runs-its-mapper-only-for-the-positions-read",
+    "category": "collection-builtins",
+    "source": "[1, 2].map{if(n == 1, 10, 1 / 0)}.first",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "[1, 2].map{if(n == 1, 10, 1 / 0)}.last",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "count(map([1 / 0, 2], 7))",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "first(map([1 / 0], 7))",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "first(map([1], 7))",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "map([], 7)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      }
+    ],
+    "explanation": "`map` preserves positions and evaluates nothing when it is called: position `i` of the result is the mapper applied to position `i` of the source, computed at most once, when it is first read. `first` reads position zero only, so the mapper never runs for the second element.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "lazy-filter-discovers-only-the-matches-it-needs",
+    "category": "collection-builtins",
+    "source": "[1, 0].filter{1 / n > 0}.take(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1]"
+      }
+    ],
+    "expectedRaw": "L[1]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "[1, 0].filter{1 / n > 0}.first",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "[1, 0].filter{1 / n > 0}.take(2)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "[1, 0].filter{1 / n > 0}.count",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "F = [1, 0].filter{1 / n > 0}\nF.first, F.take(1)",
+        "expectedNeutral": "ok raw=S[1, L[1]] n=2"
+      },
+      {
+        "source": "[1, 0].filter{1 / n > 0}.take(0)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      }
+    ],
+    "explanation": "`filter` discovers its matches in source order, only as far as its consumer asks, and never inspects a candidate twice. `take(1)` needs one match, which the first element supplies, so the predicate never runs for `0`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "lazy-list-positions-are-shared-and-follow-demand-order",
+    "category": "lists",
+    "source": "L = [tick(), tick(), tick()]\nL[2, 0, 2], L[0], tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2, 1)\n2\n3"
+      }
+    ],
+    "expectedRaw": "S[S[1, 2, 1], 2, 3]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "F = [tick()]\nF()[0], F()[0]",
+        "expectedNeutral": "ok raw=S[1, 2] n=2"
+      },
+      {
+        "source": "F(a) = [a, a][1] + a\nF(tick())",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "Each position of a list is evaluated at most once per list instance, and effects follow the order in which positions are read: position 2 draws 1, position 0 draws 2, the repeated position 2 and the later `L[0]` reuse their completed values, and the unread position 1 never runs, so the final `tick()` draws 3."
+  },
+  {
+    "id": "lazy-list-run-output-is-read-after-it-is-assembled",
+    "category": "lists",
+    "source": "L = [tick()]\nL, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[2]\n1"
+      }
+    ],
+    "expectedRaw": "S[L[2], 1]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "[tick(), [tick(), tick()]], tick()",
+        "expectedNeutral": "ok raw=S[L[2, L[3, 4]], 1] n=2"
+      },
+      {
+        "source": "[1, 1 / 0]",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "A run assembles its output first and then reads it whole, left to right and depth first: the list `L` is built without drawing, the second row draws 1, and reading the list afterwards draws 2."
+  },
+  {
+    "id": "lazy-take-validates-its-count-before-any-position",
+    "category": "collection-builtins",
+    "source": "[1 / 0, 2].take(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[]"
+      }
+    ],
+    "expectedRaw": "L[]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "[1 / 0].take('a')",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "[1 / 0, 2].take(1)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "L = [tick(), tick()]\nP = L.take(1)\nP[0], L[0], tick()",
+        "expectedNeutral": "ok raw=S[1, 1, 2] n=3"
+      }
+    ],
+    "explanation": "`take` validates its count before it reads any position and returns a prefix that shares its source's positions: a non-positive count is the empty list and reads nothing, and an invalid count is reported before any element is evaluated."
+  },
+  {
+    "id": "lazy-list-pattern-checks-cardinality-before-its-fields",
+    "category": "deconstruction",
+    "source": "P([a, b]) = b\nP([1 / 0, 2])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "P([a, b]) = a\nP([1 / 0])",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P([a]) = 1\nP(x) = 2\nP([1 / 0, 2])",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "P(0) = 1\nP(x) = 2\nP([1 / 0])",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "P([a, *rest]) = rest.count\nP([1, 1 / 0, 1 / 0])",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "a, b = [1 + 1, 1 / 0]\na",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "A list pattern checks the kind and the cardinality of its list before any field and binds its names to the list's own positions, so only the position the body reads is evaluated: `b` reads the second element, and the failing first element never runs."
+  },
+  {
+    "id": "lazy-list-equality-reads-both-operands-whole",
+    "category": "equality-and-indexing",
+    "source": "[1, 2 + 1] == [1, 3]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true"
+      }
+    ],
+    "expectedRaw": "true",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "[1, 1 / 0] == [2, 3]",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "contains([[1 + 1]], [2])",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "F(*xs) = xs.count\nF([1, 1 / 0]*)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "F(*xs) = xs.count\nF([1, 1 / 0])",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "sum([1 + 1, 2 * 3])",
+        "expectedNeutral": "ok raw=8 n=1"
+      }
+    ],
+    "explanation": "Equality compares whole values: both operands are read completely, the left one first, before they are compared — so a failing element fails the comparison even where the first elements already differ."
+  },
+  {
+    "id": "lazy-list-holding-itself-is-a-demand-cycle-when-read-whole",
+    "category": "errors",
+    "source": "L = [L]\nL",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "demandCycle",
+    "probes": [
+      {
+        "source": "L = [L]\nL.count",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "L = [L[0]]\nL",
+        "expectedNeutral": "err demandCycle"
+      },
+      {
+        "source": "S = [1].filter{S.count >= x}\nS",
+        "expectedNeutral": "err demandCycle"
+      }
+    ],
+    "explanation": "A list can hold itself through a deferred element: building `L` reads nothing. Reading it whole reaches the list it is already inside, which is reported as a demand cycle instead of an endless read."
+  },
+  {
+    "id": "reduce-accumulators-are-evaluated-on-demand",
+    "category": "collection-builtins",
+    "source": "Pick(item, acc) = item\nreduce([1, 2], Pick, 1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Pick(item, acc) = item\nPick(2, Pick(1, 1 / 0))",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Add(item, acc) = item + acc\nreduce([1, 2], Add, 1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Digits(item, acc) = acc * 10 + item\nreduce([1, 2, 3], Digits, 0)",
+        "expectedNeutral": "ok raw=123 n=1"
+      },
+      {
+        "source": "Pick(item, acc) = item\n[1, 2].reduce(Pick, 1 / 0)",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "`reduce` evaluates its accumulators on demand: it demands only its last step, and each step receives its accumulator unevaluated, so `reduce([a, b], R, i)` is `R(b, R(a, i))` in value and in the demand of its accumulators. A reducer that ignores its accumulator skips every earlier step and the initial expression; one that reads it evaluates it once.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "reduce-demands-only-the-steps-it-needs",
+    "category": "collection-builtins",
+    "source": "R(item, acc) = if(item == 1, 1 / 0, item)\nreduce([1, 2], R, 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "R(item, acc) = if(item == 1, 1 / 0, item + acc)\nreduce([1, 2], R, 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "R(item, (a, b)) = item\nreduce([1, 2], R, 1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "R(item, 0) = item\nR(item, acc) = item + acc\nreduce([1, 2], R, 1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "R(0, acc) = 0\nR(item, acc) = item\nreduce([1, 2], R, 1 / 0)",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "Only the last step of a fold is demanded. The body of an earlier step runs when a later step reads its accumulator — in an expression, through an inspecting pattern, or through a clause head — and never otherwise."
+  },
+  {
+    "id": "reduce-effects-follow-accumulator-demand",
+    "category": "collection-builtins",
+    "source": "R(item, acc) = tick() * item + acc\nreduce([1, 2], R, 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "4"
+      }
+    ],
+    "expectedRaw": "4",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "R(item, acc) = tick() * item + acc\nR(2, R(1, 0))",
+        "expectedNeutral": "ok raw=4 n=1"
+      },
+      {
+        "source": "R(item, acc) = tick() + acc + acc\nreduce([1, 2], R, tick())",
+        "expectedNeutral": "ok raw=17 n=1"
+      },
+      {
+        "source": "Sub(x, acc) = x - acc\n[tick(), tick()].reduce(Sub, 0), Sub(tick(), Sub(tick(), 0))",
+        "expectedNeutral": "ok raw=S[1, -1] n=2"
+      }
+    ],
+    "explanation": "Effects follow actual demand: the step for the last element runs first, so with `R(item, acc) = tick() * item + acc` the fold over `[1, 2]` draws `1` for the element `2` and is `4`. Each accumulator is a memoized computation, read as often as needed and evaluated once."
+  },
+  {
+    "id": "reduce-empty-collection-demands-initial-once",
+    "category": "collection-builtins",
+    "source": "Pick(item, acc) = item\nreduce([], Pick, tick()), tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 2]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Pick(item, acc) = item\nreduce([], Pick, 1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "reduce([], 1 / 0, 7)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Pick(item, acc) = item\nreduce([1 / 0, 2], Pick, 0)",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "A fold over an empty collection demands its initial value once and returns it; the reducer is not used. A nonempty collection is demanded whole first, so a failing element fails the fold before any step."
+  },
+  {
+    "id": "map-reads-each-source-position-before-its-transform",
+    "category": "collection-builtins",
+    "source": "L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "probes": [
+      {
+        "source": "L = [1 / 0, 2]\nF(x) = 0\ncount(map(L, F))",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)[1]",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "L = [1 / 0, 2]\nF(x) = 0\n[F(L[0]), F(L[1])]",
+        "expectedNeutral": "ok raw=L[0, 0] n=1"
+      }
+    ],
+    "explanation": "A mapped position reads its source position before it invokes the transform, even a transform that ignores its argument: reading the whole result reaches the failing first element. Counting the mapped list, or reading only its second position, never reads that element. Expanded ordinary calls may leave indexed arguments unused, so the unfolding equation compares result values for pure, deterministic, total computations."
+  },
+  {
+    "id": "expanded-map-calls-may-skip-indexed-arguments",
+    "category": "collection-builtins",
+    "source": "L = [1 / 0, 2]\nF(x) = 0\n[F(L[0]), F(L[1])]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[0, 0]"
+      }
+    ],
+    "expectedRaw": "L[0, 0]",
+    "expectedEmittedCount": 1,
+    "expectedCachePublications": {
+      "L": 0
+    },
+    "probes": [
+      {
+        "source": "L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "Each ordinary call leaves its unused argument undemanded. Map's collection is a demanded VALUE slot. Q-25 preserves Model-C demand; its unfolding equation promises result-value equivalence only for pure, deterministic, total computations."
+  },
+  {
+    "id": "map-identity-preserves-empty-elements",
+    "category": "collection-builtins",
+    "source": "Id(x) = x\nmap([(), 1, [], 2], Id)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[(), 1, [], 2]"
+      }
+    ],
+    "expectedRaw": "L[S[], 1, L[], 2]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Id(x) = x\nL = [(), [], (1, ()), 1]\nmap(L, Id) == L",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "Empty(x) = ()\nmap([1, 2], Empty)",
+        "expectedNeutral": "ok raw=L[S[], S[]] n=1"
+      },
+      {
+        "source": "Keep(x) = true\nId(x) = x\nmap(filter([(), 1], Keep), Id)",
+        "expectedNeutral": "ok raw=L[S[], 1] n=1"
+      },
+      {
+        "source": "Recip(x) = if(x == 0, (), 1 / x)\nNotEmpty(v) = v != ()\nfilter(map([0, 2, 4], Recip), NotEmpty)",
+        "expectedNeutral": "ok raw=L[0.5, 0.25] n=1"
+      }
+    ],
+    "explanation": "The identity transform maps every list element to itself — `()`, `[]` and nested values included — because a callback's result is its ordinary call result (HO-03). A transform that returns `()` keeps a visible `()` element; `filter` is the way to omit elements."
+  },
+  {
+    "id": "reduce-accumulator-may-be-empty",
+    "category": "collection-builtins",
+    "source": "R(x, acc) = acc\nreduce([1], R, ())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "()"
+      }
+    ],
+    "expectedRaw": "S[]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "R(x, acc) = acc\n[reduce([], R, ()), reduce([1], R, ())]",
+        "expectedNeutral": "ok raw=L[S[], S[]] n=1"
+      },
+      {
+        "source": "Keep(x, acc) = if(x < 0, (), (acc*, x))\nreduce([1, 2, -1, 3], Keep, ())",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "R(x, acc) = (acc, x)\nreduce([1, 2], R, ())",
+        "expectedNeutral": "ok raw=S[S[S[], 1], 2] n=1"
+      },
+      {
+        "source": "R(x, acc) = x, acc\nreduce([1, 2], R, 0)",
+        "expectedNeutral": "ok raw=S[2, S[1, 0]] n=1"
+      }
+    ],
+    "explanation": "Every value is a legitimate accumulator: `()` may start a fold, be produced by a step and end it, exactly like `[]` or a number (HO-03). A step's result replaces the accumulator whole — a step returning `()` makes `()` the accumulator, never \"keep the previous value\" — and several rows are one sequence accumulator, so `x, acc` nests."
+  },
+  {
+    "id": "callback-variadic-collects",
+    "category": "collection-builtins",
+    "source": "Collect(*items) = items\n\n[7].map(Collect)\n[(1, 2)].map(Collect)\n[[1, 2]].map(Collect)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[[7]]\n[[(1, 2)]]\n[[[1, 2]]]"
+      }
+    ],
+    "expectedRaw": "S[L[L[7]], L[L[S[1, 2]]], L[L[L[1, 2]]]]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Collect(*items) = items\n[[]].map(Collect)",
+        "expectedNeutral": "ok raw=L[L[L[]]] n=1"
+      },
+      {
+        "source": "Collect(*items) = items\n[()].map(Collect)",
+        "expectedNeutral": "ok raw=L[L[S[]]] n=1"
+      },
+      {
+        "source": "Collect(*items) = items\n[((1, 2), 3)].map(Collect)",
+        "expectedNeutral": "ok raw=L[L[S[S[1, 2], 3]]] n=1"
+      },
+      {
+        "source": "Collect(*items) = items\nmap((7, 8), Collect)",
+        "expectedNeutral": "ok raw=L[L[7], L[8]] n=1"
+      },
+      {
+        "source": "IsSingleSeven(*items) = items == [7]\n[7, 8].filter(IsSingleSeven)",
+        "expectedNeutral": "ok raw=L[7] n=1"
+      },
+      {
+        "source": "IsPair(*items) = items.count == 2\n((1, 2), 3, (4, 5), [6, 7]).filter(IsPair).count",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "IsPair(x) = x.count == 2\n((1, 2), 3, (4, 5), [6, 7]).filter(IsPair).count",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "R(*items, acc) = items == [10]\nreduce([10], R, 99)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "R(*items, acc) = items\nreduce([(1, 2)], R, 99)",
+        "expectedNeutral": "ok raw=L[S[1, 2]] n=1"
+      },
+      {
+        "source": "R(*items, acc) = items\nreduce([()], R, 99)",
+        "expectedNeutral": "ok raw=L[S[]] n=1"
+      },
+      {
+        "source": "R(*items, acc) = items\nreduce([[1, 2]], R, 99)",
+        "expectedNeutral": "ok raw=L[L[1, 2]] n=1"
+      },
+      {
+        "source": "R(*items, acc) = items\nreduce([((1, 2), 3)], R, 99)",
+        "expectedNeutral": "ok raw=L[S[S[1, 2], 3]] n=1"
+      },
+      {
+        "source": "R(*items) = items\nreduce([10], R, 99)",
+        "expectedNeutral": "ok raw=L[10, 99] n=1"
+      },
+      {
+        "source": "Acc(x, *acc) = acc\nreduce([9], Acc, ((1, 2), 3))",
+        "expectedNeutral": "ok raw=L[S[S[1, 2], 3]] n=1"
+      }
+    ],
+    "explanation": "A callback receives each iterated element as ONE ordinary argument, bound exactly as the direct call with that element, so a single-collecting map/filter callback collects it as one item whatever it is — a scalar, a sequence, a list, `()` (`[(1, 2)].map(Collect)` binds `items = [(1, 2)]`, `[()].map(Collect)` binds `[()]`), and a collecting filter predicate counts one argument per element (`IsPair(*items)` keeps nothing, while the fixed `IsPair(x) = x.count == 2` inspects each element's contents). Reducers are ordinary two-argument callbacks: a genuine single-collecting reducer collects `[element, accumulator]`, an element-side collector before a fixed accumulator collects `[element]`, and an accumulator-side collector collects the ONE accumulator value (`((1, 2), 3)` becomes `[((1, 2), 3)]`).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "callback-mixed-variadic-rows",
+    "category": "collection-builtins",
+    "source": "F((first, *middle, last)) = middle\nRows = [(1, 2, 3, 4)]\n\nRows.map(F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[[2, 3]]"
+      }
+    ],
+    "expectedRaw": "L[L[2, 3]]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F(first, *middle, last) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F((first, *middle, last)) = middle\nRows = [[1, 2, 3, 4]]\nRows.map(F)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "F([first, *middle, last]) = middle\nRows = [[1, 2, 3, 4]]\nRows.map(F)",
+        "expectedNeutral": "ok raw=L[L[2, 3]] n=1"
+      },
+      {
+        "source": "F(first, *rest) = rest\n[(1, 2, 3)].map(F)",
+        "expectedNeutral": "ok raw=L[L[]] n=1"
+      },
+      {
+        "source": "F((first, *rest)) = rest\n[(1, 2, 3)].map(F)",
+        "expectedNeutral": "ok raw=L[L[2, 3]] n=1"
+      },
+      {
+        "source": "F(first, *rest) = rest\n[7].map(F)",
+        "expectedNeutral": "ok raw=L[L[]] n=1"
+      },
+      {
+        "source": "F(*init, last) = init\n[(1, 2, 3)].map(F)",
+        "expectedNeutral": "ok raw=L[L[]] n=1"
+      }
+    ],
+    "explanation": "A callback element is ONE ordinary argument (there is no callback row convention), so a row is opened by the callee's explicit structural pattern of the row's kind: `F((first, *middle, last))` opens each sequence row (and `F([first, *middle, last])` each list row) and COLLECTS the middle as an exact list. The flat `F(first, *middle, last)` receives one argument against two fixed positions and is the ordinary arity error, exactly like `F((1, 2, 3, 4))`; a flat prefix or suffix binds the whole element and leaves the collector empty."
+  },
+  {
+    "id": "callback-nested-pattern-binds-like-call",
+    "category": "collection-builtins",
+    "source": "Head((x, *rest)) = [x, rest]\n\nHead((7, 8))\n[(7, 8)].map(Head)\nmap([(7, 8), (9, 10, 11)], Head)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[7, [8]]\n[[7, [8]]]\n[[7, [8]], [9, [10, 11]]]"
+      }
+    ],
+    "expectedRaw": "S[L[7, L[8]], L[L[7, L[8]]], L[L[7, L[8]], L[9, L[10, 11]]]]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Head((x, *rest)) = [x, rest]\nHead(7)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Head((x, *rest)) = [x, rest]\n[7].map(Head)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Pair((x, y)) = [x, y]\n[(1, 2, 3)].map(Pair)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "LHead([x, *rest]) = [x, rest]\n[[7], [8, 9]].map(LHead)",
+        "expectedNeutral": "ok raw=L[L[7, L[]], L[8, L[9]]] n=1"
+      },
+      {
+        "source": "Last((*init, z)) = z\n[(true, 1), (1, 2)].map(Last)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "Big((x, *rest)) = x > 1\n[(7, 0), (1, 0)].filter(Big)",
+        "expectedNeutral": "ok raw=L[S[7, 0]] n=1"
+      },
+      {
+        "source": "R((x, *rest), acc) = acc + x\nreduce([(7, 0), (8, 0)], R, 0)",
+        "expectedNeutral": "ok raw=15 n=1"
+      },
+      {
+        "source": "Head((x, *rest)) = [x, rest]\n[].map(Head)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Head((x, *rest)) = [x, rest]\n[()].map(Head)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "A callback binds each value it supplies exactly as the ordinary call supplying that one value does: a nested sequence pattern opens a sequence element one level and a list pattern a list element, while any other value — a scalar, or the other kind — is the pattern's kind mismatch in the direct call and the callback alike (`Head(7)` and `[7].map(Head)`). The callback operation still decides how many values it supplies (one element for map and filter, element and accumulator for reduce) and how often it invokes the callback (never for an empty collection; once for the empty element `()`, which is too short for `(x, *rest)`)."
+  },
+  {
+    "id": "forwarded-callable-keeps-its-algorithm-channel",
+    "category": "collection-builtins",
+    "source": "Cnt(*xs) = xs.count\nSumWhile(*s) = s.sum + 1, s.sum + 1 < 3\nApply(f, xs) = xs.map(f)\nLoop(g) = while(g(0))\nOuter(xs) = {\n  Inner(g) = xs.map(g)\n  Inner(Cnt)\n}\n\nApply(Cnt, [1, 2])\nLoop(SumWhile)\nOuter([1, 2])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 1]\n2\n[1, 1]"
+      }
+    ],
+    "expectedRaw": "S[L[1, 1], 2, L[1, 1]]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Cnt(*xs) = xs.count\nApply(f, xs) = map(xs, f)\nApply(Cnt, [1, 2])",
+        "expectedNeutral": "ok raw=L[1, 1] n=1"
+      },
+      {
+        "source": "Big(*xs) = xs.sum > 1\nKeep(f, xs) = xs.filter(f)\nKeep(Big, [1, 2, 3])",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      },
+      {
+        "source": "Big(*xs) = xs.sum > 1\nHits(f, xs) = xs.filter(f).count\nHits(Big, [1, 2, 3])",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "SumAll(*xs) = xs.sum\nFold(f, xs) = xs.reduce(f, 0)\nFold(SumAll, [1, 2, 3])",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "CountStep(*s) = s.count + 1\nRun(g) = repeat(g(9), 3)\nRun(CountStep)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\nG(*xs) = Only(xs*)\nApply(f, xs) = map(xs, f)\nApply(G, [1])",
+        "expectedNeutral": "ok raw=L[L[1]] n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\nG = Only\nApply(f, xs) = map(xs, f)\nApply(G, [1])",
+        "expectedNeutral": "ok raw=L[L[1]] n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\nSize(xs) = count(xs)\nSize(Only)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Seven(*xs) = 7\nR(x, acc) = acc + x\nStart(i) = reduce([1, 2], R, i)\nStart(Seven)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Apply(f, xs) = xs.map(f)\nApply(5, [1])",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "[1].map(5)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Z(*xs) = 10 / xs.count\nApply(f, xs) = xs.map(f)\nApply(Z, [1, 2])",
+        "expectedNeutral": "ok raw=L[10, 10] n=1"
+      }
+    ],
+    "explanation": "Passing a callable to a parameter binds it as a callable, and also as a value when it can be read with no arguments (`Cnt` reads as `0`). A builtin slot that calls its argument — the map mapper, the filter predicate, the reduce reducer, a while or repeat step — calls the callable, so forwarding `Cnt` through `Apply` selects the same callable as `[1, 2].map(Cnt)`, including from a nested block that captures the parameter. Forwarding transports the same demandable cells; callback selection performs no VALUE demand. A slot that reads a value — the collection, reduce's initial accumulator — reads the bound value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "builtin-call-assembly-respects-argument-roles",
+    "category": "collection-builtins",
+    "source": "L = L + 1\nAdd(a, b) = a + b\n\nmap([], L)\nfilter([], L)\nreduce([], L, 7)\nreduce([1, 2], Add, 10)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[]\n[]\n7\n13"
+      }
+    ],
+    "expectedRaw": "S[L[], L[], 7, 13]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "E = ()\nD = E.filter(D)\nD.count",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "A = 1 / 0\nmap([], A), repeat(A(5), 0)",
+        "expectedNeutral": "ok raw=S[L[], 5] n=2"
+      },
+      {
+        "source": "A = 5\nmap([1], A)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Add(a, b) = a + b\nreduce([], Add, 1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Add(a, b) = a + b\nreduce([1, 2], Add, 1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Inc(x) = x + 1\nAdd(a, b) = a + b\nProbe(u) = reduce([1, 2], Add, Inc)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Bad = 1 / 0\ntake(Bad*)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nmap([], Bad*)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nreduce([], Bad*, 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "count(1, {}*)",
+        "expectedNeutral": "err spreadMissingOutput"
+      },
+      {
+        "source": "P = [1, 2, 3], 2\ntake(P*)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      }
+    ],
+    "explanation": "A collection builtin handles each argument by the role its position has. A callback — the map mapper, the filter predicate, the reduce reducer — is invoked once per element and is never evaluated merely because it was passed, so an unused callback has no effect, cannot fail, and cannot recurse (`map([], L)` is `[]` although reading `L` would never end). A value — the collection, a count, reduce's initial accumulator — is evaluated once; if that fails, the failure is the call's failure and is never retried. A spread `X*` supplies exactly its items, and if evaluating `X` fails, that failure is the call's failure before the arguments are counted."
+  },
+  {
+    "id": "distinct-preserves-first",
+    "category": "collection-builtins",
+    "source": "distinct((3, 1, 3, 2, 1, 2))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[3, 1, 2]"
+      }
+    ],
+    "expectedRaw": "L[3, 1, 2]",
+    "expectedEmittedCount": 1,
+    "explanation": "`distinct` keeps the first occurrence of each structurally-equal item."
+  },
+  {
+    "id": "distinct-structural-pairs",
+    "category": "collection-builtins",
+    "source": "distinct(((1, 2), (1, 2), (3, 4)))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[(1, 2), (3, 4)]"
+      }
+    ],
+    "expectedRaw": "L[S[1, 2], S[3, 4]]",
+    "expectedEmittedCount": 1,
+    "explanation": "Deduplication uses structural equality on whole sequence-value items."
+  },
+  {
+    "id": "take-family-tutorial",
+    "category": "collection-builtins",
+    "source": "take((1, 2, 3, 4, 5), 3)\n\ntake(((1, 2), (3, 4)), 1)\n\nrange(1, 5).take(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3]\n[(1, 2)]\n[1, 2]"
+      }
+    ],
+    "expectedRaw": "S[L[1, 2, 3], L[S[1, 2]], L[1, 2]]",
+    "expectedEmittedCount": 3,
+    "explanation": "Three `take` examples (a composite fence from an earlier edition of the tutorial): a plain prefix list, the single-survivor case (the exact one-element list `[(1, 2)]`), and the dot-call form over a `range` list receiver."
+  },
+  {
+    "id": "distinct-family-tutorial",
+    "category": "collection-builtins",
+    "source": "distinct((3, 1, 3, 2, 1, 2))\n\ndistinct(((1, 2), (1, 2), (3, 4)))\n\nValues = 3, 1, 3, 2, 1, 2\nValues.distinct",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[3, 1, 2]\n[(1, 2), (3, 4)]\n[3, 1, 2]"
+      }
+    ],
+    "expectedRaw": "S[L[3, 1, 2], L[S[1, 2], S[3, 4]], L[3, 1, 2]]",
+    "expectedEmittedCount": 3,
+    "explanation": "Three `distinct` examples (a composite fence from an earlier edition of the tutorial): atom dedup, structural pair dedup, and the dot-call form over a captured multi-item body."
+  },
+  {
+    "id": "spread-one-level-family",
+    "category": "sequence-construction",
+    "source": "(1, 2)*, 3\n1*, (2, 3)\n(1, (2, 3))*, 4",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n3\n1\n(2, 3)\n1\n(2, 3)\n4"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3, 1, S[2, 3], 1, S[2, 3], 4]",
+    "expectedEmittedCount": 8,
+    "explanation": "Spread projects exactly one immediate level, and a comma is required between a spread and a following same-line slot (a star with a right operand is multiplication): each line contributes its spread items plus the trailing slot as root rows."
+  },
+  {
+    "id": "distinct-empties-collapse",
+    "category": "collection-builtins",
+    "source": "distinct(((), ()))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[()]"
+      }
+    ],
+    "expectedRaw": "L[S[]]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "distinct((), ())",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "The grouped collection's two `()` items deduplicate to one kept `()`, and the exact list result keeps it as the one-element list `[()]` — list results never erase the one-item boundary. `distinct(collection)` takes exactly one argument, so the bare two-argument form is an arity error."
+  },
+  {
+    "id": "order-sorts-atoms",
+    "category": "collection-builtins",
+    "source": "order((3, 4, 2, 1, 3, 3))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3, 3, 3, 4]"
+      }
+    ],
+    "expectedRaw": "L[1, 2, 3, 3, 3, 4]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "order(5)",
+        "expectedNeutral": "ok raw=L[5] n=1"
+      },
+      {
+        "source": "order(())",
+        "expectedNeutral": "ok raw=L[] n=1"
+      }
+    ],
+    "explanation": "`order` sorts numeric items ascending into one exact list; a single item forms `[5]` and empty input forms `[]`."
+  },
+  {
+    "id": "range-inclusive",
+    "category": "collection-builtins",
+    "source": "range(1, 5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3, 4, 5]"
+      }
+    ],
+    "expectedRaw": "L[1, 2, 3, 4, 5]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "count(range(1, 5))",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "range(1, 3)[0]",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "x = (range(1, 3)*)\nx[0]",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "`range` returns every integer from start to stop inclusive as one exact list value; postfix selection `[i]` selects one element directly from the list result."
+  },
+  {
+    "id": "range-single-value",
+    "category": "collection-builtins",
+    "source": "range(3, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[3]"
+      }
+    ],
+    "expectedRaw": "L[3]",
+    "expectedEmittedCount": 1,
+    "explanation": "A one-integer range is the exact one-element list `[3]` — collection-producing builtins always materialize a list, and the one-item boundary is never erased.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "range-integral-bound-quantum",
+    "category": "collection-builtins",
+    "source": "range(1.0, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3]"
+      }
+    ],
+    "expectedRaw": "L[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "range(1, 3.0)",
+        "expectedNeutral": "ok raw=L[1, 2, 3] n=1"
+      },
+      {
+        "source": "range(1.00, 3.000)",
+        "expectedNeutral": "ok raw=L[1, 2, 3] n=1"
+      },
+      {
+        "source": "range(3.0, 1)",
+        "expectedNeutral": "ok raw=L[3, 2, 1] n=1"
+      },
+      {
+        "source": "range(-0.0, 2)",
+        "expectedNeutral": "ok raw=L[0, 1, 2] n=1"
+      },
+      {
+        "source": "range(1.5, 3)",
+        "expectedNeutral": "err illegalInEval"
+      }
+    ],
+    "explanation": "`range` emits canonical integer elements independent of its accepted whole-number bounds' Decimal128 quantum and zero sign: `range(1.0, 3)` produces `[1, 2, 3]`, and `range(-0.0, 2)` produces `[0, 1, 2]`. The existing bound and collection limits still apply.",
+    "notes": "The canonical case keeps the representative boundary: a whole-number bound written with a quantum is accepted and the list carries the canonical integer representation. RangeBoundCanonicalizationTests retains the denser matrix (exponent spellings, negative bounds, the 1e34 endpoint, the async twin, and fused direct-range iteration) with quantum-level assertions.",
+    "leanExclusionReason": "Decimal128 quantum is outside the Lean Int numeric model: the whole-number bound `1.0` has no Int spelling distinct from `1` (the encoder refuses it), so only the runtime can observe — and must canonicalize — the representation of an integral range bound."
+  },
+  {
+    "id": "spread-arguments-keep-written-order",
+    "category": "collection-builtins",
+    "source": "Lo = 2\nHi = 4\nrange(Lo*, Hi*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[2, 3, 4]"
+      }
+    ],
+    "expectedRaw": "L[2, 3, 4]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Lo = 2\nHi = 4\nrange(Hi*, Lo*)",
+        "expectedNeutral": "ok raw=L[4, 3, 2] n=1"
+      },
+      {
+        "source": "Bounds = 2, 4\nrange(Bounds*)",
+        "expectedNeutral": "ok raw=L[2, 3, 4] n=1"
+      },
+      {
+        "source": "Bounds = 4, 2\nrange(Bounds*)",
+        "expectedNeutral": "ok raw=L[4, 3, 2] n=1"
+      }
+    ],
+    "explanation": "Expanding spread argument slots preserves written order: each slot contributes its items in place, so `range(Lo*, Hi*)` supplies `Lo`'s item before `Hi`'s.",
+    "notes": "The order companion of `spread-arguments-fail-left-to-right`: correcting the evaluation ORDER of spread argument slots must not reorder the expanded argument VALUES."
+  },
+  {
+    "id": "atoms-recursive-flatten",
+    "category": "collection-builtins",
+    "source": "atoms(((1, 2), (3, 4)))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3, 4]"
+      }
+    ],
+    "expectedRaw": "L[1, 2, 3, 4]",
+    "expectedEmittedCount": 1,
+    "explanation": "`atoms` recursively erases all sequence-value structure and materializes the collected atoms as one list — the explicit contrast to one-level spread."
+  },
+  {
+    "id": "atoms-exact-list-result",
+    "category": "collection-builtins",
+    "source": "atoms(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[7]"
+      }
+    ],
+    "expectedRaw": "L[7]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "atoms(7) == [7]",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "atoms(7) == 7",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "atoms((1, 2)) == [1, 2]",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "atoms((1, 2)) == (1, 2)",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "atoms(()) == []",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "atoms(()) == ()",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "atoms('text')",
+        "expectedNeutral": "ok raw=L[] n=1"
+      }
+    ],
+    "explanation": "`atoms` always returns one list, whatever the input kind or atom count: a lone number yields the singleton list `[7]` (never the bare `7`), a no-atom input yields `[]`, and the result is list-exact, never a sequence.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "atoms-list-traversal",
+    "category": "collection-builtins",
+    "source": "atoms([1, 2])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2]"
+      }
+    ],
+    "expectedRaw": "L[1, 2]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "atoms(1, 2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "atoms([1, 2]*)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "atoms(([1, 2]*))",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "[1, [2, 3]].atoms == atoms([1, [2, 3]])",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "`atoms` traverses exact list boundaries just like sequence boundaries. The call boundary is unchanged: `atoms(value)` takes exactly one argument, an unspread list is one argument, and spreading a multi-element list into the call is an ordinary arity error.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "atoms-mixed-traversal",
+    "category": "collection-builtins",
+    "source": "atoms([(1, 2), [3, [4]]])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3, 4]"
+      }
+    ],
+    "expectedRaw": "L[1, 2, 3, 4]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "atoms([3, (1, [4, 2])])",
+        "expectedNeutral": "ok raw=L[3, 1, 4, 2] n=1"
+      },
+      {
+        "source": "atoms([[], (), [1]])",
+        "expectedNeutral": "ok raw=L[1] n=1"
+      },
+      {
+        "source": "atoms([10, [20, 30]])[2]",
+        "expectedNeutral": "ok raw=30 n=1"
+      }
+    ],
+    "explanation": "Mixed sequence/list nesting flattens depth-first, left to right, into one flat exact list: container boundaries are opened, never preserved, and structural order is kept without sorting or deduplication."
+  },
+  {
+    "id": "atoms-list-composition",
+    "category": "collection-builtins",
+    "source": "[1, 2, 3].skip(1).atoms",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[2, 3]"
+      }
+    ],
+    "expectedRaw": "L[2, 3]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "range(1, 3).atoms",
+        "expectedNeutral": "ok raw=L[1, 2, 3] n=1"
+      },
+      {
+        "source": "atoms((3, 1, 2)).order",
+        "expectedNeutral": "ok raw=L[1, 2, 3] n=1"
+      },
+      {
+        "source": "atoms((1, 2, 3)).count",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "List-producing builtins compose directly with `atoms` — no spread-and-recapture workaround is needed — and the exact-list result of `atoms` composes directly with every collection consumer."
+  },
+  {
+    "id": "atoms-no-truthiness",
+    "category": "collection-builtins",
+    "source": "if(atoms((1, [2])), 10, 20)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "if([1], 10, 20)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "if([], 10, 20)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "if((1, [2]), 10, 20)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "if(([1], 0), 10, 20)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "if(1, 10, 20)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "if(atoms((1, [2])) == [1, 2], 10, 20)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "if(atoms(()).count > 0, 10, 20)",
+        "expectedNeutral": "ok raw=20 n=1"
+      }
+    ],
+    "explanation": "`atoms` does not define truthiness, and neither does any other value: an `if` condition must be a Boolean value, so a list (an `atoms` result included), a sequence value, or a number in the condition slot is a value-kind error rather than a truth test. A truth test over atoms is a comparison, which yields the Boolean the condition needs."
+  },
+  {
+    "id": "sum-of-range-collection",
+    "category": "collection-builtins",
+    "source": "sum(range(1, 3))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "sum(range(1, 3)*)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "sum((range(1, 3)*))",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "A collection builtin's list result is one collection argument for the next builtin: `sum` opens the bound list one level and sums its items. Spreading the result instead supplies its items as separate arguments — an arity error for the one-parameter `sum(collection)` — unless the spread is re-grouped into one collection value."
+  },
+  {
+    "id": "count-family",
+    "category": "collection-builtins",
+    "source": "count(())\ncount((()))\n\ncount(range(1, 5))\n\ncount((10, 20, 30))\n\ncount((3, 4, range(1, 5)*, 7))\n\ncount((range(1, 5)*, 7))\n\ncount(((1, 2), (3, 4)))\n\nData = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)\n(Data[0]).count",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0\n0\n5\n3\n8\n6\n2\n5"
+      }
+    ],
+    "expectedRaw": "S[0, 0, 5, 3, 8, 6, 2, 5]",
+    "expectedEmittedCount": 8,
+    "explanation": "`count` counts top-level items after the builtin collection binding opens a single grouped value: `()` counts 0, spreads splice before counting, nested pairs count as whole items, and a selected sequence item counts its own members once `count` opens it."
+  },
+  {
+    "id": "count-scalar-and-string",
+    "category": "collection-builtins",
+    "source": "count(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "count('hello')",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "An atomic value is a one-element collection for `count`."
+  },
+  {
+    "id": "count-dotcount-agree",
+    "category": "collection-builtins",
+    "source": "T = (1, 2, 3)\nT.count\n\nA = 1, 2, 3\nA.count\n\ncount(A)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n3\n3"
+      }
+    ],
+    "expectedRaw": "S[3, 3, 3]",
+    "expectedEmittedCount": 3,
+    "explanation": "`.count` and `count(...)` agree through both a written sequence value and a captured multi-item body."
+  },
+  {
+    "id": "if-value-boundary",
+    "category": "collection-builtins",
+    "source": "X = 1, 2, 3\nif(true, X, X)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2, 3)"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "X = 1, 2, 3\nif(true, X, X)*, 997",
+        "expectedNeutral": "ok raw=S[1, 2, 3, 997] n=4"
+      }
+    ],
+    "explanation": "`if` is a value boundary like every builtin: the selected branch is one value, turned back into an item supply only by caller-site spread."
+  },
+  {
+    "id": "builtin-fixed-collection-arity",
+    "category": "collection-builtins",
+    "source": "count((1, 2, 3))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "count(1, 2, 3)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "count()",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "count(3)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "take((1, 2, 3), 2)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "take([1, 2, 3], 2)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "take((1, 2, 3))",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "take([1, 2, 3])",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "take([1, 2, 3]*, 2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inspect(*items) = items\nInspect(1, 2, 3)",
+        "expectedNeutral": "ok raw=L[1, 2, 3] n=1"
+      }
+    ],
+    "explanation": "A collection builtin receives exactly ONE fixed collection argument plus its fixed control arguments: `count(collection)` and `take(collection, count)` are ordinary fixed-arity callables, so inline items (`count(1, 2, 3)`), a missing control (`take((1, 2, 3))`), a missing collection (`count()`), and spread items (`take([1, 2, 3]*, 2)`) are ordinary arity errors. A scalar is a one-element collection. USER-DEFINED variadic callables remain a separate general arity mechanism: `Inspect(1, 2, 3)` collects the three argument slots as the exact list `[1, 2, 3]`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "reduce-accumulates-value",
+    "category": "collection-builtins",
+    "source": "Append(item, (*history)) = (history*, item)\nreduce((2, 3, 4), Append, (0, 1))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(0, 1, 2, 3, 4)"
+      }
+    ],
+    "expectedRaw": "S[0, 1, 2, 3, 4]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Append(item, (*history)) = (history*, item)\nProbe(u) = reduce(2, 3, 4, Append, (0, 1))\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Append(item, *history) = (history*, item)\nreduce((2, 3, 4), Append, 1)",
+        "expectedNeutral": "ok raw=S[S[S[1, 2], 3], 4] n=1"
+      },
+      {
+        "source": "Append(item, [*history]) = [history*, item]\nreduce((2, 3, 4), Append, [1])",
+        "expectedNeutral": "ok raw=L[1, 2, 3, 4] n=1"
+      },
+      {
+        "source": "Append(item, (*history)) = (history*, item)\nreduce((2, 3, 4), Append, 1)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Add(a, b) = a + b\nreduce((1, 2, 3, 4), Add, 0)",
+        "expectedNeutral": "ok raw=10 n=1"
+      }
+    ],
+    "explanation": "`reduce(collection, reducer, initial)` takes exactly three arguments and threads ONE accumulator value: the reducer is called as `Append(item, accumulator)`, two ordinary arguments. The explicit sequence pattern `(*history)` opens a SEQUENCE accumulator — a scalar is its kind mismatch, so the accumulator starts as the pair `(0, 1)` — and the result displays as ONE sequence value `(0, 1, 2, 3, 4)`, not as separate rows; the list pattern `[*history]` opens a list accumulator of any length, one element included. An unopened collecting parameter `*history` collects the one accumulator value whole, nesting each step. Supplying the items inline (`reduce(2, 3, 4, Append, (0, 1))`) is an ordinary five-argument arity error.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "reduce-empty-initial-is-one-value",
+    "category": "collection-builtins",
+    "source": "R(x, acc) = acc + x\nInit = 1, 2\nreduce((), R, Init)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2)"
+      }
+    ],
+    "expectedRaw": "S[1, 2]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "R(x, acc) = acc + x\nreduce([], R, [5])",
+        "expectedNeutral": "ok raw=L[5] n=1"
+      },
+      {
+        "source": "Add(a, b) = a + b\nreduce((), Add, 5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      }
+    ],
+    "explanation": "The initial accumulator expression occupies ONE written accumulator slot: its result is reified as one value before reduction begins, so an empty reduction returns the initial accumulator as ONE value (`(1, 2)`, count 1) — never as an unbounded multi-item supply — exactly like the non-empty case threads it."
+  }
+]

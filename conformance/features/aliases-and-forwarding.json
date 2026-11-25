@@ -1,0 +1,1043 @@
+[
+  {
+    "id": "forwarding-single-collector-by-shape",
+    "category": "variadic-calls",
+    "source": "Get([*xs]) = xs.count\nUse(*items) = [Get][0]\nUse(3, 4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "At the value reference to Get, Use supplies its own collecting stream items to the grouped collector xs. The synthesized call is Get([items*]), so Get counts the two supplied elements."
+  },
+  {
+    "id": "implicit-forwarding-is-by-binding-name",
+    "category": "variadic-calls",
+    "source": "F(x) = x + 1\nG(x) = x * 2\nH = F + G\n\nCommon(x, x) = x\nTwice = Common * 2\n\nH(3)\nTwice(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n14"
+      }
+    ],
+    "expectedRaw": "S[10, 14]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Common(x, x) = x\nTwice = Common * 2\nTwice(7, 7)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Common(x, x) = x\nCommon(7, 8)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P(x, x, x) = x\nSome = P + 0\nSome(7)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "P((x, a), x) = a\nSome = [P][0]\nSome((7, 8))",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "P(x, x) = x\nQ(x) = P + 0\nQ(7)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Bad = 1 / 0\nP(x, x) = x\nSome = P + 0\nSome(Bad)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Inc(y) = y + 1\nP(x, x) = x\nSome = P + 0\nSome(Inc)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Common(x, x) = x\nSame = Common\nSame(7, 7)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Common(x, x) = x\nSame = Common\nSame(7)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P(x, x) = x\nQ(x) = P\nQ(7)",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "A formula that USES another formula hands its inputs on by binding name, regardless of how many times that name occurs in the callee's parameter patterns. A caller owns one binding for a name, and every occurrence of that name in the callee receives it: `Twice = Common * 2` is `Twice(x) = Common(x, x) * 2`, exactly as `H = F + G` with `F(x)` and `G(x)` is `H(x) = F(x) + G(x)`. So `Twice(7)` is 14, and Twice takes one argument. Nothing is combined: both occurrences receive the same binding, so a failing or callable-only argument is still that argument's own error. A definition whose whole body is the callee is not a formula: `Same = Common` is a callable alias, so calling Same calls Common itself, with its two independent arguments, and bare forwarding `Q(x) = P` reuses Q's one binding named x by name, `P(x, x)`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "formula-lifting-is-one-law-for-every-callable",
+    "category": "variadic-calls",
+    "source": "Lib = {\n    public Inc(x) = x + 1\n}\nE(0) = 100\nE(n) = n\nTotal = count + 0\nNext = Lib.Inc + 0\nFam = E + 1\n\nTotal((1, 2, 3))\nNext(4)\nFam(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n5\n101"
+      }
+    ],
+    "expectedRaw": "S[3, 5, 101]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Lib = {\n    public Inc(x) = x + 1\n}\nG = {\n    open Lib\n    Inc + 0\n}\nG(4)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Step(s) = s + 1\nG = repeat + 0\nG(Step(0), 2)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "G = if + 0\nG(false, 1, 2)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "G = abs + 0\nG(0 - 4)",
+        "expectedNeutral": "ok raw=4 n=1"
+      },
+      {
+        "source": "G = Math.Abs * 2\nG(0 - 4)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "P(0, y) = y\nP(x, y) = x + y\nG = P * 10\nG(2, 5), G(0, 5)",
+        "expectedNeutral": "ok raw=S[70, 50] n=2"
+      },
+      {
+        "source": "G(collection) = count + 0\nG((1, 2, 3))",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "G(items) = count + 0\nG((1, 2, 3))",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "count",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "E(0) = 1\nE(n) = n\nE",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "C = count\nC((1, 2))",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "A formula that uses a callable as a value hands the callable's inputs on, whatever kind of callable it is and however its name was reached: a builtin (`Total = count + 0` is `Total(collection) = count(collection) + 0`, with the builtin's own parameter names), a member reached through a dot path or `open`, a Math function, a host operation, and a clause family, whose inputs are named by its clauses (`E(n) = n` names `E`'s one input `n`, so `Fam = E + 1` is `Fam(n) = E(n) + 1`). A bare top-level row is not a formula — writing `count` alone reports that `count` needs its argument — and neither is a definition whose whole body is only a callable's name: `C = count` makes `C` a callable alias of `count`, so `C((1, 2))` is `count((1, 2))`.",
+    "notes": "The unified formula-lifting law (decided September 30 2026; constitution Q-11, Q-12 and Q-13 for formulas). Formerly only document properties and the two Math spellings lifted: `count`, an opened or dotted member, a host operation and a clause family stayed bare references.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "formula-lifting-follows-the-consumers-role",
+    "category": "variadic-calls",
+    "source": "Inc(x) = x + 1\nApply(f) = f(10)\n\nValues = [Inc, Inc * 2]\nKept = Apply(Inc)\nBranch = if(true, Inc, 0)\n\nValues(4)\nKept\nBranch(4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[5, 10]\n11\n5"
+      }
+    ],
+    "expectedRaw": "S[L[5, 10], 11, 5]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nG = map([1, 2], Inc)\nG",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nG = repeat(Inc(0), 2)\nG",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nId(v) = v\nG = Id(Inc + 0)\nG(4)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nG = (Inc, 0)\nG(4)",
+        "expectedNeutral": "ok raw=S[5, 0] n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nS = Inc.string\nS(4)",
+        "expectedNeutral": "ok raw='5' n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nG = Inc.count\nG(4)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Bad(x) = x / 0\nG = if(c, 1, Bad)\nG(true, 5)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Bad(x) = x / 0\nG = if(c, 1, Bad)\nG(false, 5)",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "Whether a reference lifts is decided by what its immediate consumer does with it. A consumer that needs the VALUE — an operator, a list or capture element, an `if` argument, a builtin's collection or value control, a Math or host argument, a clause family's argument, the `.string` receiver — lifts it: `Values = [Inc, Inc * 2]` is `Values(x) = [Inc(x), Inc(x) * 2]`. A consumer that CALLS it or passes it on keeps it: `Apply(Inc)` hands `Inc` itself to `Apply`, and `map([1, 2], Inc)` calls it for each element. A nested expression is judged by its own consumer, so `Id(Inc + 0)` lifts while `Id(Inc)` does not. Laziness does not change the decision: an `if` branch lifts whether or not a run selects it, and it is still evaluated only when selected.",
+    "notes": "The unified formula-lifting law (decided September 30 2026): the role is the immediate consumer's, recursive, and blind to laziness. Formerly builtin value slots, capture elements, nested call arguments and the `.string` receiver never lifted.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "unliftable-clause-family",
+    "category": "variadic-calls",
+    "source": "S(1) = 1\nS(-1) = -1\nG = S + 0\n\nG(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnliftableClauseFamily",
+    "expectedParseDiagnosticFragment": "has no formula-lifting signature",
+    "probes": [
+      {
+        "source": "S(1) = 1\nS(-1) = -1\nG(v) = S(v) + 0\nG(0 - 1)",
+        "expectedNeutral": "ok raw=-1 n=1"
+      },
+      {
+        "source": "E(0) = 100\nE(n) = n\nG = E + 0\nG(0)",
+        "expectedNeutral": "ok raw=100 n=1"
+      },
+      {
+        "source": "S(1) = 1\nS(-1) = -1\nP(u) = S + 0\nP(0)",
+        "expectedNeutral": "err branch"
+      }
+    ],
+    "explanation": "A formula hands its inputs on by parameter name, so lifting a clause family needs one name per argument position: the plain parameters its clauses bind there. Literal, structural and empty clause patterns name nothing, the clauses must agree on a position's name, and two positions cannot share one. `S(1) = 1` and `S(-1) = -1` name nothing, so the formula `G = S + 0` is rejected at `S`: call the family with explicit arguments (`G(v) = S(v) + 0`), or name the position with a plain parameter in a general clause.",
+    "notes": "The unified formula-lifting law (decided September 30 2026): a clause family's lifting signature is derived from its clauses, and no name is ever invented. Source-level front-end diagnostic; no elaborated Lean program exists.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "root-row-block-head-is-elaborated",
+    "category": "variadic-calls",
+    "source": "Inc(x) = x + 1\n{\n    public K = if(true, 5, Inc)\n    0\n}.K",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        1,
+        0
+      ]
+    },
+    "explanation": "THE ROOT CLAUSE keeps a bare root row unlifted, never the block written in it. `K` uses `Inc` in a value role, so formula lifting makes it `K(x)`, and the row `{ … }.K` is `K`'s own zero-argument demand: its arity error, exactly as `Lib = { … }` followed by `Lib.K`.",
+    "notes": "S-10 F1 (November 2026): this printed 5 before the fix, because the rewrite returned the preserved row with its block unprocessed and the evaluator ran K's raw body. The resolver now checks that every body the signature analysis records is rewritten."
+  },
+  {
+    "id": "root-row-block-head-reports-front-end-errors",
+    "category": "variadic-calls",
+    "source": "C1(a, *p) = a\nC2(b, *q) = b\n{\n    public K = C1 + C2\n    0\n}.K",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidCollectingBinding",
+    "explanation": "A block written in a preserved root row is elaborated like every other body, so its front-end errors are reported: `K = C1 + C2` would lift two collecting parameters at one level, which no written signature may declare.",
+    "notes": "S-10 F1 (November 2026): the error was lost before the fix, because the block in the preserved root row was never elaborated. Source-level front-end diagnostic; no elaborated Lean program exists."
+  },
+  {
+    "id": "repeated-name-wrapper-keeps-independent-arguments",
+    "category": "variadic-calls",
+    "source": "Common(x, x) = x\nBoth(a, b) = Common(a, b)\nTwice(v) = Common(v, v)\nSome = Common\n\nBoth(7, 7)\nTwice(8)\nSome(9, 9)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n8\n9"
+      }
+    ],
+    "expectedRaw": "S[7, 8, 9]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "P(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(7, 8)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Bad = 1 / 0\nP(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(Bad, 7)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "P(x, x) = x\nSome = P\nSome(7, 8)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad, 7)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nP(x, x) = x\nSame(x) = P(x, x)\nSame(Bad)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nP(x, x) = x\nSome = [P][0]\nSome(Bad)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "P((x, a), x) = a\nW(p, q) = P(p, q)\nW((7, 8), 7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "P(x, x) = x\nW(u, v) = P(u, v)\nAlias = W\nAlias(5, 5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      }
+    ],
+    "explanation": "Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Some = Common` is a callable alias: calling Some calls Common itself, with its own two independent arguments, so `Some(9, 9)` is 9 and `Some(9, 8)` fails the same way. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and a formula such as `[Common][0]` forwards one binding by name in exactly the same way, so `Twice(8)` is 8.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "implicit-forwarding-preserves-structural-kind",
+    "category": "variadic-calls",
+    "source": "Single([x]) = x\nA = Single\nAdd((x, y)) = x + y\nB = Add\nC((*xs)) = xs.count\nCount = C\nG([x]) = Single\n\nA([7])\nA([[7]])\nB((10, 20))\nCount((1, 2, 3))\nG([7])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n[7]\n30\n3\n7"
+      }
+    ],
+    "expectedRaw": "S[7, L[7], 30, 3, 7]",
+    "expectedEmittedCount": 5,
+    "probes": [
+      {
+        "source": "Single([x]) = x\nA = Single\nA([[7]]) == Single([[7]])",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "Single([x]) = x\nA = Single\nA(7)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Add((x, y)) = x + y\nB = Add\nB([10, 20])",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "C((*xs)) = xs.count\nCount = C\nCount(())",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "F(([x, y], z)) = x + y + z\nA = F\nA(([10, 20], 30))",
+        "expectedNeutral": "ok raw=60 n=1"
+      },
+      {
+        "source": "F([(x, y), z]) = x + y + z\nA = F\nA([(1, 2), 3])",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "P([x, x]) = x\nSome = P\nNext = Some\nNext([(7, 8), (7, 8)])",
+        "expectedNeutral": "ok raw=S[7, 8] n=1"
+      },
+      {
+        "source": "P([x, x]) = x\nSome = P\nNext = Some\nNext([(7, 8)])",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Single([x]) = x\nF([x]) = {\n  K = Single\n  K\n}\nF([[7]])",
+        "expectedNeutral": "ok raw=L[7] n=1"
+      },
+      {
+        "source": "M([first, *middle, last]) = [first, middle, last]\nW([first, *middle, last]) = M\nW([1, 2, 3])",
+        "expectedNeutral": "ok raw=L[1, L[2], 3] n=1"
+      },
+      {
+        "source": "F(([x, y], z)) = x + y + z\nW(([x, y], z)) = F\nW(([1, 2], 3))",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "Forwarding hands every existing binding on unchanged and rebuilds every structural pattern it reconstructs as the SAME kind that pattern matches. A callable alias forwards nothing at all — it IS its callee: `A = Single` accepts exactly the one-element lists Single accepts, `B = Add` exactly the pairs (so, like `Add`, it rejects a list), `Count = C` exactly C's sequences, and nested groups keep their kind at every level. Bare forwarding supplies a structural parameter only from a binding with the same name AND the same pattern, rebuilt as that kind: `G([x]) = Single` is `G([x]) = Single([x])`, so `G([7])` is 7 (while `G(x) = Single` is rejected, because G's whole `x` is not Single's `[x]`). Nothing converts between sequences and lists.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "alias-forwarding-and-explicit-call",
+    "category": "name-resolution",
+    "source": "Double(x) = x * 2\nOther(y) = y * 2\n\nAlias = Double\nForward(x) = Double\nExplicit(x) = Other(x)\nFormula = Double + 1\n\nAlias(5)\nForward(5)\nExplicit(5)\nFormula(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n10\n10\n11"
+      }
+    ],
+    "expectedRaw": "S[10, 10, 10, 11]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "Double(x) = x * 2\nForward(x) = Double\nForward(5, 6)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Double(x) = x * 2\nForward(x, unused) = Double\nForward(5, 999)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Ten = 10\nAlways(p) = Ten\nAlways(999)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Sub(y, x) = y - x\nG(x, y) = Sub\nG(10, 3)",
+        "expectedNeutral": "ok raw=-7 n=1"
+      },
+      {
+        "source": "Sub(y, x) = y - x\nG(x, y) = Sub(x, y)\nG(10, 3)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "F(x) = x * 2\nG(x) = x + 10\nA = F + G\nA(5)",
+        "expectedNeutral": "ok raw=25 n=1"
+      }
+    ],
+    "explanation": "Four ways to define a formula through another one are four different mechanisms. `Alias = Double` is a CALLABLE ALIAS: Alias names Double's callable itself — calling Alias calls Double, with Double's own parameters, and no wrapper or copied signature exists — while Alias stays its own definition. `Forward(x) = Double` is BARE FORWARDING: Forward's explicit parameter list is closed, and Double's parameter `x` is supplied from Forward's existing binding of the SAME NAME — never by position, never renamed, never added (a parameter Double does not need simply stays unused). `Explicit(x) = Other(x)` is an EXPLICIT CALL: the written arguments are passed as written, so the names need not match. `Formula = Double + 1` USES Double inside an expression, so Double's parameter is lifted into Formula by name: `Formula(x) = Double(x) + 1`. So `Forward(x) = Double` is not the same thing as `Forward(x) = Double(x)`: with `Sub(y, x) = y - x`, `G(x, y) = Sub` hands G's `y` to Sub's `y` and gives -7 for `G(10, 3)`, while `G(x, y) = Sub(x, y)` gives 7.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "bare-forwarding-never-renames-a-parameter",
+    "category": "name-resolution",
+    "source": "Other(y) = y * 2\nBad(x) = Other\n\nBad(5)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnforwardableParameter",
+    "expectedParseDiagnosticFragment": "is forwarded by name here, but its parameter 'y'",
+    "explanation": "Bare forwarding reuses an existing parameter only under its own name. `Other` needs `y`, and `Bad`'s explicit parameter list declares only `x`, so the definition is rejected: KatLang never renames `x` to `y` and never matches parameters by position. Write the call to pass `x` anyway (`Bad(x) = Other(x)`), or name the parameter `y`.",
+    "notes": "FWD-02 bare forwarding (decided September 30 2026): a front-end rejection, so no elaborated Lean program exists; Lean pins the same verdict with `bareForwardingRow` in CoreTests/AliasForwarding.lean.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "bare-forwarding-never-adds-a-parameter",
+    "category": "name-resolution",
+    "source": "F(p, q) = p + q\nA(p) = F\n\nA(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnforwardableParameter",
+    "expectedParseDiagnosticFragment": "is forwarded by name here, but its parameter 'q'",
+    "explanation": "An explicit parameter list is closed: bare forwarding may reuse its parameters by name, but never adds one. `F` still needs `q`, which `A(p)` does not declare, so the definition is rejected instead of inferring `q`. Declare it (`A(p, q) = F`) or supply it explicitly (`A(p) = F(p, 10)`).",
+    "notes": "FWD-02 bare forwarding with a closed explicit list (PAR-04): a front-end rejection, so no elaborated Lean program exists.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "alias-structural-forwarding-and-written-call",
+    "category": "name-resolution",
+    "source": "Single([x]) = x\n\nAlias = Single\nSameShape([x]) = Single\nExplicit(x) = Single(x)\nConstruct = Single([x])\n\nAlias([7])\nSameShape([7])\nExplicit([7])\nConstruct(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n7\n7\n7"
+      }
+    ],
+    "expectedRaw": "S[7, 7, 7, 7]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "Single([x]) = x\nAlias = Single\nAlias(7)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Single([x]) = x\nSameShape([x]) = Single\nSameShape(7)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Single([x]) = x\nExplicit(x) = Single(x)\nExplicit(7)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Single([x]) = x\nAlias = Single\nSameShape([x]) = Single\nAlias([[7]]), SameShape([[7]])",
+        "expectedNeutral": "ok raw=S[L[7], L[7]] n=2"
+      },
+      {
+        "source": "Single([x]) = x\nConstruct = Single([x])\nConstruct([7])",
+        "expectedNeutral": "ok raw=L[7] n=1"
+      },
+      {
+        "source": "Add((a, b)) = a + b\nPair(a, b) = Add((a, b))\nPair(2, 3)",
+        "expectedNeutral": "ok raw=5 n=1"
+      }
+    ],
+    "explanation": "The same four forms apply to structural parameters. `Alias = Single` is a callable alias of Single: it takes exactly the arguments Single takes, its `[x]` included. `SameShape([x]) = Single` is bare forwarding: its own parameter is the same pattern `[x]` under the same name, so Single receives it rebuilt as the list it matched. `Explicit(x) = Single(x)` passes its whole argument `x` as Single's list argument, so `Explicit([7])` is `Single([7])`. `Construct = Single([x])` infers `x` from the written `[x]` and builds the list before calling Single, so it takes the element itself. A bare `Bad(x) = Single` is rejected, because a same-named leaf inside a pattern is not the same parameter.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "bare-forwarding-never-reshapes-a-structural-parameter",
+    "category": "name-resolution",
+    "source": "Single([x]) = x\nBad(x) = Single\n\nBad([7])",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnforwardableParameter",
+    "expectedParseDiagnosticFragment": "does not declare its parameter '[x]' in that form",
+    "explanation": "Bare forwarding matches whole parameters, not leaf names. Single's parameter is the one-element list pattern `[x]`, while `Bad`'s is a whole value that happens to be called `x`, so the definition is rejected rather than silently building `Single([x])` from it. Write `Bad(x) = Single(x)` to pass `x` whole (then `Bad([7])` is 7), or declare the same pattern: `Bad([x]) = Single`.",
+    "notes": "FWD-02 structural compatibility is decided at the top-level parameter pattern: a front-end rejection, so no elaborated Lean program exists.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "bare-forwarding-never-manufactures-a-sequence",
+    "category": "name-resolution",
+    "source": "Add((x, y)) = x + y\nG(x, y) = Add\n\nG(2, 3)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnforwardableParameter",
+    "expectedParseDiagnosticFragment": "does not declare its parameter '(x, y)' in that form",
+    "explanation": "Add takes ONE parameter, the pair pattern `(x, y)`. `G(x, y)` declares two whole values with the same names, which is a different signature, so bare forwarding is rejected instead of manufacturing the pair. `G((x, y)) = Add` forwards the same pattern, and `G(x, y) = Add((x, y))` builds the pair explicitly.",
+    "notes": "FWD-02 structural compatibility: a front-end rejection, so no elaborated Lean program exists."
+  },
+  {
+    "id": "alias-preserves-the-callee-signature",
+    "category": "name-resolution",
+    "source": "Single([x]) = x\nP(x, x) = x\nE((), []) = 1\nA = Single\nB = A\nC = B\nAP = P\nAE = E\n\nC([7])\nC([[7]])\nAP(5, 5)\nAE((), [])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n[7]\n5\n1"
+      }
+    ],
+    "expectedRaw": "S[7, L[7], 5, 1]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "Single([x]) = x\nA = Single\nB = A\nB(7)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Single([x]) = x\nA = Single\nA((1, 2))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Single([x]) = x\nA = Single\nA([])",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Add((x, y)) = x + y\nA = Add\nA([2, 3])",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "P(x, x) = x\nA = P\nA(5, 6)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P(x, x) = x\nA = P\nA(5)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "E((), []) = 1\nA = E\nA()",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "E((), []) = 1\nA = E\nA([], ())",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "C(*xs) = xs\nA = C\nA(1, 2)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "C([*xs]) = xs\nA = C\nA([1, 2])",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "C((*xs)) = xs\nA = C\nA((1, 2))",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "C([*xs]) = xs\nA = C\nA((1, 2))",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "A definition whose whole body is a bare reference to an existing definition is a TRANSPARENT REFERENCE (M4★): `A = Single` makes A another name for Single itself — no wrapper and no copied signature — so `A(S)` IS `Single(S)` for every argument supply: the same results, the same failures, the same effects. Nothing is derived from the callee's binder names: repeated names (`AP = P` takes `P(x, x)`'s two arguments, which must be equal), binderless groups (`AE = E` takes `E((), [])`'s two structural parameters), collectors and structural kinds are the callee's own, through every level of a chain (`C = B`, `B = A`). The alias keeps its own name and declaration, but no cached value of its own: read without arguments it is the target's value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "inline-alias-value-demand-is-the-target-contract",
+    "category": "errors",
+    "source": "Inc(x) = x + 1\nK(z) = count({ Inc })\nK(1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nA = Inc\nK(z) = count(A)\nK(1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nA = Inc\nK(z) = count({ A })\nK(1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nK(z) = count(Inc)\nK(1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nId(v) = v\nId({ Inc })",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nK(z) = { Inc }.string\nK(1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nK(z) = [{ Inc }*]\nK(1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\ncount({ Inc })",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Add(a, b) = a + b\nK(z) = count({ Add })\nK(1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "K(z) = count({ abs })\nK(1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "E(0) = 0\nE(n) = n\nK(z) = count({ E })\nK(1)",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "K(z) = count({ count })\nK(1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Only(*xs) = xs\nK(z) = count({ Only })\nK(1)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nIgnore(f) = 0\nIgnore({ Inc })",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nK(z) = map([1, 2], { Inc })\nK(1)",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      }
+    ],
+    "explanation": "An inline block whose one row names a callable that needs arguments — `{ Inc }` — is a forwarding carrier of Inc (braces make a structure of its own whose calls go to Inc, M4★): it has no parameters of its own. Demanding its value with no arguments therefore fails exactly as demanding `Inc` itself does — Inc needs one argument, so the error is Inc's `ArityMismatch` (\"Property 'Inc' expects 1 parameter\"), reported at the `Inc` inside the block. A clause family reports its `NoMatchingBranch` and a builtin its own arity error; an alias whose target accepts no arguments (`{ Only }` with `Only(*xs)`) simply evaluates, and passing `{ Inc }` where a callable is expected (`map`) calls Inc.",
+    "notes": "FA-OQ-1, owner decision Option B (2026-10-10). Before it the demand reported the written block's unresolvedImplicitParams over the TARGET's parameters."
+  },
+  {
+    "id": "inline-formula-block-keeps-unresolved-implicit-params",
+    "category": "errors",
+    "source": "Inc(x) = x + 1\nK(z) = count({ Inc + 0 })\nK(1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "unresolvedImplicitParams",
+    "probes": [
+      {
+        "source": "K(z) = count({x + 1})\nK(1)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "Inc(x) = x + 1\nK(z) = count({ Inc, 1 })\nK(1)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "K(z) = count({ y })\nK(1)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      }
+    ],
+    "explanation": "A block that is not a lone callable reference is an ordinary algorithm with its OWN parameters: `{ Inc + 0 }` is a formula that needs Inc's `x`, so the block infers `x` as its own parameter (as does `{x + 1}`, and an unresolved name such as `{ y }`). Nobody supplies it when `count` demands the block's value, so the error is `UnresolvedImplicitParams`. Compare `inline-alias-value-demand-is-the-target-contract`, where `{ Inc }` alone is an alias with no parameters of its own.",
+    "notes": "FA-OQ-1 boundary: only an exact inline alias (a lone bare reference) reports its target's contract."
+  },
+  {
+    "id": "alias-of-a-builtin-is-the-builtin",
+    "category": "name-resolution",
+    "source": "C = count\nI = if\nM = map\nBad(x) = x / 0\n\nC([1, 2, 3])\nI(true, 1, 1 / 0)\nM([], Bad)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n1\n[]"
+      }
+    ],
+    "expectedRaw": "S[3, 1, L[]]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "R = repeat\nInc(x) = x + 1\nR(Inc)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = count\nB = A\nC = B\nC([1, 2])",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "T = take\nT([1, 2, 3], 2)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "Cnt = count\nmap([[1], [1, 2]], Cnt)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "C = count\nW(collection) = C\nW([1, 2])",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "C = count\nK = C + 1\nK([1, 2])",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "A definition whose whole body is the name of a callable that takes parameters is a CALLABLE ALIAS: the new name is a second name for the very same callable. That holds for every builtin. `C = count` makes `C([1, 2, 3])` exactly `count([1, 2, 3])`; `I = if` keeps `if`'s laziness, so `I(true, 1, 1 / 0)` is 1 and the division never runs; `M = map` keeps `map`'s rule that the callback is only called per element, so `M([], Bad)` is `[]` without calling `Bad`. An alias of an alias is the same callable again.",
+    "notes": "Callable aliases as binding indirection (decided October 1 2026): formerly a bare row naming a non-Math builtin stayed an ordinary property, so `C([1, 2, 3])` was an arity error.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "alias-of-a-clause-family-dispatches-as-the-family",
+    "category": "name-resolution",
+    "source": "Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\n\nF(4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "24"
+      }
+    ],
+    "expectedRaw": "24",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\nF(1, 2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "S(1) = 1\nS(-1) = -1\nSA = S\nSA(-1)",
+        "expectedNeutral": "ok raw=-1 n=1"
+      },
+      {
+        "source": "S(1) = 1\nS(-1) = -1\nSA = S\nSA(0)",
+        "expectedNeutral": "err branch"
+      }
+    ],
+    "explanation": "A clause family is aliased like any other callable: `F = Fact` makes `F(4)` exactly `Fact(4)`, choosing the clause the way `Fact` itself does, and `F(1, 2)` fails exactly as `Fact(1, 2)` does. Aliasing needs only the callable itself, not parameter names, so even a family whose clauses name no argument position — `S(1) = 1`, `S(-1) = -1` — can be aliased.",
+    "notes": "Callable aliases as binding indirection (decided October 1 2026): formerly a clause family was never an alias target (PV-14), so `F(4)` was an arity error.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "bare-forwarding-needs-parameter-names",
+    "category": "name-resolution",
+    "source": "S(1) = 1\nS(-1) = -1\nSA = S\nW(x) = SA\n\nW(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnforwardableCallable",
+    "expectedParseDiagnosticFragment": "has no parameter names to forward by",
+    "explanation": "Bare forwarding hands a callable its parameters from existing parameters of the SAME NAMES, so it needs a callable whose parameters have names. `S(1) = 1` and `S(-1) = -1` name nothing — a literal clause pattern is not a parameter name — so `W(x) = SA` is rejected: `SA` is an alias of `S`, and there is no name `x` could be forwarded by. Call the family with explicit arguments instead: `W(x) = SA(x)`.",
+    "notes": "Narrowed Q-77 (decided October 1 2026): a closed lone row whose callable has no forwarding contract is a front-end error, never a silent zero-argument demand. A front-end rejection, so no elaborated Lean program exists; Lean pins the verdict with `bareForwardingRowOf`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "alias-arguments-take-the-targets-roles",
+    "category": "variadic-calls",
+    "source": "Inc(x) = x + 1\nI = if\nK = I(c, Inc, 0)\n\nK(true, 4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = abs\nInc(x) = x + 1\nK = A(Inc)\nK(-5)",
+        "expectedNeutral": "ok raw=4 n=1"
+      },
+      {
+        "source": "C = count\nPair(x) = x, x\nK = C(Pair)\nK(1)",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "A call through an alias treats its arguments exactly as a call of the target does. `if` needs the VALUE of each of its arguments, so in `K = I(c, Inc, 0)` the formula uses `Inc`'s value and takes its input: `K(c, x) = I(c, Inc(x), 0)`, and `K(true, 4)` is 5 — just as `K = if(c, Inc, 0)` would be.",
+    "notes": "Callable aliases as binding indirection (decided October 1 2026; fixes X-45): formerly an alias was classified as a user callee, whose argument stays neutral, so `Inc` reached `if` as a callable and `K(true, 4)` failed."
+  },
+  {
+    "id": "alias-is-the-targets-callable",
+    "category": "name-resolution",
+    "source": "P(f, f) = f(7)\nOnly(*xs) = 0\nA = Only\n\nP(A, Only)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "explanation": "An alias and its target are one definition. `P(f, f)` requires its two arguments to be the same definition, and `A = Only` makes `A` another name for `Only`, so `P(A, Only)` binds `f` once and gives `Only(7)`, which is 0. Read without arguments, the two names share one value too: an alias keeps no cached value of its own (M4★).",
+    "notes": "Callable aliases as binding indirection (decided October 1 2026): formerly the alias was a wrapper callable of its own, so the repeated `f` saw two different callables and the call failed."
+  },
+  {
+    "id": "reference-members-are-the-targets-carrier-members-its-own",
+    "category": "name-resolution",
+    "source": "Lib(x) = {\n  K = 5\n  x\n}\nA = Lib\nNavigate(f) = f.K\n\nLib.K\nA.K\nNavigate(A)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n5\n5"
+      }
+    ],
+    "expectedRaw": "S[5, 5, 5]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Lib(x) = {\n  K = 5\n  x\n}\nC = { Lib }\nC.K",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      }
+    ],
+    "explanation": "A transparent reference names the WHOLE definition: `A = Lib` makes `A.K` Lib's own member `K`, exactly as passing `A` to `Navigate` reads it. Only a definition written in braces is a structure of its own: `C = { Lib }` hands its calls on to Lib but declares no members, so `C.K` takes the ordinary fallback to a function named `K` — which nothing declares here.",
+    "notes": "M4★ (ALIAS-UNIFY-1, October 2026): formerly `A.K` on the alias fell back to a lexical `K` (an alias was no namespace); the braced carrier keeps that behavior."
+  },
+  {
+    "id": "open-of-a-callable-alias-is-refused",
+    "category": "errors",
+    "source": "Lib(x) = x\nA = Lib\nB = {\n  open A\n  1\n}\n\nB",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "IllegalInOpen",
+    "expectedParseDiagnosticFragment": "cannot be opened because open providers must have an empty effective parameter list",
+    "explanation": "`open` imports the members of an algorithm that needs no call. `A = Lib` names Lib itself, so `open A` opens Lib — and Lib takes a parameter `x`, so it is no open provider and the open is rejected, exactly as `open Lib` would be. Compare `open-through-a-reference-opens-the-target`, whose target needs no call.",
+    "notes": "M4★ OD-C (ALIAS-UNIFY-1, October 2026): `open` of a reference opens its target, so it is refused exactly when the target is (formerly every alias was refused as \"a callable alias, not a namespace\"). A front-end rejection, so no elaborated Lean program exists; Lean refuses the same open with `Algorithm.requiresArguments`."
+  },
+  {
+    "id": "reference-and-carrier-transport-the-whole-definition",
+    "category": "name-resolution",
+    "source": "Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nA = Box\nB = { Box }\nGetQ(f) = f.Q\n\nA.Q\nGetQ(A)\nA(3)\nB(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "99\n99\n9\n9"
+      }
+    ],
+    "expectedRaw": "S[99, 99, 9, 9]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nBox()",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nB = { Box }\nB.Q",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nA = Box\nSame(x, x) = 0\nSame(A, Box)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nB = { Box }\nSame(x, x) = 0\nSame(B, Box)",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "`Box` declares its own members and its one row names `F`, so `Box(3)` is handed on to `F`. `A = Box` is a TRANSPARENT REFERENCE: every observation of `A` is Box's — its members (`A.Q`, and `GetQ(A)` through a parameter), its calls (`A(3)` is `Box(3)`) and its identity. `B = { Box }` is written in braces, so it is a FORWARDING CARRIER: a structure of its own whose calls are handed on to Box (`B(3)` is 9), with only the members it declares itself — none, so `B.Q` never reaches Box's `Q` — and a different identity from Box.",
+    "notes": "M4★ whole-algorithm transport (ALIAS-UNIFY-1, October 2026).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "repeated-name-matches-definitions-by-identity",
+    "category": "name-resolution",
+    "source": "A = 7\nD = 7\nSame(x, x) = true\nSame(x, y) = false\n\nSame(A, A)\nSame(A, D)\nSame(A, 7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true\nfalse\ntrue"
+      }
+    ],
+    "expectedRaw": "S[true, false, true]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Bad = 1 / 0\nSame(x, x) = 0\nSame(Bad, Bad)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Bad = 1 / 0\nSame(x, x) = 0\nSame(Bad(), Bad())",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nSame(x, x) = 0\nSame(Bad, 7)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nSame(x, x) = 0\nSame(7, Bad)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "A = 7\nD = 7\nP(x, x) = x\nP(A, D)",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "A repeated parameter name first asks each argument for the definition it names. Two arguments naming the SAME definition match by identity, without computing it (`Same(A, A)`, and even `Same(Bad, Bad)` with `Bad = 1 / 0`). Two DIFFERENT definitions never match, even when their values are equal (`Same(A, D)` is not the first clause, so the family takes the second). Once a plain value takes part, every argument's own value must equal it: `Same(A, 7)` computes `A` and compares, and `Same(Bad, 7)` fails with Bad's own division by zero.",
+    "notes": "Group-aware NEED-04 (ALIAS-UNIFY-1, October 2026), superseding the VALUE-first repeated-name rule.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "open-through-a-reference-opens-the-target",
+    "category": "name-resolution",
+    "source": "Lib = {\n    public K = 7\n    0\n}\nAlias = Lib\nP = {\n    open Alias, Lib\n    K\n}\n\nP",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Lib = {\n    public K = 7\n    0\n}\nC = {\n    public Own = 5\n    Lib\n}\nP = {\n    open C\n    K + Own\n}\nP(1)",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "`open Alias` opens the public members of what `Alias` names — `Lib` itself — so `open Alias, Lib` is one provider written twice and `K` is Lib's 7. A braced carrier is different: `C = { public Own = 5 ⏎ Lib }` opens only its own public member `Own`, so `K` stays an input of `P`.",
+    "notes": "M4★ OD-C (ALIAS-UNIFY-1, October 2026): formerly `open` of an alias was refused.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "member-path-alias-is-a-member-reference",
+    "category": "name-resolution",
+    "source": "Box = { G(x) = x * 10 }\nUse(b) = {\n    A = b.G\n    A(3), 3.A\n}\n\nUse(Box)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(30, 30)"
+      }
+    ],
+    "expectedRaw": "S[30, 30]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Thousand(v) = v * 1000\nUse(b) = {\n    A = b.G\n    A(Thousand)\n}\nUse(5)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "In a body whose only row is a member path rooted at a parameter, `A = b.G`, the member name `G` names a MEMBER of whatever `b` is — never a new input of `A`. With `Use(Box)`, `A` is Box's own `G`, so `A(3)` and `3.A` both call it. A receiver without that member gives no definition to call: `A` is then a plain value, and calling it with arguments is an arity error.",
+    "notes": "M4★ OD-B (ALIAS-UNIFY-1, October 2026): formerly the unresolved member name `G` became an inferred parameter of `A` (Q-75).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "bare-forwarding-keeps-each-parameter-kind",
+    "category": "name-resolution",
+    "source": "Add((a, b)) = a + b\nColl(*vs) = vs\nMid([first, *middle, last]) = [first, middle, last]\nPair((a, b)) = Add\nMany(*vs) = Coll\nSame([first, *middle, last]) = Mid\n\nPair((2, 3))\nMany(1, 2)\nSame([1, 2, 3, 4])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n[1, 2]\n[1, [2, 3], 4]"
+      }
+    ],
+    "expectedRaw": "S[5, L[1, 2], L[1, L[2, 3], 4]]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Coll(*vs) = vs\nMany(*vs) = Coll\nMany()",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Coll(*vs) = vs\nMany(*vs) = Coll\nMany(7)",
+        "expectedNeutral": "ok raw=L[7] n=1"
+      },
+      {
+        "source": "Coll(*vs) = vs\nOne(vs) = Coll\nOne((1, 2))",
+        "expectedNeutral": "ok raw=L[S[1, 2]] n=1"
+      },
+      {
+        "source": "One(vs) = vs\nMany(*vs) = One\nMany(1, 2)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "F(x) = x\nOuter(x) = {\n  Local(y) = F\n  Local(5)\n}\nOuter(100)",
+        "expectedNeutral": "ok raw=100 n=1"
+      },
+      {
+        "source": "F(x) = x\nOuter(x) = {\n  Local(x) = F\n  Local(5)\n}\nOuter(100)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "F(n) = n * 10\nG(0) = 0\nG(n) = F\nG(0), G(3)",
+        "expectedNeutral": "ok raw=S[0, 30] n=2"
+      }
+    ],
+    "explanation": "Bare forwarding supplies each parameter of the callee from the binding of the same name, keeping the binding as it is: a structural parameter declared with the same pattern is rebuilt as its own list or sequence (`Pair((a, b)) = Add` is `Add((a, b))`, `Same([first, *middle, last]) = Mid` is `Mid([first, middle*, last])`), and a collecting parameter re-spreads what it collected into a collecting parameter of the same name (`Many(*vs) = Coll` is `Coll(vs*)`). Only the source binding's kind decides a spread, so a fixed binding reaches a collector as one item and a collected list reaches a fixed parameter whole. A name the explicit list does not declare may still be an enclosing parameter binding — the one a written name would denote there — and is reused as it is; nothing is ever added to the list or renamed.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "written-call-infers-its-written-names",
+    "category": "name-resolution",
+    "source": "Add((a, b)) = a + b\nSingle([a]) = a\nG = Add((x, y))\nConstruct = Single([x])\n\nG(2, 3)\nConstruct(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Add((left, right)) = left + right\nG = Add((x, y))\nG(2, 3)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Add((a, b)) = a + b\nG = Add((x, y))\nG(2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Sub((a, b)) = a - b\nG = Sub((y, x))\nG(2, 3)",
+        "expectedNeutral": "ok raw=-1 n=1"
+      },
+      {
+        "source": "Add((a, b)) = a + b\nG(x, y) = Add((x, y))\nG(2, 3)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Two(a, b) = [a, b]\nG = Two(x, x)\nG(7)",
+        "expectedNeutral": "ok raw=L[7, 7] n=1"
+      }
+    ],
+    "explanation": "A written call is authoritative: `G = Add((x, y))` takes its parameters from the free names WRITTEN in its arguments, `x` then `y`, so it is exactly `G(x, y) = Add((x, y))` — and the sequence `(x, y)` stays one argument to Add. Add's own binder names never reach G: renaming them to `left` and `right` changes nothing. `Construct = Single([x])` likewise takes one parameter `x` and builds the one-element list itself.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "repeated-callable-success-preserves-both-channels",
+    "category": "variadic-calls",
+    "source": "B(*xs) = 5 + xs.count\nP(f, f, f, f, f) = [f, f(1), map([7], f)]\nP(B, 5, B, 5, 5)\nP(5, B, 5, 5, B)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[5, 6, [6]]\n[5, 6, [6]]"
+      }
+    ],
+    "expectedRaw": "S[L[5, 6, L[6]], L[5, 6, L[6]]]",
+    "expectedEmittedCount": 2,
+    "explanation": "Successful permutations retain the same value and callable channels. Repeated references to B are the same callable, so f reads its bound value 5 while f(1) and the mapper invoke B and produce 6. The rule applies uniformly to five occurrences as well as one, two, or three."
+  },
+  {
+    "id": "repeated-genuine-aliases-preserve-complete-binding",
+    "category": "variadic-calls",
+    "source": "A(*xs) = 5 + xs.count\nP(f, f) = [f, f.count, f(1), map([7], f)]\nBoth(left, right) = [P(left, right), P(right, left)]\nShare(original) = Both(original, original)\nShare(A)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[[5, 1, 6, [6]], [5, 1, 6, [6]]]"
+      }
+    ],
+    "expectedRaw": "L[L[5, 1, 6, L[6]], L[5, 1, 6, L[6]]]",
+    "expectedEmittedCount": 1,
+    "explanation": "The parameters left and right are genuine aliases of the one callable A, so the repeated f matches them by that identity without computing either. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. When every argument names one definition, permuting them keeps that identity and its channels, and f is the first argument's own cell — here both orders read the same A. Forwarding transports the same demandable cells and performs no VALUE evaluation.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "repeated-callable-identity-includes-captured-activation",
+    "category": "variadic-calls",
+    "source": "P(f, f) = f(1)\nOuter(n, previous) = {\n  Inner(*xs) = 5 + n * xs.count\n  if(n == 1, Outer(2, Inner), P(previous, Inner))\n}\nOuter(1, 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "explanation": "Two activations of one nested declaration are different callables even when their zero-argument values agree. The earlier Inner captures n=1 and the later Inner captures n=2; selecting either would change f(1), so the repeated binding rejects."
+  },
+  {
+    "id": "repeated-dot-results-have-distinct-wrapper-identities",
+    "category": "variadic-calls",
+    "source": "Obj = { public V = 5 }\nP(f, f) = f\nP(Obj.V, Obj.V)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "explanation": "A declared structural member supplies that member's stable callable identity without a value demand. Both `Obj.V` occurrences name the same member, so they satisfy the repeated-name constraint by identity, without either value being demanded; the body's `f` then reads the member's value. Computed values do not acquire wrapper callable identities."
+  },
+  {
+    "id": "repeated-forwarded-dot-wrapper-keeps-identity",
+    "category": "variadic-calls",
+    "source": "Obj = { public V = 5 }\nP(f, f) = f()\nPass(g) = P(g, g)\nPass(Obj.V)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "explanation": "A structural member path supplies that member's own callable identity (a dot expression has one callable identity in every position; no wrapper is involved). Forwarding the parameter keeps that one identity, so both occurrences of `f` receive the same callable and the repeated-name constraint holds; `f()` is the member's ordinary fresh call, giving 5."
+  }
+]

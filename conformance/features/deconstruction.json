@@ -1,0 +1,279 @@
+[
+  {
+    "id": "decon-pair",
+    "category": "deconstruction",
+    "source": "x, y = 1, 2\nx\ny",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 2]",
+    "expectedEmittedCount": 2,
+    "explanation": "Assignment deconstruction matches fixed targets to the supplied items element-by-element."
+  },
+  {
+    "id": "decon-rhs-implicit-parameter",
+    "category": "deconstruction",
+    "source": "F = {\n    a, b = x, 10\n    a + b\n}\nF(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "11"
+      }
+    ],
+    "expectedRaw": "11",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F = {\n    P = y * 2\n    a, b = P, 10\n    a + b\n}\nF(4)",
+        "expectedNeutral": "ok raw=18 n=1"
+      },
+      {
+        "source": "F = {\n    a, b = P, 10\n    P = y * 2\n    a + b\n}\nF(4)",
+        "expectedNeutral": "ok raw=18 n=1"
+      }
+    ],
+    "explanation": "A deconstruction right-hand side is an expression of the enclosing body: its unresolved name `x` becomes `F`'s implicit parameter (never the hoisted source's), and a parameterized sibling referenced there lifts in `F`'s context regardless of declaration order."
+  },
+  {
+    "id": "decon-rhs-brace-scope",
+    "category": "deconstruction",
+    "source": "F = {\n    Q = 100\n    a, b = { Q = 7\n        Q, 10 }\n    a + b\n}\nF",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "17"
+      }
+    ],
+    "expectedRaw": "17",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "a, b = { open { public Q = 7 }\n Q, 10 }\na + b",
+        "expectedNeutral": "ok raw=17 n=1"
+      },
+      {
+        "source": "a, b = { c, d = 7, 10\n c, d }\na + b",
+        "expectedNeutral": "ok raw=17 n=1"
+      }
+    ],
+    "explanation": "A whole-brace deconstruction RHS keeps its lexical scope inside the shared source: its own Q shadows the enclosing Q, and its declarations never become enclosing RHS rows."
+  },
+  {
+    "id": "decon-rhs-lifted-parameter-order",
+    "category": "deconstruction",
+    "source": "P = x * 2\nR = y * 3\nF = {\n    a, b = P, 10\n    R + a + b\n}\nF(1, 2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "18"
+      }
+    ],
+    "expectedRaw": "18",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "P = x * 2\nR = y * 3\nF = {\n R + a + b\n a, b = P, 10\n}\nF(1, 2)",
+        "expectedNeutral": "ok raw=17 n=1"
+      }
+    ],
+    "explanation": "Sibling-derived parameters follow written row order across RHS and output rows, exactly as ordinary output rows do: F infers x then y, not output-first y then x."
+  },
+  {
+    "id": "decon-collecting-tail",
+    "category": "deconstruction",
+    "source": "x, *rest = 1, 2, 3\nrest",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[2, 3]"
+      }
+    ],
+    "expectedRaw": "L[2, 3]",
+    "expectedEmittedCount": 1,
+    "explanation": "The collecting target collects the remaining items as one list."
+  },
+  {
+    "id": "decon-collecting-head",
+    "category": "deconstruction",
+    "source": "*head, last = 1, 2, 3\nhead\nlast",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2]\n3"
+      }
+    ],
+    "expectedRaw": "S[L[1, 2], 3]",
+    "expectedEmittedCount": 2,
+    "explanation": "The single movable collecting binding may lead: fixed targets after it bind from the back."
+  },
+  {
+    "id": "decon-collecting-middle",
+    "category": "deconstruction",
+    "source": "x, *middle, z = 1, 2, 3, 4\nmiddle",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[2, 3]"
+      }
+    ],
+    "expectedRaw": "L[2, 3]",
+    "expectedEmittedCount": 1,
+    "explanation": "Front and back fixed targets bind first; the middle collecting binding collects its matched segment as one list.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "decon-empty-collecting",
+    "category": "deconstruction",
+    "source": "x, *rest = 1\nrest\nx",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[]\n1"
+      }
+    ],
+    "expectedRaw": "S[L[], 1]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "x, *rest = 1\nrest.count",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "x, *rest = 1\nrest*, x",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "x, *rest = 1\nrest == []",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "A collecting binding that collects zero items binds the exact empty list `[]`, one visible output slot; spreading it contributes zero items."
+  },
+  {
+    "id": "decon-arity-under",
+    "category": "deconstruction",
+    "source": "x, y = 1\nx",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        2,
+        1
+      ]
+    },
+    "explanation": "Without a collecting target the item count must match exactly: one supplied item cannot bind two targets."
+  },
+  {
+    "id": "decon-arity-over",
+    "category": "deconstruction",
+    "source": "x, y = 1, 2, 3\nx",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        2,
+        3
+      ]
+    },
+    "explanation": "Three supplied items cannot bind two fixed targets."
+  },
+  {
+    "id": "decon-unpacks-stored-value",
+    "category": "deconstruction",
+    "source": "A = 1, 2, 3\nx, y, z = A\ny",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = 1, 2, 3\nx, y, z = (A*)\ny",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "A = ((1, 2))\nx, y = A\nA, x, y",
+        "expectedNeutral": "ok raw=S[S[1, 2], 1, 2] n=3"
+      },
+      {
+        "source": "x, y = [(1, 2)]\nx",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "x, y = ([(1, 2)]*)\nx, y",
+        "expectedNeutral": "ok raw=S[1, 2] n=2"
+      },
+      {
+        "source": "A = [(1, 2)]\nx, y = A\nx",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = [(1, 2)]\nx, y = (A*)\nx, y",
+        "expectedNeutral": "ok raw=S[1, 2] n=2"
+      },
+      {
+        "source": "A = [7]\nx, *xs = A\ny, *ys = (A*)\nA, (A*), x, xs, y, ys",
+        "expectedNeutral": "ok raw=S[L[7], 7, 7, L[], 7, L[]] n=6"
+      }
+    ],
+    "explanation": "Assignment deconstruction is an unpacking receiver: the whole right-hand side is captured into one shared value, then a sequence or list is opened one level and matched element-by-element; an atom or string supplies itself as one item. For deconstruction targets, `= A` and `= (A*)` present the same items unless `A` is a singleton list whose lone element is itself a sequence or list. In that case, spread supplies the lone element, singleton capture returns it, and deconstruction opens it one level further: `x, y = [(1, 2)]` fails against two targets, while `x, y = ([(1, 2)]*)` binds `x = 1`, `y = 2`. Equal binding items do NOT require equal captured values: for `A = [7]`, both `x, *rest = A` and `x, *rest = (A*)` bind `x = 7`, `rest = []`, although capture sees `[7]` versus `7`. Stored sequences have no equivalent singleton wrapper because sequence normalization erases it. An ordinary single-name definition `x = A` retains the captured value without deconstruction; ordinary calls also do NOT unpack this way — `F(A)` still passes one argument.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "decon-tutorial-full",
+    "category": "deconstruction",
+    "source": "A = 1, 2, 3, 4, 5\n\nx, *y, z = A\nx\ny\nz",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n[2, 3, 4]\n5"
+      }
+    ],
+    "expectedRaw": "S[1, L[2, 3, 4], 5]",
+    "expectedEmittedCount": 3,
+    "explanation": "Deconstruction with a middle collecting binding over a stored sequence value: fixed targets take the ends, the collecting binding collects the middle as one list."
+  },
+  {
+    "id": "decon-two-collecting-rejected",
+    "category": "deconstruction",
+    "source": "*a, *b = 1, 2, 3\na",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidCollectingBinding",
+    "expectedParseDiagnosticFragment": "at most one collecting binding",
+    "explanation": "A deconstruction pattern allows at most one collecting binding."
+  },
+  {
+    "id": "decon-lone-collecting",
+    "category": "deconstruction",
+    "source": "*all = 1, 2, 3\nall",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3]"
+      }
+    ],
+    "expectedRaw": "L[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "*all = ()\nall",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "*all = 7\nall",
+        "expectedNeutral": "ok raw=L[7] n=1"
+      }
+    ],
+    "explanation": "A lone collecting binding is valid and collects the complete item supply as one exact list, including exact empty and singleton lists."
+  }
+]

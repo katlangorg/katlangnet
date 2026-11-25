@@ -1,0 +1,349 @@
+[
+  {
+    "id": "order-is-stable",
+    "category": "collection-builtins",
+    "source": "order((1.0, 1, 1.00))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1.0, 1, 1.00]"
+      }
+    ],
+    "expectedRaw": "L[1.0, 1, 1.00]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "orderDesc((1.0, 1, 1.00))",
+        "expectedNeutral": "ok raw=L[1.00, 1, 1.0] n=1"
+      },
+      {
+        "source": "order((0, -0))",
+        "expectedNeutral": "ok raw=L[0, -0] n=1"
+      },
+      {
+        "source": "orderDesc((0, -0))",
+        "expectedNeutral": "ok raw=L[-0, 0] n=1"
+      },
+      {
+        "source": "order((2, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 0))",
+        "expectedNeutral": "ok raw=L[0, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 2] n=1"
+      }
+    ],
+    "explanation": "`order` is a stable sort: values that compare equal keep their written order, so the spellings `1.0`, `1`, `1.00` come back as written however long the input. `orderDesc` is the reverse of that stable ascending order (Lean `sortIntsDesc`), so equal-comparing values reverse too. The arrangement never depends on the runtime's sort algorithm.",
+    "leanExclusionReason": "Decimal128 quantum and signed zero are outside the Lean Int numeric model: two spellings of one value (`1.0` and `1`, `0` and `-0`) compare equal yet display differently, which is what makes sort stability observable in the runtime; the Lean Int core has one spelling per value, so stability is unobservable there."
+  },
+  {
+    "id": "min-max-signed-zero",
+    "category": "collection-builtins",
+    "source": "min((0, -0))\nmin((-0, 0))\nmax((0, -0))\nmax((-0, 0))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "-0\n-0\n0\n0"
+      }
+    ],
+    "expectedRaw": "S[-0, -0, 0, 0]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "max((-0, -0))",
+        "expectedNeutral": "ok raw=-0 n=1"
+      },
+      {
+        "source": "min((0, 0))",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "min((1, 0, -0))",
+        "expectedNeutral": "ok raw=-0 n=1"
+      },
+      {
+        "source": "max((-1, -0, 0))",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "min((-1, -0, 0))",
+        "expectedNeutral": "ok raw=-1 n=1"
+      },
+      {
+        "source": "-0 < 0",
+        "expectedNeutral": "ok raw=false n=1"
+      }
+    ],
+    "explanation": "`-0` and `0` are one value to `==` and to the ordering operators (`-0 < 0` is `false`), but `min` and `max` decide a tie between the two zeros by sign, as IEEE 754 `minimum`/`maximum` do: `min` returns `-0` whenever a negative zero takes part in a zero minimum, and `max` returns `0` whenever an ordinary zero takes part in a zero maximum, whatever the element order. The result is always one of the elements, so `max((-0, -0))` stays `-0`, and a nonzero extremum wins as usual. KatLang spells the two zeros `0` and `-0`; there is no unary `+`.",
+    "notes": "C#-only Decimal128 rule owned by IEEE 754 `minimum`/`maximum` (`Decimal128.Min`/`Max`) in `Evaluator.EvalMinCounted`/`EvalMaxCounted`, the one implementation the synchronous dispatch, the async twin, and the planned loop's fallback all reach. Which of several SAME-SIGNED equal values with different quanta is returned (`1` vs `1.0`, `-0` vs `-0.0`) is not part of the rule. `SignedZeroExtremaTests` holds the exhaustive arrangement matrix against an order-free oracle and the route, strategy, and presentation parity.",
+    "leanExclusionReason": "Decimal128 signed zero is outside the Lean Int numeric model: Int has one zero, so Lean's `evalMinCounted`/`evalMaxCounted` return `0` for every program here and the sign-decided tie between `0` and `-0` is unobservable there — the runtime rule agrees with Lean on every Int value."
+  },
+  {
+    "id": "repeated-name-keeps-first-equally-rich-representative",
+    "category": "variadic-calls",
+    "source": "P(x, x) = x.string\n\nP(1.5, 1.50)\nP(1.50, 1.5)\nP(0, -0)\nP(-0, 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1.5\n1.50\n0\n-0"
+      }
+    ],
+    "expectedRaw": "S['1.5', '1.50', '0', '-0']",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "A = 1.50\nP(x, x) = x.string\nP(1.5, A)",
+        "expectedNeutral": "ok raw='1.50' n=1"
+      },
+      {
+        "source": "A = 1.50\nP(x, x) = x.string\nP(A, 1.5)",
+        "expectedNeutral": "ok raw='1.50' n=1"
+      },
+      {
+        "source": "P3(x, x, x) = x.string\nP3(1.50, 1.5, 1.500)",
+        "expectedNeutral": "ok raw='1.50' n=1"
+      },
+      {
+        "source": "E(x, x) = x.string\nE(x, y) = 'diff'\nE(1.5, 1.50)",
+        "expectedNeutral": "ok raw='1.5' n=1"
+      },
+      {
+        "source": "E(x, x) = x.string\nE(x, y) = 'diff'\nE(-0, 0)",
+        "expectedNeutral": "ok raw='-0' n=1"
+      },
+      {
+        "source": "P(x, x) = x\nP((1.0, 2), (1, 2.0))",
+        "expectedNeutral": "ok raw=S[1.0, 2] n=1"
+      },
+      {
+        "source": "P(x, x) = x\nP(1.5, 1.50) == P(1.50, 1.5)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "P(x, x) = x\nP(1.5, 1.6)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "A repeated name binds ONE complete contribution. `==` decides compatibility — Decimal128 equality ignores the quantum and the zero sign, so `1.5` and `1.50`, `0` and `-0`, bind. NEED-04 keeps the richest compatible contribution (a named property, which carries a callable, outranks a plain value in either order), and among equally rich contributions the FIRST in written pattern order supplies the retained value with its exact representation. `.string` shows that representation, so `P(1.5, 1.50)` is `'1.5'` and `P(1.50, 1.5)` is `'1.50'`; for these arguments the verdict and the value up to `==` never depend on the argument order.",
+    "notes": "C#-only Decimal128 rule decided by Q-28 (N-F, 2026-10-07): `==` (Decimal128.Equals at numeric leaves) decides compatibility; the retained contribution is NEED-04's richest, the first in written pattern order among equally rich ones — `Evaluator.BindNeedPatterns` in C#, `bindNeedName` in Lean. `NumericRepresentativeSelectionTests` holds the six-route representation-exact matrix (22 representation pairs, four shapes, five origins, families and callbacks).",
+    "leanExclusionReason": "Decimal128 quantum and signed zero are outside the Lean Int numeric model: Int has one representation per value, so which of several equal contributions supplies the retained representation is unobservable there. Lean's `bindNeedName` keeps the earlier complete contribution unless a later one is strictly richer — the same rule — so the runtime agrees with Lean on every Int value (Q-28, N-F)."
+  },
+  {
+    "id": "decimal-literal-patterns-match-by-value",
+    "category": "conditionals",
+    "source": "F(1.5) = 'hit'\nF(x) = 'miss'\nZ(0) = 'zero'\nZ(x) = 'other'\n\nF(1.50), F(3 / 2), F(1.6)\nZ(-0), Z(0.0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "hit\nhit\nmiss\nzero\nzero"
+      }
+    ],
+    "expectedRaw": "S['hit', 'hit', 'miss', 'zero', 'zero']",
+    "expectedEmittedCount": 5,
+    "probes": [
+      {
+        "source": "K((1.5, x)) = x.string\nK((y, x)) = 'other'\nK((1.50, 1.50))",
+        "expectedNeutral": "ok raw='1.50' n=1"
+      },
+      {
+        "source": "F(1e3) = 'hit'\nF(x) = 'miss'\nF(1000)",
+        "expectedNeutral": "ok raw='hit' n=1"
+      },
+      {
+        "source": "F(1) = 'hit'\nF(x) = 'miss'\nF(0.5 + 0.5)",
+        "expectedNeutral": "ok raw='hit' n=1"
+      },
+      {
+        "source": "F(-0) = 'hit'\nF(x) = 'miss'\nF(0)",
+        "expectedNeutral": "ok raw='hit' n=1"
+      }
+    ],
+    "explanation": "A numeric literal pattern matches every argument that is `==` to it, whatever either representation: `F(1.5)` matches `1.50` and `3 / 2`, and `Z(0)` matches `-0` and `0.0`. The literal binds nothing, so a binder beside it keeps the argument's own representation, and two literals that are `==` are the same clause head.",
+    "notes": "C#-only Decimal128 instance of PAT-05's value rule, recorded by Q-28 (X-12 resolved 2026-10-07). Equal literals with different representations are ONE clause head (`F(1.5)` beside `F(1.50)` is `DuplicateBranchPattern`), pinned by `NumericRepresentativeSelectionTests.EqualLiterals_AreTheSameClauseHead`.",
+    "leanExclusionReason": "Fractional Decimal128 literals, quantum and signed zero are outside the Lean Int numeric model (LeanAstEncoder refuses fractional numbers by design, and Int has one zero); a Lean numeric literal pattern matches by the same `==`, where every value has one representation (Q-28, X-12)."
+  },
+  {
+    "id": "max-decimal-places-rounds-ties-away-from-zero",
+    "category": "arithmetic",
+    "source": "MaxDecimalPlaces = 2\n0.125, 0.375, -0.125, 2.5",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0.13\n0.38\n-0.13\n2.5"
+      },
+      {
+        "minDecimalPlaces": 2,
+        "maxDecimalPlaces": 4,
+        "text": "0.13\n0.38\n-0.13\n2.50"
+      }
+    ],
+    "expectedRaw": "S[0.125, 0.375, -0.125, 2.5]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "MaxDecimalPlaces = 0\n0.5, 1.5, 2.5, -0.5",
+        "expectedNeutral": "ok raw=S[0.5, 1.5, 2.5, -0.5] n=4"
+      },
+      {
+        "source": "Math.Round(0.125, 2), Math.Round(2.5, 0), Math.Round(-2.5, 0)",
+        "expectedNeutral": "ok raw=S[0.13, 3, -3] n=3"
+      }
+    ],
+    "explanation": "`MaxDecimalPlaces` shows each numeric leaf with at most the requested places, rounding midpoints AWAY FROM ZERO — the rule `Math.Round` applies — so `0.125` shows as `0.13` and `-0.125` as `-0.13`. A maximum never pads: `2.5` stays `2.5`. Display never re-rounds the computed value: the raw values keep their digits, only the presentation changes. KatLang owns this rule; it does not follow the host runtime's fixed-point formatter, whose tie rule has changed between releases.",
+    "leanExclusionReason": "Fractional Decimal128 literals and the MaxDecimalPlaces presentation setting are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design."
+  },
+  {
+    "id": "min-decimal-places-pads-and-never-rounds",
+    "category": "arithmetic",
+    "source": "MinDecimalPlaces = 2\n10, 2.5, 1.234567, 0",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10.00\n2.50\n1.234567\n0.00"
+      },
+      {
+        "maxDecimalPlaces": 3,
+        "text": "10.00\n2.50\n1.235\n0.00"
+      }
+    ],
+    "expectedRaw": "S[10, 2.5, 1.234567, 0]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "MinDecimalPlaces = 2\nMinDecimalPlaces + 1, 10 == 10.00",
+        "expectedNeutral": "ok raw=S[3, true] n=2"
+      }
+    ],
+    "explanation": "`MinDecimalPlaces` shows each numeric leaf with at least the requested places, padding with zeros — whole numbers included, so `10` shows as `10.00` and `0` as `0.00`. A minimum never rounds: with no maximum set, `1.234567` keeps all its digits. The two settings are independent; neither supplies a value for the other. The values themselves are unchanged.",
+    "leanExclusionReason": "Fractional Decimal128 literals and the MinDecimalPlaces presentation setting are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design, and Lean models no rendering."
+  },
+  {
+    "id": "equal-min-and-max-decimal-places-fix-the-places",
+    "category": "arithmetic",
+    "source": "MinDecimalPlaces = 2\nMaxDecimalPlaces = 2\n1.234567, 10, 9.9996, -0.004",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1.23\n10.00\n10.00\n-0.00"
+      }
+    ],
+    "expectedRaw": "S[1.234567, 10, 9.9996, -0.004]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "MinDecimalPlaces = 2\nMaxDecimalPlaces = 4\n(1.234567, 10, 0.125).count, 9.9996 < 10",
+        "expectedNeutral": "ok raw=S[3, true] n=2"
+      }
+    ],
+    "explanation": "A fixed number of places is written by setting both to the same value: with `MinDecimalPlaces = 2` and `MaxDecimalPlaces = 2` every number shows exactly two places — `1.234567` as `1.23`, `10` as `10.00`. Rounding carries across the decimal point (`9.9996` shows as `10.00`), and a value that rounds to zero keeps its sign (`-0.004` shows as `-0.00`). Only the display changes: `9.9996` is still less than `10`. A minimum above the maximum is an error.",
+    "leanExclusionReason": "Fractional Decimal128 literals and the decimal-places presentation settings are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design, and Lean models no rendering."
+  },
+  {
+    "id": "decimal-places-show-the-value-not-the-stored-digits",
+    "category": "arithmetic",
+    "source": "MaxDecimalPlaces = 4\n10.00, 2.5000, 1.234567, 0.125",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n2.5\n1.2346\n0.125"
+      }
+    ],
+    "expectedRaw": "S[10.00, 2.5000, 1.234567, 0.125]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "10.00, 2.5000, (2.5000).string",
+        "expectedNeutral": "ok raw=S[10.00, 2.5000, '2.5000'] n=3"
+      },
+      {
+        "source": "MinDecimalPlaces = 0\n(2.5000).string, 2.5000 == 2.5",
+        "expectedNeutral": "ok raw=S['2.5000', true] n=2"
+      }
+    ],
+    "explanation": "Once a decimal-places setting is present, a number is displayed by its VALUE: zeros stored at the end of the decimal part are not shown unless the minimum asks for them, so under `MaxDecimalPlaces = 4` the written `10.00` shows as `10` and `2.5000` as `2.5`, while `1.234567` is rounded to `1.2346`. Without any setting a number shows the digits it carries (`2.5000` stays `2.5000`). `.string` always gives a number's own digits and ignores every display setting.",
+    "leanExclusionReason": "Fractional Decimal128 literals, their stored quantum and the decimal-places presentation settings are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design, and Lean models no rendering."
+  },
+  {
+    "id": "logarithm-near-one-is-accurate",
+    "category": "arithmetic",
+    "source": "Math.Ln(1 + 1e-20)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0.00000000000000000000999999999999999999995"
+      }
+    ],
+    "expectedRaw": "0.00000000000000000000999999999999999999995",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Math.Ln(1 - 1e-20)",
+        "expectedNeutral": "ok raw=-0.00000000000000000001000000000000000000005 n=1"
+      },
+      {
+        "source": "(1 + 1e-20) ^ 0.5",
+        "expectedNeutral": "ok raw=1.000000000000000000005 n=1"
+      }
+    ],
+    "explanation": "Logarithms of arguments near 1 do not lose digits to cancellation in ln(1 + ε): `Math.Ln(1 + 1e-20)` is `1e-20 − 5e-41 + …`, correct to the last digit of its 34 significant digits. `Lg` and `Log` are as accurate near 1, and a near-1 base raised to a fractional exponent is computed as `exp(y · ln x)` with the product `y · ln x` carried exactly.",
+    "leanExclusionReason": "Transcendental Math functions and fractional Decimal128 values are outside the Lean Int numeric model; the accuracy class of `Ln`/`Lg`/`Log` (the platform Decimal128 logarithms) and of near-1 powers (Decimal128Numerics.NearOnePower) is a runtime contract."
+  },
+  {
+    "id": "avg-is-the-correctly-rounded-exact-mean",
+    "category": "collection-builtins",
+    "source": "avg((1, 1e34, -1e34))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0.3333333333333333333333333333333333"
+      }
+    ],
+    "expectedRaw": "0.3333333333333333333333333333333333",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "sum((1, 1e34, -1e34)) / 3",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "avg((1e34, 1, 1))",
+        "expectedNeutral": "ok raw=3333333333333333333333333333333334 n=1"
+      },
+      {
+        "source": "avg((1e34, -1e34, 1)) == avg((1, 1e34, -1e34))",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "avg((1.0, 2.00))",
+        "expectedNeutral": "ok raw=1.50 n=1"
+      }
+    ],
+    "explanation": "`avg` is the exact total of its elements divided by their count, rounded once to 34 significant digits. The left-to-right `sum` can round on the way (`1 + 1e34` is `1e34` again), so the mean is not `sum(x) / count(x)` whenever that sum was inexact: `avg((1, 1e34, -1e34))` is one third, while `sum((1, 1e34, -1e34)) / 3` is `0`. When every addition was exact the two agree, quantum included (`avg((1.0, 2.00))` is `1.50`).",
+    "leanExclusionReason": "Decimal128 rounding of the running sum and the fractional mean: the Lean Int core adds exactly and truncates the mean with `Int.tdiv`, so neither the 34-digit rounding of `sum` nor the correctly rounded decimal mean has a Lean counterpart."
+  },
+  {
+    "id": "negative-near-one-base-power-is-sign-symmetric",
+    "category": "arithmetic",
+    "source": "B = 0.9999999999999999999999999999999999\n(-B) ^ 1e34 == B ^ 1e34",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true"
+      }
+    ],
+    "expectedRaw": "true",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "B = 1.0000000000000000001\n(-B) ^ 10000000000000000001 == -(B ^ 10000000000000000001)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "B = 1.0000000000000000001\n(-B) ^ 9223372036854775807 == -(B ^ 9223372036854775807)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "(-0.995) ^ 12345.5",
+        "expectedNeutral": "ok raw=NaN n=1"
+      }
+    ],
+    "explanation": "For an integral exponent `n`, `(-b) ^ n` is `b ^ n` for even `n` and `-(b ^ n)` for odd `n`, whichever computation the exponent routes through: a base whose magnitude is within `0.99 <= |b| <= 1.01` takes the near-one power for a fractional exponent, an exponent beyond `long`, or a negative exponent whose positive power overflows, and a negative base there takes its magnitude's power with the exponent's parity sign.",
+    "leanExclusionReason": "Near-one powers with fractional values and exponents beyond `long` are Decimal128 approximations (the Lean Int core has no fractional power, and `negativeIntPow` rejects every non-unit reciprocal), so the sign-symmetry of the delegated power is a runtime accuracy property."
+  }
+]

@@ -58,6 +58,8 @@ A run returns a structured result instead of throwing for a mistake in the progr
 
 KatLang's semantics are defined in [`KatLang.lean`][spec], an executable model written in the Lean 4 theorem prover. Within the limits listed below, it is the single source of truth for how programs evaluate, and independent implementations should conform to it. The surface syntax is defined by [`KatLang.ebnf`][ebnf] together with the reference parser in this repository.
 
+To check a new implementation, run the programs in the [portable conformance fixture][conformance] and compare its results and diagnostics with the expected values.
+
 Machine-checked Lean proofs establish core properties of that model — for example, how arguments, including spreads, are distributed among parameters; that `x.Add(1)` gives the same value as `Add(x, 1)` once checking `x` finds no member named `Add`; and that a value, once computed for an argument or cached for a property, never changes. The Lean work has limits:
 
 - The proofs are about the Lean model, not the C# code. No proof connects the two, so this implementation is checked against the model by running the same test programs through both.
@@ -110,6 +112,7 @@ Jesus is Lord.
 [dotnet]: https://github.com/katlangorg/katlangnet/blob/main/docs/dotnet.md
 [spec]: https://github.com/katlangorg/katlangnet/blob/main/lean/KatLang.lean
 [ebnf]: https://github.com/katlangorg/katlangnet/blob/main/KatLang.ebnf
+[conformance]: https://github.com/katlangorg/katlangnet/blob/main/conformance/README.md
 [ledger]: https://github.com/katlangorg/katlangnet/blob/main/docs/design/formal-correspondence-ledger.md
 [license]: https://github.com/katlangorg/katlangnet/blob/main/LICENSE
 [patents]: https://github.com/katlangorg/katlangnet/blob/main/PATENTS

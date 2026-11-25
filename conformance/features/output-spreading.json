@@ -1,0 +1,257 @@
+[
+  {
+    "id": "output-spread-marked-call-spreads-its-rows",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nA(1, 2)\nA(3, 4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n3\n4"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3, 4]",
+    "expectedEmittedCount": 4,
+    "explanation": "`A(x, y)* = x, y` marks the declaration: its algorithm is unchanged, but every call the front end resolves to it is spread as if `*` were written after it. Each row `A(1, 2)` is `A(1, 2)*`, so the program prints four rows.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "output-spread-argument-and-element-slots",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nAdd(x, y) = x + y\nAdd(A(1, 2)), [A(1, 2), A(3, 4)]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n[1, 2, 3, 4]"
+      }
+    ],
+    "expectedRaw": "S[3, L[1, 2, 3, 4]]",
+    "expectedEmittedCount": 2,
+    "explanation": "A whole argument slot and a list element are spreading positions: `Add(A(1, 2))` is `Add(A(1, 2)*)`, two arguments, and the list holds four items.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "output-spread-alias-inherits-the-marker",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nB = A\n[B(3, 4)]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[3, 4]"
+      }
+    ],
+    "expectedRaw": "L[3, 4]",
+    "expectedEmittedCount": 1,
+    "explanation": "`B = A` is a transparent alias: a call through it is a call of `A`, so it spreads exactly as `A(3, 4)` does."
+  },
+  {
+    "id": "output-spread-value-positions-keep-one-value",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nA(1, 2)[0], count({ A(1, 2) }), count([A(1, 2)])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 2]",
+    "expectedEmittedCount": 3,
+    "explanation": "A selection receiver is one value (`A(1, 2)[0]` is 1). To pass the output as one value, write a block or a list: the block's row spreads into the block's output, and the list collects the spread items."
+  },
+  {
+    "id": "output-spread-builtin-argument-is-spread-too",
+    "category": "errors",
+    "source": "A(x, y)* = x, y\ncount(A(1, 2))",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        1,
+        2
+      ]
+    },
+    "explanation": "Every whole argument slot spreads, a builtin's included: `count(A(1, 2))` is `count(A(1, 2)*)`, two arguments where `count` takes one. The error carries a note naming `A`."
+  },
+  {
+    "id": "output-spread-not-through-a-parameter",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nApply(f) = count(f(1, 2))\nApply(A)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "Only a call the front end resolves statically is spread: `f(1, 2)` calls a parameter, so its result stays one value, and `count` counts its two items."
+  },
+  {
+    "id": "output-spread-lifted-call-spreads",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nS = [A]\nS(1, 2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2]"
+      }
+    ],
+    "expectedRaw": "L[1, 2]",
+    "expectedEmittedCount": 1,
+    "explanation": "Formula lifting makes `S` the algorithm `S(x, y) = [A(x, y)]`, and the lifted call spreads like a written one."
+  },
+  {
+    "id": "output-spread-loop-step-through-a-wrapper",
+    "category": "item-supply-vs-value",
+    "source": "Fib(a, b)* = b, a + b\nStep(a, b) = Fib(a, b)\nStep(0, 1).repeat(10)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(55, 89)"
+      }
+    ],
+    "expectedRaw": "S[55, 89]",
+    "expectedEmittedCount": 1,
+    "explanation": "The unmarked wrapper `Step` is the loop step; inside it the row `Fib(a, b)` spreads, so each round produces the two state slots.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "output-spread-marked-call-as-loop-receiver",
+    "category": "errors",
+    "source": "Fib(a, b)* = b, a + b\nFib(0, 1).repeat(10)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        2,
+        3
+      ]
+    },
+    "explanation": "The receiver of an extension call spreads: `Fib(0, 1).repeat(10)` is `repeat(Fib(0, 1)*, 10)`, three arguments. Use an unmarked wrapper as the step."
+  },
+  {
+    "id": "output-spread-zero-parameter-only-explicit-calls",
+    "category": "item-supply-vs-value",
+    "source": "P* = 1, 2\ncount(P), [P()]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2\n[1, 2]"
+      }
+    ],
+    "expectedRaw": "S[2, L[1, 2]]",
+    "expectedEmittedCount": 2,
+    "explanation": "A bare `P` is a read, never a call, so it stays one value; the explicit call `P()` spreads."
+  },
+  {
+    "id": "output-spread-argument-runs-at-formation",
+    "category": "errors",
+    "source": "D(x, y)* = x / y, y\nFirstOf(a, *rest) = a\nFirstOf(5, D(1, 0))",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "A spread argument is evaluated once while the supply is formed, whether or not the callee uses it, so the division by zero is raised although `FirstOf` ignores its rest."
+  },
+  {
+    "id": "output-spread-opens-one-level",
+    "category": "item-supply-vs-value",
+    "source": "G* = [[1, 2], [3]]\n[G()], (G(), 9)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[[1, 2], [3]]\n([1, 2], [3], 9)"
+      }
+    ],
+    "expectedRaw": "S[L[L[1, 2], L[3]], S[L[1, 2], L[3], 9]]",
+    "expectedEmittedCount": 2,
+    "explanation": "The inserted spread is the ordinary one: it opens one boundary of the call's value, never recursively."
+  },
+  {
+    "id": "output-spread-marker-on-an-alias-is-an-error",
+    "category": "name-resolution",
+    "source": "A(x, y)* = x, y\nB* = A\nB(1, 2)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OutputSpreadMarkerOnAlias",
+    "expectedParseDiagnosticFragment": "so it cannot carry the output-spreading marker",
+    "explanation": "An alias inherits the marker of the declaration it denotes, so it cannot carry one of its own; a marked wrapper `B(x, y)* = A(x, y)` is a declaration of its own.",
+    "notes": "Front-end rule; no elaborated Lean program exists."
+  },
+  {
+    "id": "output-spread-marker-must-be-attached",
+    "category": "parser-layout",
+    "source": "A * = 1, 2\nA()",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "DetachedOutputSpreadMarker",
+    "expectedParseDiagnosticFragment": "must be directly attached",
+    "explanation": "The marker is written directly after the declaration's name or its parameter list's `)`: `A* = 1, 2`.",
+    "notes": "Source-level marker attachment; no elaborated Lean program exists."
+  },
+  {
+    "id": "output-spread-marker-on-every-clause-or-none",
+    "category": "parser-layout",
+    "source": "F(0)* = 1, 2\nF(n) = n, n\nF(0)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "MixedOutputSpreadMarkers",
+    "expectedParseDiagnosticFragment": "write it on every clause or on none",
+    "explanation": "The marker belongs to the whole clause family.",
+    "notes": "Source-level family rule; no elaborated Lean program exists."
+  },
+  {
+    "id": "output-spread-marker-not-on-a-deconstruction-target",
+    "category": "parser-layout",
+    "source": "a*, b = 1, 2\na",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OutputSpreadMarkerOnDeconstructionTarget",
+    "expectedParseDiagnosticFragment": "A deconstruction target cannot carry the output-spreading marker",
+    "explanation": "Deconstruction binds values; only a callable declaration is marked.",
+    "notes": "Source-level rule; no elaborated Lean program exists."
+  },
+  {
+    "id": "output-spread-receiver-edge-is-the-lowered-call",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nAdd3(a, b, c) = a + b + c\nH = A(x, y).F(3)\nH(Add3, 1, 2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "explanation": "A marked call as the receiver of an extension call makes the edge the call `F(A(x, y)*, 3)`, exactly like the written `A(x, y)*.F(3)`. So `H` infers its names in the call's order, `H(F, x, y)`: the callee first."
+  },
+  {
+    "id": "output-spread-lifted-call-ends-known-positions",
+    "category": "errors",
+    "source": "P(x)* = [x]\nAdd(a, b) = a + b\nInc(x) = x + 1\nH = reduce(P, Add, Inc)\nH(1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "Formula lifting turns the bare `P` into the call `P(x)`, and the front end spreads it: `H` is `reduce(P(x)*, Add, Inc)`, like the written `reduce(P*, Add, Inc)`. After a spread the position of `Inc` is unknown, so it is not lifted to the value `Inc(x)`; it stays an algorithm, and `reduce` has no initial value."
+  },
+  {
+    "id": "output-spread-reference-needs-call",
+    "category": "name-resolution",
+    "source": "Q(x) = [[x]]\nP* = Q[0]\nAdd(a, b) = a + b\nInc(x) = x + 1\nH = reduce(P, Add, Inc)\nH(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OutputSpreadReferenceNeedsCall",
+    "expectedParseDiagnosticFragment": "only parameter inference decides whether `P` is called here",
+    "explanation": "`P` has no parameter of its own, and only inference can give it one (through `Q`). Whether the bare `P` is a call decides whether `Inc` is `reduce`'s initial value, so the front end asks which is meant: the written call `reduce(P(x), Add, Inc)`, whose result is spread, or the read `reduce({ P }, Add, Inc)`, one value.",
+    "notes": "Front-end rule; no elaborated Lean program exists."
+  },
+  {
+    "id": "output-spread-reference-certainly-read",
+    "category": "item-supply-vs-value",
+    "source": "Q = [[1, 2], 3]\nP* = Q[0]\nAdd(a, b) = a + b\nInc(x) = x + 1\nH = reduce(P, Add, Inc)\nH(-3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "explanation": "`Q` takes no argument and holds nothing that could lift one, so `P` can never gain a parameter: the bare `P` is certainly a read, one value, and its marker changes nothing here. `Inc` stays `reduce`'s initial value, so `H` is `H(x)` and `H(-3)` is `Inc(-3) + 1 + 2`."
+  }
+]

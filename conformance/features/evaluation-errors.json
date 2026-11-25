@@ -1,0 +1,725 @@
+[
+  {
+    "id": "arity-too-many-arguments",
+    "category": "errors",
+    "source": "KeepFirst(a, b) = a\nKeepFirst(42, 999, 1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "Supplying more arguments than fixed parameters is an arity error."
+  },
+  {
+    "id": "missing-output-not-a-value",
+    "category": "errors",
+    "source": "A = {\n}\nA",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "missingOutput",
+    "probes": [
+      {
+        "source": "A = {\n}\nA == ()",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "A = {\n}\nA*, 997",
+        "expectedNeutral": "err spreadMissingOutput"
+      }
+    ],
+    "explanation": "A no-output body is not a value: accessing it, comparing it with `()`, or spreading it are errors — `()` is a value, `{}` is not.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "spread-preserves-nested-missing-output",
+    "category": "errors",
+    "source": "G = {\n    public X = 1\n}\nH = G + 1\nH*",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "missingOutput",
+    "probes": [
+      {
+        "source": "G = {\n    public X = 1\n}\nG*",
+        "expectedNeutral": "err spreadMissingOutput"
+      },
+      {
+        "source": "G = {\n    public X = 1\n}\nG()*",
+        "expectedNeutral": "err spreadMissingOutput"
+      },
+      {
+        "source": "{\n    X = 1\n}*",
+        "expectedNeutral": "err spreadMissingOutput"
+      },
+      {
+        "source": "G = {\n    public X = 1\n}\nH = G + 1\nH()*",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "F(x) = x\nF({})*",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "G = {\n    public X = 1\n}\n{ G }*",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "G = {\n    public X = 1\n}\n(G, 1)*",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "G = {\n    public X = 1\n}\n[G]*",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "(1 / 0)*",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "({}*)*",
+        "expectedNeutral": "err spreadMissingOutput"
+      },
+      {
+        "source": "G = {\n    public X = 1\n}\nH = G + 1\ncount(1, H*)",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "count(1, {}*)",
+        "expectedNeutral": "err spreadMissingOutput"
+      },
+      {
+        "source": "G = {\n    public X = 1\n}\nH = G + 1\nmap([], H*)",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "P(x) = x*\nP({})",
+        "expectedNeutral": "err spreadMissingOutput"
+      },
+      {
+        "source": "G = {\n    public X = 1\n}\nH = G + 1\nP(x) = x*\nP(H)",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "G = {}\nC(*xs) = xs*\nC(G)",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "G = {}\nP(x) = x*\nC(*xs) = P(xs)\nC(G)",
+        "expectedNeutral": "err missingOutput"
+      }
+    ],
+    "explanation": "Spreading an operand whose OWN output is missing — the computation it directly denotes or invokes has no written output — is the spread-specific error (`{}*`, `G*`, `G()*`). A missing output met INSIDE the operand's evaluation — a dependency (`H = G + 1`), an argument (`F({})`), an output row (`{ G }`), or a constructed value (`(G, 1)`, `[G]`) — keeps its own category, cause and location, with the spread operand as added context; every other failure is unchanged. A parameter denotes the computation supplied for it, so `P({})` with `P(x) = x*` is the spread's own report while `P(H)` is `G`'s (X-29 / Q-36, decided 2026-10-24)."
+  },
+  {
+    "id": "missing-output-as-builtin-arg",
+    "category": "errors",
+    "source": "count({})",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "missingOutput",
+    "explanation": "`{}` where a value is required is a missing-output error, not `0`."
+  },
+  {
+    "id": "output-less-argument-is-not-an-omitted-argument",
+    "category": "errors",
+    "source": "Coll(*xs) = xs\nColl({})",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "missingOutput",
+    "probes": [
+      {
+        "source": "Coll(*xs) = xs\nColl()",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Coll(*xs) = xs\nColl(())",
+        "expectedNeutral": "ok raw=L[S[]] n=1"
+      },
+      {
+        "source": "Coll(*xs) = xs\nEmpty = ()\nColl(Empty*)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Coll(*xs) = xs\nColl([])",
+        "expectedNeutral": "ok raw=L[L[]] n=1"
+      },
+      {
+        "source": "Coll(*xs) = xs\nColl({}*)",
+        "expectedNeutral": "err spreadMissingOutput"
+      },
+      {
+        "source": "Coll(*xs) = xs\nColl(1, {}, 3)",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "F(x) = x\nF()",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F(x) = x\nF({})",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "F(x) = x\nF([])",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "F(x) = x\nF(())",
+        "expectedNeutral": "ok raw=S[] n=1"
+      }
+    ],
+    "explanation": "A collector legally accepts zero supplied items, which is exactly why an ordinary written argument that produced no output must not be read as \"nothing was supplied\": `Coll({})` is an error, never `Coll()`. The four situations stay distinct — an OMITTED argument is an arity failure (`F()`), a written argument with no output is that argument's failure (`F({})`, `Coll({})`), a legitimate empty value is one ordinary argument (`F([])`, `F(())`, and `Coll(())` is `[()]`, `Coll([])` is `[[]]`), and an explicit spread supplying zero items is a legal supply (`Coll(Empty*)` is `[]`). The distinction follows slot provenance, never the final supplied-item count."
+  },
+  {
+    "id": "argument-value-outcome-is-final",
+    "category": "errors",
+    "source": "Plus(f, x) = f + x\nPlus({x + 1}, 5)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "unresolvedImplicitParams",
+    "probes": [
+      {
+        "source": "Apply(f, x) = f(x)\nApply({x + 1}, 5)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "Only(g) = g\nOnly({x + 1})",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "G(v) = sum(v)\nG({x + 1})",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "G(v) = if(true, v, 0)\nG({x + 1})",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "G(v) = reduce([1], {e + a}, v)\nG({x + 1})",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "Inc(y) = y + 1\nPlus(f, x) = f + x\nPlus(Inc, 5)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F(0) = 1\nF(n) = n\nApply(f) = f\nApply(F)",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "Bad = 1 / 0\nPair(x) = x, x\nPair(Bad)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nFirst(x, y) = x\nFirst(1, Bad)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Bad = 1 / 0\nSecond(x, y) = y\nSecond(1, Bad)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Box = { public X = 5 }\nMember(o) = o.X\nMember(Box)",
+        "expectedNeutral": "ok raw=5 n=1"
+      }
+    ],
+    "explanation": "Each argument of a call is evaluated at most once for its value: if that evaluation succeeds, that is the parameter's value, and if it fails, that is the parameter's failure. Reading the parameter never evaluates the argument again, so every read reports the same outcome and a failure can never turn into a value. The brace algorithm `{x + 1}` cannot be evaluated as a value — its `x` is not supplied — so reading `f` as a value reports exactly that failure (`unresolvedImplicitParams`), while calling `f(x)` still runs the algorithm (`Apply({x + 1}, 5)` is 6), and structural access through the parameter still reaches the argument's members (`Member(Box)` is 5). A failing argument nobody reads is not an error (`First(1, Bad)` is 1)."
+  },
+  {
+    "id": "scalar-op-rejects-sequence",
+    "category": "errors",
+    "source": "(1, 2) + 1",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "() > 1",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() + 1",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "1 + ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "[] + 1",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "Binary scalar operators require numeric scalar operands; a sequence value is a type error whatever its item count, including the empty sequence value `()`.",
+    "notes": "The probes pin that operand cardinality grants no exemption: an empty sequence value and an empty list are rejected exactly like a multi-item sequence value (SYN-01), on either operand side."
+  },
+  {
+    "id": "empty-sequence-is-not-an-operator-identity",
+    "category": "errors",
+    "source": "10 / ()",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "() > 10",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() and true",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() + 'text'",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() + 1",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "1 + ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() - 1",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "1 - ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() * 2",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "2 * ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() / 2",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() div 2",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() mod 2",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() ^ 2",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "2 ^ ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() < 1",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "1 < ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() >= 1",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "1 >= ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() or false",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "false or ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() xor true",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "() + ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "(()) + 1",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "A = ()\nA / 2",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "-()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "not ()",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "-(1, 2)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "not (1, 2)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "-[1, 2]",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "not [1, 2]",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "-7",
+        "expectedNeutral": "ok raw=-7 n=1"
+      },
+      {
+        "source": "not false",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "not true",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "() == ()",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "() != (1, 2)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "10 > 1",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "1 > 10",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "Empty = ()\nEmpty*, 7",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "count(())",
+        "expectedNeutral": "ok raw=0 n=1"
+      }
+    ],
+    "explanation": "The empty sequence value is a real value, not an operator identity: scalar operators apply their ordinary operand validation to `()` just as to any other non-scalar value. `10 / ()`, `-()`, and `not ()` are errors.",
+    "notes": "SYN-01. Binary operators previously returned the other operand when either was `()`; unary operators propagated `()`. Both bypasses are removed. Unary and binary operand rejections are both the type category (unary sequence/list rejection was arity until Q-27, 2026-10-05). Empty NEUTRALITY belongs to the arity algebra's supply operations (capture/collect/spread) and is deliberately untouched, as the last two probes pin.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "order-rejects-non-numeric",
+    "category": "errors",
+    "source": "order((1, 'hello'))",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "order(((1, 2), (3, 4)))",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "`order` requires each item to be a single numeric value; strings and sequence-value items are elements of the wrong kind (TypeMismatch)."
+  },
+  {
+    "id": "division-by-zero",
+    "category": "errors",
+    "source": "1 / 0",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "Division by zero is a runtime error."
+  },
+  {
+    "id": "invoking-slot-without-callable-is-not-an-algorithm",
+    "category": "errors",
+    "source": "map([1, 2], 5)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "probes": [
+      {
+        "source": "map([1, 2], 1 / 0)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "filter([1], true)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "reduce([1, 2], 5, 0)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "count(filter([1, 2], 5))",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "[1, 2].map(5)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Run(f) = repeat(f(0), 1)\nRun(5)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Run(f) = while(f(0))\nRun(true)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "repeat(map([1, 2], 5), 1)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Through(xs, f) = map(xs, f)\nThrough([1], 5)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "App(f, x) = f(x)\nApp(5, 1)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "map([], 5)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "reduce([], 5, 7)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Run(f) = repeat(f(1), 0)\nRun(5)",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "A position that INVOKES its argument — the `map` transform, the `filter` predicate, the `reduce` reducer, a `while` or `repeat` step, a user higher-order parameter — needs a callable. A value has no callable identity, so the first invocation that needs one reports NotAnAlgorithm, decided by CALLABLE projection alone: the value is never demanded (`map([1, 2], 1 / 0)` is not a division by zero), and a slot that is never invoked is never projected (`map([], 5)` is `[]`).",
+    "notes": "Q-06, decided 2026-10-05: missing CALLABLE capability is NotAnAlgorithm in every invoking position (formerly a hand-written ArityMismatch(0, k) for builtin slots)."
+  },
+  {
+    "id": "zero-parameter-callable-in-invoking-slot-is-arity",
+    "category": "errors",
+    "source": "A = 7\nmap([1, 2], A)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "map([1, 2], { 5 })",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Lib = { public V = 5 }\nmap([1], Lib.V)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "map([1], Math.Pi)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Z = 5\nrepeat(Z(0), 1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = 7\nApp(f, x) = f(x)\nApp(A, 1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "map([1, 2], take)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F(0) = 0\nF(n) = n\nF(1, 2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "map([1, 2], 7)",
+        "expectedNeutral": "err notAnAlgorithm"
+      }
+    ],
+    "explanation": "A zero-parameter callable — a property, a block, a member, a Math constant — HAS callable identity, so an invoking slot invokes it, and the supplied item does not fit its interface: ArityMismatch, exactly as any call that supplies more arguments than the callable accepts. The plain value `7` in the same slot has no callable identity and is NotAnAlgorithm instead."
+  },
+  {
+    "id": "kind-errors-are-type-mismatch",
+    "category": "errors",
+    "source": "-()",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "-[1]",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "-'a'",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "sqrt((4, 9))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "A = 1, 2\nA[[0]]",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "range([1], 3)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Step = { x }\nrepeat(Step(0), [1])",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "sum((1, true))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "order((3, [1]))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "take([1, 2], 'x')",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "skip([1, 2], ())",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "take([1, 2], 1.5)",
+        "expectedNeutral": "err illegalInEval"
+      }
+    ],
+    "explanation": "A present value of a kind the operation does not accept is TypeMismatch, whatever its shape: a Boolean, a string, a sequence (`()` included) or a list where a number is required — the operand of unary `-`, a Math argument, a selector, a `range` bound, a `repeat` count, a `take`/`skip` count, a numeric collection element. A number of the right kind that the operation cannot use, such as the fractional count `1.5`, is a domain failure instead (IllegalInEval).",
+    "notes": "Q-27, decided 2026-10-05: kind failures that passed through the numeric conversion, the collection-element check or the whole-number control were formerly reported as arity."
+  },
+  {
+    "id": "first-last-empty-is-bad-index",
+    "category": "errors",
+    "source": "first(())",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "index",
+    "probes": [
+      {
+        "source": "first([])",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "last(())",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "last([])",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "().first",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "[].last",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "E = ()\nlast(E)",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "A = (), 1\nfirst(A[0])",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "first(filter([1, 2], { x > 5 }))",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "()[0]",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "[][count([]) - 1]",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "first((1, 2)), (1, 2)[0], last([3, 4]), [3, 4][1]",
+        "expectedNeutral": "ok raw=S[1, 1, 4, 4] n=4"
+      }
+    ],
+    "explanation": "`first(A)` is the selection `A[0]` and `last(A)` is `A[count(A) - 1]`, errors included: an empty collection names no position to select, so `first(())` and `last([])` report BadIndex exactly as `()[0]` does. BadIndex means a selection named no position, never merely that a container is empty.",
+    "notes": "Q-27 / SEQ-04, decided 2026-10-05 (P2): `first`/`last` on an empty collection were formerly the collection's arity rejection."
+  },
+  {
+    "id": "aggregate-empty-is-domain-error",
+    "category": "errors",
+    "source": "min(())",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "illegalInEval",
+    "probes": [
+      {
+        "source": "max([])",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "avg([])",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "avg(())",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "min(filter([1], { x > 5 }))",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "sum(())",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "count([])",
+        "expectedNeutral": "ok raw=0 n=1"
+      }
+    ],
+    "explanation": "`min`, `max` and `avg` select no position: an empty collection is outside their domain (IllegalInEval) — not a selection error, and not an arity error, since the argument count is right. `sum` and `count` accept an empty collection.",
+    "notes": "Q-27, decided 2026-10-05: empty `min`/`max`/`avg` were formerly the collection's arity rejection."
+  },
+  {
+    "id": "spread-arguments-fail-left-to-right",
+    "category": "errors",
+    "source": "P = 1 / 0\nQ = 'x' + 1\nrange(P*, Q*)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "probes": [
+      {
+        "source": "P = 1 / 0\nQ = 'x' + 1\nrange(Q*, P*)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "P = 1 / 0\nQ = 'x' + 1\nif(P*, Q*, 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "P = 1 / 0\nQ = 'x' + 1\nif(Q*, P*, 0)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "P = 1 / 0\nQ = 'x' + 1\nrepeat(P*, Q*)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "P = 1 / 0\nQ = 'x' + 1\nrepeat(Q*, P*)",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "Spread-marked argument slots are forced exactly once in left-to-right written order, so the leftmost failing spread slot's error is the one reported; non-spread argument slots remain builtin-lazy and are evaluated or skipped by the builtin's own semantics.",
+    "notes": "Pins the forced-spread evaluation ORDER, not just the reported category: each spread-marked slot is forced exactly once, left to right, and expanding a spread slot is part of evaluating that slot. Non-spread slots remain builtin-lazy algorithms at this stage (SpreadArgumentEvaluationOrderTests pins the mixed spread/non-spread interaction)."
+  },
+  {
+    "id": "unresolved-implicit-parameter",
+    "category": "errors",
+    "source": "Nope",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "unresolvedImplicitParams",
+    "explanation": "An undefined name becomes an implicit parameter; running a program whose root still needs parameters is an error."
+  }
+]

@@ -1,0 +1,693 @@
+[
+  {
+    "id": "output-rows-interleave-definitions",
+    "category": "parser-layout",
+    "source": "A = 3\nA + B\nB = 2",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = 3\nA\nA + 1",
+        "expectedNeutral": "ok raw=S[3, 4] n=2"
+      }
+    ],
+    "explanation": "Output rows may be interleaved with property definitions: property resolution uses the complete property set of the algorithm, not textual order.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "semicolon-not-expression-syntax",
+    "category": "parser-layout",
+    "source": "1 ; 2",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnsupportedSemicolon",
+    "expectedParseDiagnosticFragment": "Semicolon is not supported as an expression separator",
+    "explanation": "Semicolon is not expression syntax: use a comma between slots on one line (or a new line where the context separates rows), or parentheses for one sequence value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "trailing-comma-in-parens-rejected",
+    "category": "parser-layout",
+    "source": "(3,)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnexpectedToken",
+    "explanation": "A trailing comma inside parentheses is not a one-item sequence constructor."
+  },
+  {
+    "id": "trailing-comma-continues-line",
+    "category": "parser-layout",
+    "source": "1,\n2",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 2]",
+    "expectedEmittedCount": 2,
+    "explanation": "A trailing comma keeps the expression list open across the newline: two root output slots."
+  },
+  {
+    "id": "star-before-operand-row-is-multiplication",
+    "category": "parser-layout",
+    "source": "A = 4\nB = 6\nA *\nB",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "24"
+      }
+    ],
+    "expectedRaw": "24",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = 4\nB = 6\nA* B",
+        "expectedNeutral": "ok raw=24 n=1"
+      },
+      {
+        "source": "A = 4\nB = 6\nA * B",
+        "expectedNeutral": "ok raw=24 n=1"
+      },
+      {
+        "source": "A = 4\nB = 6\nA*B",
+        "expectedNeutral": "ok raw=24 n=1"
+      },
+      {
+        "source": "A = 4\nB = 6\nA\n* B",
+        "expectedNeutral": "ok raw=24 n=1"
+      },
+      {
+        "source": "A = 4\nB = 6\nX = A *\nB\nX",
+        "expectedNeutral": "ok raw=24 n=1"
+      },
+      {
+        "source": "A = 4\nB = 6\nA*\nB",
+        "expectedNeutral": "ok raw=S[4, 6] n=2"
+      },
+      {
+        "source": "A = 4\nB = 6\nX = A*\nB\nX",
+        "expectedNeutral": "ok raw=S[6, 4] n=2"
+      },
+      {
+        "source": "A = (1, 2)\nB = 5\nA*,\nB",
+        "expectedNeutral": "ok raw=S[1, 2, 5] n=3"
+      }
+    ],
+    "explanation": "A DETACHED line-final star (`A *`) is multiplication that leaves the expression incomplete, so the next line's operand completes it with ordinary precedence; a declaration or EOF there is a missing operand. An ATTACHED line-final star (`A*`) is instead a completed spread, so the next line is a row of its own (issue #183). With a same-line operand the star multiplies whatever its spacing.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "star-before-declaration-or-boundary-is-spread",
+    "category": "parser-layout",
+    "source": "A = (1, 2)\nB = 5\nA*, B",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n5"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 5]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "A = (1, 2)\nA*, 997",
+        "expectedNeutral": "ok raw=S[1, 2, 997] n=3"
+      },
+      {
+        "source": "F(*items) = items\nA = (1, 2)\nF(A*, 3)",
+        "expectedNeutral": "ok raw=L[1, 2, 3] n=1"
+      },
+      {
+        "source": "A = (1, 2)\nX = (A*)\nX",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      },
+      {
+        "source": "A = (1, 2)\nB = 3\nX = A*\nB\nX",
+        "expectedNeutral": "ok raw=S[3, S[1, 2]] n=2"
+      },
+      {
+        "source": "A = (1, 2)\nA*\nB = 5\nB",
+        "expectedNeutral": "ok raw=S[1, 2, 5] n=3"
+      },
+      {
+        "source": "F(*items) = items\nA = (1, 2)\nF(A*\n)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      }
+    ],
+    "explanation": "A same-line comma closes A* before B. The end of the physical line closes an ATTACHED star too (issue #183): before a declaration, a later-line closer or EOF it is a completed spread row. A DETACHED line-final star is incomplete multiplication instead; a following declaration is preserved and never becomes its operand. Spread VALUE semantics remain unchanged.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "line-final-star-in-definition-continues",
+    "category": "parser-layout",
+    "source": "A = 2\nX = A *\n3\nX",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = (1, 2)\nX = (A*)\n3\nX",
+        "expectedNeutral": "ok raw=S[3, S[1, 2]] n=2"
+      },
+      {
+        "source": "A = (1, 2)\nX = { A* }\n3\nX",
+        "expectedNeutral": "ok raw=S[3, S[1, 2]] n=2"
+      },
+      {
+        "source": "A = (1, 2)\nX = A*\n3\nX",
+        "expectedNeutral": "ok raw=S[3, S[1, 2]] n=2"
+      },
+      {
+        "source": "A = 2\nX = A*\n3\nX",
+        "expectedNeutral": "ok raw=S[3, 2] n=2"
+      },
+      {
+        "source": "A = 2\nB = 3\nX = A *\nB + 1\nX",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "A = 2\nB = 3\nX = A*\nB + 1\nX",
+        "expectedNeutral": "ok raw=S[4, 2] n=2"
+      },
+      {
+        "source": "A = 2\nX = A *\n# comment\n\n3\nX",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "A = (1, 2)\nX = { A* }\nY = 3\nX",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      }
+    ],
+    "explanation": "A DETACHED line-final star (`X = A *`) is multiplication, so the definition continues onto the next line with ordinary precedence; a declaration or EOF there leaves a missing operand. An ATTACHED line-final star (`X = A*`) completes the definition as a spread, so the next line is a row of its own (issue #183, refining Q-65). Explicit closure, X = (A*) or X = { A* }, also keeps the spread without changing its VALUE semantics.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "spread-marker-must-be-attached",
+    "category": "parser-layout",
+    "source": "A = (1, 2)\n(A *)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidSpreadMarker",
+    "expectedParseDiagnosticFragment": "The spread marker `*` must be directly attached to the expression it spreads",
+    "explanation": "An explicit same-line closer establishes spread; the classified marker must be directly attached, so (A *) is InvalidSpreadMarker. A star that ends its physical line is instead classified BY attachment (issue #183): an attached `A*` is a completed spread, a detached `A *` incomplete multiplication.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grace-marker-must-be-attached",
+    "category": "parser-layout",
+    "source": "Divide = y / ~ x\nDivide(2, 10)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidGraceMarker",
+    "expectedParseDiagnosticFragment": "The Grace marker `~` must be directly attached to the name it decorates",
+    "explanation": "Grace decorates exactly one bare name and must be written directly attached to it: `~x` or `x~`. A detached `~ x` (or `x ~`) is rejected rather than silently reordering — or silently not reordering — the parameters; the attached `Divide = y / ~x` infers `(x, y)` and `Divide(2, 10)` is `5`."
+  },
+  {
+    "id": "grace-on-bound-name-rejected",
+    "category": "parser-layout",
+    "source": "X = 1\nK = ~X + 2\nK",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidGraceMarker",
+    "expectedParseDiagnosticFragment": "Grace cannot reorder 'X' because it already resolves to a property",
+    "explanation": "Grace requires an OWN inferred parameter: it is valid only on a FREE name that becomes one of its algorithm's inferred parameters — that is the one place its weight is consumed. `X` is a visible property, so there is no inferred parameter for `~X` to weight; instead of being silently ignored the marker is a front-end error naming what fixed the binding. Cancelling markers (`~X~`) still validate this binding. The same rule covers a builtin (`~count`), an opened name, a parameter of an enclosing algorithm, and a dot member the receiver is known to declare (`Obj.~V`). A marker on a free name that the ordering cannot move is NOT an error (`grace-saturation-is-valid`).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grace-under-explicit-list-rejected",
+    "category": "parser-layout",
+    "source": "K(b, a) = b, ~a\nK(1, 2)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidGraceMarker",
+    "expectedParseDiagnosticFragment": "Grace cannot reorder 'a' because it already resolves to an explicit parameter",
+    "explanation": "An explicit parameter list fixes the parameter order, so nothing is inferred under it and a Grace marker there has no inferred parameter to weight: `K(b, a) = b, ~a` is rejected rather than silently keeping `(b, a)`. Write the order in the list (`K(a, b) = b, a`) or drop the list and let `~a` reorder the inferred parameters (`K = b, ~a` infers `(a, b)`).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grace-in-branch-deconstruction-rejected",
+    "category": "parser-layout",
+    "source": "F(0) = 0\nF(n) = {\n    a, b = (~n, 1)\n    a + b\n}\nF(5)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidGraceMarker",
+    "expectedParseDiagnosticFragment": "Grace cannot reorder 'n' because it is a binder of this clause's head",
+    "probes": [
+      {
+        "source": "F(0) = 0\nF(n) = {\n    a, b = (n, 1)\n    a + b\n}\nF(5)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "F(0) = 0\nF(n) = {\n    P = {\n        a, b = (y, ~x)\n        a / b\n    }\n    P(2, 10) + n\n}\nF(1)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "Apply(f) = f(2, 10)\nF(0) = 0\nF(n) = Apply({\n    a, b = (y, ~x)\n    a / b\n}) + n\nF(1)",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "A clause branch's own level infers nothing — its head is the complete input specification — so no marker in any row the branch writes has an inferred parameter to weight, and a deconstruction's right-hand side is one of those rows: `a, b = (~n, 1)` in a family branch is rejected exactly like the same marker in a branch output row (`n` is a binder of the clause head). Drop the marker. Grace stays valid where a level really infers, such as a property or a brace block nested in the branch.",
+    "notes": "Constitution PV-49 (September 2026): assignment deconstruction hoists its right-hand side into a synthetic source whose rows are rows of the enclosing body, and the parser's branch Grace scan read only the branch's output rows, so the marker was silently accepted in a family branch while the same body under a single clause was refused; the scan was then extended to every written row (`AstHelpers.WrittenRows`). Q-16 G-O (2026-10-07) deleted that lexical scan: the parameter detector's branch region judges every row the branch writes (a closed level), and a block or property nested in the branch is an owner of its own. The expected fragment changed accordingly (formerly \"Grace is not allowed in conditional branch bodies for 'F'.\"); the verdict did not."
+  },
+  {
+    "id": "grace-in-branch-nested-block-belongs-to-the-block",
+    "category": "name-resolution",
+    "source": "Apply(f) = f(1, 10)\nF(0) = Apply({ y - ~x })\nF(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "9"
+      }
+    ],
+    "expectedRaw": "9",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Apply(f) = f(1, 10)\nF(0) = Apply({ y - x })\nF(0)",
+        "expectedNeutral": "ok raw=-9 n=1"
+      },
+      {
+        "source": "Apply(f) = f(1, 10)\nF(0) = {\n    B = y - ~x\n    Apply(B)\n}\nF(0)",
+        "expectedNeutral": "ok raw=9 n=1"
+      },
+      {
+        "source": "Apply(f) = f(1, 10)\nG(k) = Apply({ y - ~x }) + k\nG(1)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Apply(f) = f(1, 10)\nG(0) = 0\nG(k) = Apply({ y - ~x }) + k\nG(1)",
+        "expectedNeutral": "ok raw=10 n=1"
+      }
+    ],
+    "explanation": "Grace belongs to the algorithm whose rows contain the marker. A clause branch's own level infers nothing — its head is its complete input specification — but a brace block nested in the branch is an algorithm of its own: `{ y - ~x }` infers `(x, y)` itself (`(y, x)` without the marker), so `Apply` calls it with `x = 1`, `y = 10` and `F(0)` is `9`. The same block written as the branch's property `B = y - ~x` agrees, adding a sibling clause changes nothing, and the branch never gains a parameter. A marker on the branch's own level — `F(n) = ~n + 1` — is still an error.",
+    "notes": "Q-16 G-O (2026-10-07), Q-16(2) O: formerly the inline block was rejected by the parser's lexical branch scan (a representation side effect of the pre-#143 shared `Expr.Block`) while the named property was accepted (X-08). The branch's own level stays closed: `grace-in-branch-deconstruction-rejected`, `grace-on-branch-binder-in-nested-block-rejected`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grace-saturation-is-valid",
+    "category": "parser-layout",
+    "source": "F = ~x + 1\nA = p - q\nG = A - z~\nH = ~a + b * 10\nF(3), G(1, 2, 3), H(1, 2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "4\n-2\n21"
+      }
+    ],
+    "expectedRaw": "S[4, -2, 21]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "K = x + y~ * 10\nK(1, 2)",
+        "expectedNeutral": "ok raw=21 n=1"
+      },
+      {
+        "source": "K = ~~x + y * 10\nK(1, 2)",
+        "expectedNeutral": "ok raw=21 n=1"
+      },
+      {
+        "source": "K = ~x + ~y * 10\nK(1, 2)",
+        "expectedNeutral": "ok raw=21 n=1"
+      },
+      {
+        "source": "K = ~x~ + y * 10\nK(1, 2)",
+        "expectedNeutral": "ok raw=21 n=1"
+      },
+      {
+        "source": "K = ~x + y * 10 + 0 * x~\nK(1, 2)",
+        "expectedNeutral": "ok raw=21 n=1"
+      },
+      {
+        "source": "K = x + ~y * 10\nK(1, 2)",
+        "expectedNeutral": "ok raw=12 n=1"
+      }
+    ],
+    "explanation": "Grace is an ordering weight on one of its algorithm's OWN inferred parameters, and it is valid whenever the marked name is one — even when the ordering cannot move it (saturation). `F = ~x + 1` has a single inferred parameter; in `H = ~a + b * 10`, `a` is already first; and in `G = A - z~` the own name `z` cannot cross into the names `G` lifts from `A`, because a formula's own names always come before the names it lifts: `G(z, p, q)`, so `G(1, 2, 3)` is `(2 - 3) - 1`. A name already last, excess weight, an equal weight on the neighbour and a cancelled `~x~` are saturation too. None of these is an error; Grace is rejected only where the marked name is not an inferred parameter at all (an explicit parameter, a clause binder, a property, a builtin, an opened name, a structural member).",
+    "notes": "Q-16 G-O (2026-10-07), Q-16(1) E: Grace requires an OWN inferred parameter, never actual movement. The X-39 wording conflict (\"never a silent no-op\" versus \"excess movement is ignored\") is resolved in favour of eligibility.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grace-on-branch-binder-in-nested-block-rejected",
+    "category": "name-resolution",
+    "source": "Apply(f) = f(1)\nF(0) = 0\nF(n) = Apply({ x - ~n })\nF(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidGraceMarker",
+    "expectedParseDiagnosticFragment": "Grace cannot reorder 'n' because it already resolves to a parameter of an enclosing algorithm",
+    "probes": [
+      {
+        "source": "Apply(f) = f(1)\nF(0) = 0\nF(n) = Apply({ x - n })\nF(1)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Apply(f) = f(1)\nF(0) = 0\nF(n) = Apply({ ~x - n })\nF(1)",
+        "expectedNeutral": "ok raw=0 n=1"
+      }
+    ],
+    "explanation": "Inside a block nested in a clause branch, the branch binder `n` is a parameter of the ENCLOSING branch that the block captures — never one of the block's own inferred parameters — so a marker on it has no inferred parameter to weight and is rejected, once, at the marker. The block's own free name `x` is inferred as usual and may carry Grace.",
+    "notes": "Q-16 G-O (2026-10-07): exactly one report, by the block's own detector region (formerly the parser's lexical branch scan added a second report at the same span)."
+  },
+  {
+    "id": "declaration-head-never-spans-lines",
+    "category": "parser-layout",
+    "source": "Foo\n(x) = x + 1\nFoo(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnexpectedToken",
+    "expectedParseDiagnosticFragment": "A declaration head cannot be assembled across a physical newline",
+    "explanation": "A simple definition or deconstruction head stays on one physical line. A clause head's name and `(` share a line, its closing `)` and `=` share a line, and the pattern list inside those parentheses may span lines. A newline never assembles a head: `Foo` on its own line is a closed output row, `(x)` the next row, and the `=` is a stray token reported with the repair. `A` newline `= 1` and `Foo(x)` newline `= x + 1` are rejected the same way (before this rule they silently became `Foo(x) = x + 1`, and `Foo(1)` newline `= 3` even added a clause to an existing family). The body of a recognized head may still begin on the next line: `A =` newline `1` defines `A = 1`, and `F(a,` newline `b) = a + b` keeps its pattern list open across the line.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "collect-marker-must-be-attached",
+    "category": "parser-layout",
+    "source": "F(* items) = items\nF(1, 2)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidCollectMarker",
+    "expectedParseDiagnosticFragment": "The collect marker `*` must be directly attached to its binding name",
+    "explanation": "A collecting binding is written `*items`, the collect marker directly attached to its name, on every binding surface (explicit parameter lists, nested sequence-value patterns, assignment deconstruction). A detached `* items` never creates a collecting binding; it is a parse error."
+  },
+  {
+    "id": "spread-not-binary-operand",
+    "category": "parser-layout",
+    "source": "A = (1, 2)\nA* == A*, 997",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "MisplacedSpread",
+    "explanation": "A spread expression is not a binary operand; spread results feed slots, not operators."
+  },
+  {
+    "id": "retired-colon-selection-rejected",
+    "category": "parser-layout",
+    "source": "x = (1, 2)\nx:0",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "RetiredColonSelection",
+    "explanation": "':' is not KatLang syntax: the retired colon selection reports its migration diagnostic (write 'x[0]'), never an alternative spelling of selection."
+  },
+  {
+    "id": "grace-line-final-marker-after-call-rejected",
+    "category": "parser-layout",
+    "source": "Q = {\n  b\n  F(1)~\n  a\n}\nF(z) = z\nQ(10, 20)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidGraceMarker",
+    "expectedParseDiagnosticFragment": "Grace `~` can only be applied to a parameter or name occurrence",
+    "explanation": "A grace marker never binds across a physical newline in either direction: `F(1)~` at the end of a row is the rejected `f(x)~` spelling (Grace decorates exactly one bare name), never prefix Grace on the next row's `a`. Write the marker on the name it decorates, on that name's line: `~a`."
+  },
+  {
+    "id": "grace-weights-accumulate",
+    "category": "parser-layout",
+    "source": "Weighted = a + 10 * b + 100 * ~~c\n\nWeighted(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "132"
+      }
+    ],
+    "expectedRaw": "132",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Weighted = a + 10 * b + 100 * ~c\n\nWeighted(1, 2, 3)",
+        "expectedNeutral": "ok raw=231 n=1"
+      },
+      {
+        "source": "Weighted = a + 10 * b + 100 * ~c~\n\nWeighted(1, 2, 3)",
+        "expectedNeutral": "ok raw=321 n=1"
+      },
+      {
+        "source": "Weighted = a + 10 * b + 100 * ~c + ~c\n\nWeighted(1, 2, 3)",
+        "expectedNeutral": "ok raw=133 n=1"
+      },
+      {
+        "source": "Weighted = a + 10 * b + 100 * ~~~~~c\n\nWeighted(1, 2, 3)",
+        "expectedNeutral": "ok raw=132 n=1"
+      },
+      {
+        "source": "Weighted = a~~ + 10 * b + 100 * c\n\nWeighted(1, 2, 3)",
+        "expectedNeutral": "ok raw=213 n=1"
+      },
+      {
+        "source": "Weighted = a + 10 * b + 100 * ~~c\n\nWeighted(1)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "Every Grace marker is one unit of weight on its name — prefix `~` one position earlier, postfix `~` one position later — and the weights of all markers on all occurrences of one name in the same body add up. First appearance gives `(a, b, c)`; `~~c` carries two units, so the signature is `Weighted(c, a, b)` and the call binds `c = 1`, `a = 2`, `b = 3`. A name never moves past the ends of the list, and `~c~` cancels to zero.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grace-front-first-movement",
+    "category": "parser-layout",
+    "source": "A = s * 100 + ~x * 10 + ~y\nB = s~ * 100 + x~ * 10 + y\nC = a * 100 + b~ * 10 + ~~c\nD = a~ * 100 + b * 10 + ~c\nE = ~a * 100 + b * 10 + ~~c\nA(1, 2, 3), B(1, 2, 3), C(1, 2, 3), D(1, 2, 3), E(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "312\n231\n231\n312\n132"
+      }
+    ],
+    "expectedRaw": "S[312, 231, 231, 312, 132]",
+    "expectedEmittedCount": 5,
+    "probes": [
+      {
+        "source": "K = ~a * 100 + ~b * 10 + c\nK(1, 2, 3)",
+        "expectedNeutral": "ok raw=123 n=1"
+      },
+      {
+        "source": "SumOfParams = a~~ * 10 + b~\nSumOfParams(1, 2)",
+        "expectedNeutral": "ok raw=21 n=1"
+      },
+      {
+        "source": "K = a~ * 1000 + b~ * 100 + c~ * 10 + d\nK(1, 2, 3, 4)",
+        "expectedNeutral": "ok raw=2341 n=1"
+      },
+      {
+        "source": "K = a * 1000 + ~b * 100 + ~c * 10 + ~d\nK(1, 2, 3, 4)",
+        "expectedNeutral": "ok raw=4123 n=1"
+      },
+      {
+        "source": "K = a * 10000 + b~ * 1000 + c~ * 100 + d~ * 10 + ~e\nK(1, 2, 3, 4, 5)",
+        "expectedNeutral": "ok raw=23451 n=1"
+      },
+      {
+        "source": "K = ~a * 100 + b * 10 + ~~~c\nK(1, 2, 3)",
+        "expectedNeutral": "ok raw=231 n=1"
+      }
+    ],
+    "explanation": "Each Grace marker asks for one adjacent move, and the names move one at a time: first every name with postfix weight, starting from the last-written, then every name with prefix weight, starting from the first-written. A name passes a neighbour unless that neighbour moves the same way with at least as much weight left, and weight it cannot use stays with it. `A`: `x` moves first and clears the way for `y`, so `A(x, y, s)`. `B`: `x`, in front, moves first, then `s` passes `y`, so `B(y, s, x)`. `C`: `b` passes `c`, and `c` still takes its own turn and passes `a`, so `C(c, a, b)` — as without `b~`. `D`: `a` moves right first, then `c` moves left past `a`, so `D(b, c, a)`. `E`: `a` is already first and keeps its unused unit; `c` passes `b` but not `a`, whose remaining weight equals its own, so `E(a, c, b)`.",
+    "notes": "X-49 (decided 2026-10-08): front-first movement, postfix movers first, residual weights retained (PAR-06). `C` was `C(a, c, b)` = 132 before: a position cursor skipped `c` once `b` had displaced it.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grace-prefix-marker-led-row",
+    "category": "parser-layout",
+    "source": "K = {\n  a\n  ~b\n}\nK(10, 20)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(20, 10)"
+      }
+    ],
+    "expectedRaw": "S[20, 10]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = 1\nK = {\n  A\n  ~b\n}\nK(2)",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      }
+    ],
+    "explanation": "A `~`-led row is its own prefix-grace expression, and the marker and its name share one physical line: `~b` moves `b` one position earlier, so the block's implicit parameters are `(b, a)` and `K(10, 20)` binds `b = 10`, `a = 20`."
+  },
+  {
+    "id": "adjacency-call-across-space",
+    "category": "parser-layout",
+    "source": "Add(a, b) = a + b\n\nAdd(1, 2)    # 3\nAdd (1, 2)   # the same call, 3",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n3"
+      }
+    ],
+    "expectedRaw": "S[3, 3]",
+    "expectedEmittedCount": 2,
+    "explanation": "A call delimiter continues the callable across same-line whitespace: `Add (1, 2)` is still the call (whitespace inside one expression is formatting, never a slot boundary)."
+  },
+  {
+    "id": "multiline-call-open-delimiter",
+    "category": "parser-layout",
+    "source": "Add(a, b) = a + b\n\nAdd(\n  1, 2\n)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "explanation": "For a multiline call, open the delimiter before the newline — an open argument list spans lines normally.",
+    "notes": "Parse-level: an already-open argument list spans lines; the elaborated AST equals the single-line call."
+  },
+  {
+    "id": "newline-grammar-priority-continuation",
+    "category": "parser-layout",
+    "source": "P = 10\n- 2\nP",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "10\n-2",
+        "expectedNeutral": "ok raw=S[10, -2] n=2"
+      },
+      {
+        "source": "10\n- 2",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "10\n- -2",
+        "expectedNeutral": "ok raw=12 n=1"
+      },
+      {
+        "source": "10\n* 2",
+        "expectedNeutral": "ok raw=20 n=1"
+      },
+      {
+        "source": "P=1\n,2\nP",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      },
+      {
+        "source": "F(-2)=7\nF(n)=n\nF(-2)",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "Q-65: grammar role precedes newline. Independent next-line expressions and declarations have priority; otherwise a leading binary operator, comma or dot continues. Unary minus and negative pattern signs require direct attachment: 10 newline -2 has two rows, while 10 newline - 2 subtracts. Indentation is irrelevant. Calls and selections retain their same-line opener rule.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "unary-minus-must-be-attached",
+    "category": "parser-layout",
+    "source": "- 2",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnexpectedToken",
+    "expectedParseDiagnosticFragment": "Unary '-' must be directly attached",
+    "explanation": "Prefix unary '-' requires exact attachment to its operand. At root '- 2' has neither an eligible unary role nor a binary left operand, so it is a syntax error. '-2', '--2' and '2 ^ -2' stay valid with their existing precedence and numeric domain. Binary '-' remains spacing-independent.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "negative-pattern-sign-must-be-attached",
+    "category": "parser-layout",
+    "source": "F(- 2) = 7",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnexpectedToken",
+    "expectedParseDiagnosticFragment": "A negative pattern's '-' must be directly attached",
+    "explanation": "The owner extended direct attachment to negative literal pattern signs. F(-2) is the existing literal-pattern form; F(- 2), including a newline or comment gap, is rejected. This does not turn a pattern sign into an expression unary node.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "line-final-star-at-eof-is-incomplete",
+    "category": "parser-layout",
+    "source": "7 *",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnexpectedToken",
+    "expectedParseDiagnosticFragment": "Expected an expression after '*'",
+    "explanation": "A DETACHED line-final '*' is multiplication and needs a right operand, including at EOF and before a later closer or declaration (issue #183). An ATTACHED `7*` at EOF is instead a completed spread of the scalar 7 (line-final-star-attached-at-eof-is-spread). The spread VALUE and collect-marker laws are unchanged.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "line-final-star-attached-at-eof-is-spread",
+    "category": "parser-layout",
+    "source": "A = 1, 2, 3\nA*",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n3"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "A = 1, 2, 3\nA*\n42",
+        "expectedNeutral": "ok raw=S[1, 2, 3, 42] n=4"
+      },
+      {
+        "source": "A = 1, 2, 3\nA**",
+        "expectedNeutral": "ok raw=S[1, 2, 3] n=3"
+      },
+      {
+        "source": "A = 1, 2, 3\nA* # the end\n",
+        "expectedNeutral": "ok raw=S[1, 2, 3] n=3"
+      },
+      {
+        "source": "7*",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "A = 2\nB = 3\nA *\nB",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "Issue #183 (refining Q-65): an ATTACHED star that ends its physical line — EOF included, across comments and blank lines — is the postfix spread marker and completes the expression, so `A*` alone spreads A into three output rows and an appended row (`42`) never reinterprets it. Repeated attached stars keep one spread layer each. A spread of a scalar supplies that scalar. A DETACHED `A *` is multiplication that continues onto the next line.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "newline-ends-property-body",
+    "category": "parser-layout",
+    "source": "P = 1\n2",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "A simple property body ends at the newline when the following syntax starts an independent expression. Here 2 is a separate root output row; grammar-eligible leading continuation can still extend the body (Q-65)."
+  },
+  {
+    "id": "comment-does-not-change-parse",
+    "category": "parser-layout",
+    "source": "# comment\n1 + 1",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "Comments never change parse decisions."
+  },
+  {
+    "id": "spread-binds-before-list",
+    "category": "parser-layout",
+    "source": "X(*vals) = vals.count\nb = (1, 2)\nX(7, b*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "explanation": "A spread expression is one whole expression-list slot: `X(7, b*)` supplies `7` and then b's two items, so the collecting parameter collects three values (the comma before `b*` is required like every same-line comma; `X(7 b*)` is rejected)."
+  },
+  {
+    "id": "dot-chain-continuation",
+    "category": "parser-layout",
+    "source": "(1, 2, 3)\n.map { n * 2 }\n.sum",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "12"
+      }
+    ],
+    "expectedRaw": "12",
+    "expectedEmittedCount": 1,
+    "explanation": "A leading `.` is the supported method-chain continuation across lines."
+  }
+]

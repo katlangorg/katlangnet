@@ -1,0 +1,37 @@
+[
+  {
+    "id": "string-equality-exact",
+    "category": "strings",
+    "source": "'ab' == 'ab'",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true"
+      }
+    ],
+    "expectedRaw": "true",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "count('ab')",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "Strings compare by exact value and count as one item."
+  },
+  {
+    "id": "string-displays-unquoted",
+    "category": "strings",
+    "source": "x = 'ab'\nx",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "ab"
+      }
+    ],
+    "expectedRaw": "'ab'",
+    "expectedEmittedCount": 1,
+    "explanation": "String values display without quotes.",
+    "notes": "String display intentionally drops quotes (documented display non-roundtrip)."
+  }
+]

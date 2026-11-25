@@ -1,0 +1,157 @@
+[
+  {
+    "id": "tick-counts-executions-in-the-run",
+    "category": "arithmetic",
+    "source": "tick(), tick(), tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n3"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "tick() * 10 + tick()",
+        "expectedNeutral": "ok raw=12 n=1"
+      },
+      {
+        "source": "if(false, tick(), 0), tick()",
+        "expectedNeutral": "ok raw=S[0, 1] n=2"
+      }
+    ],
+    "explanation": "Every run starts its counter at zero; every actual execution of `tick()` adds one and returns the new count as one number, so the counter also shows the order in which calls run."
+  },
+  {
+    "id": "tick-property-is-cached-call-is-fresh",
+    "category": "arithmetic",
+    "source": "A = tick()\nA(), A, A(), A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1\n2\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 2, 1]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "A = tick()\nA + A",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "A = tick()\nA() + A()",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "A = tick()\nA, A(), A",
+        "expectedNeutral": "ok raw=S[1, 2, 1] n=3"
+      }
+    ],
+    "explanation": "`A = tick()` is an ordinary property: declaring it runs nothing, a bare read reuses the value established for the binding, and `A()` runs afresh. The first explicit call finds the entry empty and establishes it (CACHE-PUB-1); later calls never replace it.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "tick-argument-is-one-lazy-computation",
+    "category": "arithmetic",
+    "source": "Ignore(x) = 7\nTwice(x) = x + x\nIgnore(tick()), Twice(tick()), tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n2\n2"
+      }
+    ],
+    "expectedRaw": "S[7, 2, 2]",
+    "expectedEmittedCount": 3,
+    "explanation": "An unused argument is never computed, and a supplied computation demanded twice runs once (its NeedCell outcome is reused): the final independent call is only the second tick."
+  },
+  {
+    "id": "tick-callable-reference-is-not-an-execution",
+    "category": "arithmetic",
+    "source": "T = tick\nApply(f) = f()\nT(), Apply(tick), tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n3"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "T = tick\nIgnore(f) = 7\nIgnore(tick), Ignore(T)",
+        "expectedNeutral": "ok raw=S[7, 7] n=2"
+      }
+    ],
+    "explanation": "Bare `tick` is the builtin's callable identity: an alias of it, or passing it, runs nothing, and every explicit call through it is one fresh execution."
+  },
+  {
+    "id": "tick-meta-replay-is-fresh",
+    "category": "arithmetic",
+    "source": "Replay(meta op) = op.Invoke() + op.Invoke()\nReplay(tick()), tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n3"
+      }
+    ],
+    "expectedRaw": "S[3, 3]",
+    "expectedEmittedCount": 2,
+    "explanation": "Capturing the call `tick()` is inert; each `Invoke()` is a fresh execution of the captured call (1 + 2), and the independent call after it is the third tick."
+  },
+  {
+    "id": "tick-bare-value-requires-invocation",
+    "category": "errors",
+    "source": "tick + 1",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "illegalInEval",
+    "probes": [
+      {
+        "source": "tick",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "A = tick\nA",
+        "expectedNeutral": "err illegalInEval"
+      }
+    ],
+    "explanation": "A bare `tick` demanded as a value is refused with an invocation-required diagnostic recommending `tick()` — never the misleading zero-argument arity report — and nothing is counted. Its callable uses (`T = tick`, `Apply(tick)`) stay valid."
+  },
+  {
+    "id": "tick-argument-is-an-arity-error",
+    "category": "errors",
+    "source": "tick(1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        0,
+        1
+      ]
+    },
+    "probes": [
+      {
+        "source": "5.tick",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "`tick` accepts exactly zero arguments. A supplied argument is the ordinary arity rejection, checked before the argument is demanded (no DivisionByZero), and an extension call supplies its receiver, so `5.tick` is `tick(5)`."
+  },
+  {
+    "id": "tick-is-an-ordinary-shadowable-binding",
+    "category": "name-resolution",
+    "source": "tick(x) = x + 100\ntick(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "101"
+      }
+    ],
+    "expectedRaw": "101",
+    "expectedEmittedCount": 1,
+    "explanation": "`tick` is an ordinary prelude binding, not a keyword: a user definition of the same name shadows it completely, and no layer dispatches by spelling."
+  }
+]

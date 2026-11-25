@@ -4,7 +4,7 @@ import KatLang
 GENERATED FILE - DO NOT EDIT BY HAND.
 
 Canonical executable language specification, Lean half
-(source corpus: dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs).
+(source corpus: conformance/cases.json).
 
 Each `#guard` pins the CANONICAL expectation of one specification case —
 not an observed value. The C# runner (LanguageSpecRunnerTests) asserts the
@@ -16,9 +16,9 @@ not a formal verification of the evaluators.
 Partition (machine-checked by the `specCaseIds.length` guard below):
 - specification surface cases: 809
 - excluded parse-level cases (Lean has no surface parser): 89
-- excluded C#-only cases (each carries an explicit reason in the corpus): 24
+- other shared cases outside the Lean model (each carries an explicit reason in the corpus): 24
 - Lean-guarded cases: 696
-- probe observations (C#-only by design): 1692
+- probe observations (checked by surface runners): 1692
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries

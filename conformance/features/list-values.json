@@ -1,0 +1,529 @@
+[
+  {
+    "id": "list-literal",
+    "category": "lists",
+    "source": "[1, 2, 3]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3]"
+      }
+    ],
+    "expectedRaw": "L[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "[[1, 2], [3, 4]]",
+        "expectedNeutral": "ok raw=L[L[1, 2], L[3, 4]] n=1"
+      },
+      {
+        "source": "[()]",
+        "expectedNeutral": "ok raw=L[S[]] n=1"
+      },
+      {
+        "source": "[(1, 2)]",
+        "expectedNeutral": "ok raw=L[S[1, 2]] n=1"
+      }
+    ],
+    "explanation": "`[1, 2, 3]` is a list value: one value whose elements are stored exactly, displayed with brackets.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-exactness",
+    "category": "lists",
+    "source": "[7] == 7\n[[1, 2]] == [1, 2]\n[[]] == []",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "false\nfalse\nfalse"
+      }
+    ],
+    "expectedRaw": "S[false, false, false]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "[1, 2] == [1, 2]",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "[[1], [2, 3]] == [[1], [2, 3]]",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "[1, [2]] == [1, 2]",
+        "expectedNeutral": "ok raw=false n=1"
+      }
+    ],
+    "explanation": "Lists preserve exact cardinality and nesting: `[7]` is not `7`, `[[1, 2]]` is not `[1, 2]`, `[[]]` is not `[]`; equality is structural and recursive.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-vs-sequence-kind",
+    "category": "lists",
+    "source": "[] == ()\n[1, 2] == (1, 2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "false\nfalse"
+      }
+    ],
+    "expectedRaw": "S[false, false]",
+    "expectedEmittedCount": 2,
+    "explanation": "Lists and sequence values are different value kinds: equal elements never make a list equal a sequence, and `[]` is not `()`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-index-selects-element",
+    "category": "lists",
+    "source": "[1, 2, 3][0]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "[1, 2, 3][2]",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "[7][0]",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "((1, 2, 3)[1]) == ([1, 2, 3][1])",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "Postfix brackets select one immediate element from an exact list by zero-based position, exactly like sequence selection.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-index-nested-element-stays-exact",
+    "category": "lists",
+    "source": "Rows = [[1, 2], [3, 4]]\nRows[0]\nRows[0][1]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2]\n2"
+      }
+    ],
+    "expectedRaw": "S[L[1, 2], 2]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "[[1, 2]][0] == [1, 2]",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "[[1, 2]][0] == (1, 2)",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "[(1, 2), (3, 4)][0]",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      }
+    ],
+    "explanation": "A selected list element is returned exactly as stored — one opaque list, never flattened or converted — and a selected sequence element is likewise one intact value; chained brackets select one level at a time.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-index-out-of-range",
+    "category": "lists",
+    "source": "[][0]",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "index",
+    "probes": [
+      {
+        "source": "[1, 2][2]",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "[1, 2][100]",
+        "expectedNeutral": "err index"
+      },
+      {
+        "source": "A = []\nA[0]",
+        "expectedNeutral": "err index"
+      }
+    ],
+    "explanation": "Empty and past-the-end list positions report the same out-of-range index error as sequence selection."
+  },
+  {
+    "id": "list-index-builtin-results",
+    "category": "lists",
+    "source": "range(1, 3)[2]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "take([1, 2, 3], 1)[0]",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "[3, 1, 2].order[0]",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "A = range(1, 3)\nA[0]",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "Collection-producing builtin results are exact lists and can be indexed directly — no spread-and-recapture step is needed.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-redundant-parens-canonicalize",
+    "category": "lists",
+    "source": "([1, 2]) == [1, 2]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true"
+      }
+    ],
+    "expectedRaw": "true",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "(([1]))",
+        "expectedNeutral": "ok raw=L[1] n=1"
+      }
+    ],
+    "explanation": "Ordinary parentheses stay a redundant sequence grouping even around lists: `([1, 2])` normalizes to the exact list itself."
+  },
+  {
+    "id": "list-spread-capture",
+    "category": "lists",
+    "source": "A = [1, 2, 3]\n\nx = A\ny = (A*)\n\nx\ny",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3]\n(1, 2, 3)"
+      }
+    ],
+    "expectedRaw": "S[L[1, 2, 3], S[1, 2, 3]]",
+    "expectedEmittedCount": 2,
+    "explanation": "Single-name capture preserves the list; the spread marker opens exactly one list boundary into the item supply, so capturing the spread yields the canonical sequence of the elements.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-spread-edges",
+    "category": "lists",
+    "source": "A = []\nB = [7]\nC = [[7]]\n\nA*,\nB*,\nC*, 997",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n[7]\n997"
+      }
+    ],
+    "expectedRaw": "S[7, L[7], 997]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "A = []\nx = (A*)\nx",
+        "expectedNeutral": "ok raw=S[] n=1"
+      }
+    ],
+    "explanation": "Spread opens ONE boundary: `[]*` supplies zero items (the row vanishes), `[7]*` supplies `7`, and `[[7]]*` supplies the inner list `[7]` intact. Each spread row here ends with an explicit comma; an attached line-final `*` would end the row as well (issue #183), while a DETACHED `*` before an operand on the next line would be multiplication."
+  },
+  {
+    "id": "list-literal-spread-elements",
+    "category": "lists",
+    "source": "A = 1, 2, 3\n\n[A*]\n[0, A*, 4]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3]\n[0, 1, 2, 3, 4]"
+      }
+    ],
+    "expectedRaw": "S[L[1, 2, 3], L[0, 1, 2, 3, 4]]",
+    "expectedEmittedCount": 2,
+    "explanation": "List-literal elements use the ordinary expression-list model: a spread element inserts its item supply into the list being constructed.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-elements-preserve-boundaries",
+    "category": "lists",
+    "source": "A = [1, 2]\nB = [3, 4]\n\n[A, B]\n[A*, B*]\n[A, B*]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[[1, 2], [3, 4]]\n[1, 2, 3, 4]\n[[1, 2], 3, 4]"
+      }
+    ],
+    "expectedRaw": "S[L[L[1, 2], L[3, 4]], L[1, 2, 3, 4], L[L[1, 2], 3, 4]]",
+    "expectedEmittedCount": 3,
+    "explanation": "Non-spread list values stay single elements; only an explicit `value*` slot opens a list into the surrounding list literal."
+  },
+  {
+    "id": "list-written-slot-reifies-selection",
+    "category": "lists",
+    "source": "S = ((1, 2), (3, 4))\n\n[S[0], 5]\n[S[0]*, 5]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[(1, 2), 5]\n[1, 2, 5]"
+      }
+    ],
+    "expectedRaw": "S[L[S[1, 2], 5], L[1, 2, 5]]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "S = ((1, 2), (3, 4))\nz = (S[0], 5)\nz",
+        "expectedNeutral": "ok raw=S[S[1, 2], 5] n=1"
+      },
+      {
+        "source": "S = ((1, 2), (3, 4))\nF((x, y)) = if(x == (1, 2), 1, 0) + y\nF((S[0], 5))",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "S = ((1, 2), (3, 4))\nF((x, y, z)) = x + y + z\nF((S[0]*, 5))",
+        "expectedNeutral": "ok raw=8 n=1"
+      }
+    ],
+    "explanation": "A non-spread expression occupying one written slot contributes exactly ONE persistent value: the selection `S[0]` is the pair `(1, 2)` as a list element, exactly as at a capture, a call argument, and every other receiver. Only an explicit spread `S[0]*` opens the selected value into the surrounding slots.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-empty-spread-neutral",
+    "category": "lists",
+    "source": "[1, []*, 2]\n[1, ()*, 2]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2]\n[1, 2]"
+      }
+    ],
+    "expectedRaw": "S[L[1, 2], L[1, 2]]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(a, b) = a + b\nF(1, []*, 2)",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "[1, [], 2]",
+        "expectedNeutral": "ok raw=L[1, L[], 2] n=1"
+      }
+    ],
+    "explanation": "Spreading an empty list contributes zero elements, exactly like `()*`; a NON-spread `[]` element stays one visible list element."
+  },
+  {
+    "id": "list-call-boundary",
+    "category": "lists",
+    "source": "F(a, b, c) = a + b + c\nOne(x) = 7\n\nA = [1, 2, 3]\n\nOne(A)\nF(A*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n6"
+      }
+    ],
+    "expectedRaw": "S[7, 6]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(a) = a\nF([]*)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "Calls never open lists implicitly: `One(A)` passes one list-valued argument, `F(A*)` explicitly supplies its three elements, and `F([]*)` supplies zero arguments.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-lone-deconstruction",
+    "category": "lists",
+    "source": "x, y, z = [1, 2, 3]\n\nx\ny\nz",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n3"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "x, y, z = ([1, 2, 3]*)\nx, y, z",
+        "expectedNeutral": "ok raw=S[1, 2, 3] n=3"
+      },
+      {
+        "source": "A = [1, 2, 3]\nx, y, z = A\nx, y, z",
+        "expectedNeutral": "ok raw=S[1, 2, 3] n=3"
+      },
+      {
+        "source": "A = [[1, 2]]\nx, *xs = A\ny, *ys = (A*)\nx, xs, y, ys",
+        "expectedNeutral": "ok raw=S[L[1, 2], L[], 1, L[2]] n=4"
+      },
+      {
+        "source": "A = []\n*xs = A\n*ys = (A*)\nxs, ys",
+        "expectedNeutral": "ok raw=S[L[], L[]] n=2"
+      }
+    ],
+    "explanation": "A deconstruction whose captured right-hand side is one list value opens the list one level. Here, `= [1, 2, 3]` and `= ([1, 2, 3]*)` present the same three binding items. Empty lists and singleton lists containing an atom or string also present the same items with or without spread-before-capture. A singleton list containing a sequence or list can produce different bindings or an arity outcome: singleton capture after spread removes the outer list, so deconstruction opens its element instead. For `A = [[1, 2]]`, `x, *rest = A` binds `x = [1, 2]`, `rest = []`, while `x, *rest = (A*)` binds `x = 1`, `rest = [2]`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-deconstruction-not-recursive",
+    "category": "lists",
+    "source": "x, y = [[1, 2], 3]\n\nx\ny",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2]\n3"
+      }
+    ],
+    "expectedRaw": "S[L[1, 2], 3]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "x, y = [1, 2], 3\nx, y",
+        "expectedNeutral": "ok raw=S[L[1, 2], 3] n=2"
+      }
+    ],
+    "explanation": "Only the outer lone structure opens: nested lists stay intact, and a list that is one item of an already multi-item supply stays one value."
+  },
+  {
+    "id": "collecting-binding-exact-list",
+    "category": "lists",
+    "source": "x, *rest = [1, 2, 3]\n\nx\nrest",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n[2, 3]"
+      }
+    ],
+    "expectedRaw": "S[1, L[2, 3]]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "x, *rest = [1]\nrest == []",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "x, *rest = [1]\nrest == ()",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "x, *rest = [1, 2]\nrest",
+        "expectedNeutral": "ok raw=L[2] n=1"
+      },
+      {
+        "source": "x, *rest = [[1, 2, 3]]\nx",
+        "expectedNeutral": "ok raw=L[1, 2, 3] n=1"
+      },
+      {
+        "source": "x, *rest = 1, [2, 3], 4\nrest",
+        "expectedNeutral": "ok raw=L[L[2, 3], 4] n=1"
+      },
+      {
+        "source": "x, *rest = (1, [2, 3]*, (4, 5)*)\nrest",
+        "expectedNeutral": "ok raw=L[2, 3, 4, 5] n=1"
+      },
+      {
+        "source": "Rows = [[1, 2], [3, 4]]\nfirst, *rest = Rows\nrest",
+        "expectedNeutral": "ok raw=L[L[3, 4]] n=1"
+      },
+      {
+        "source": "Rows = [[1, 2], [3, 4]]\nfirst, *rest = Rows\nrest.count",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "skip([1, 2, 3], 1)",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      },
+      {
+        "source": "x, *rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "A collecting binding COLLECTS the item slots assigned to it into one list: `rest` from `x, *rest = [1, 2, 3]` is `[2, 3]`, the empty segment is `[]`, a singleton segment is `[item]` (a one-row segment of `[[1, 2], [3, 4]]` stays `[[3, 4]]`, count 1), and the result agrees with collection builtins — `rest == skip([1, 2, 3], 1)`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-lone-collecting-assignment",
+    "category": "lists",
+    "source": "*items = [1, 2, 3]\nitems",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2, 3]"
+      }
+    ],
+    "expectedRaw": "L[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "*items = []\nitems",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "*items = [7]\nitems",
+        "expectedNeutral": "ok raw=L[7] n=1"
+      }
+    ],
+    "explanation": "A lone collecting binding opens one right-hand-side structure boundary and collects its items as one list; empty and singleton lists remain exact."
+  },
+  {
+    "id": "list-builtin-collection",
+    "category": "lists",
+    "source": "count([1, 2, 3])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "count([1, 2, 3]*)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "sum([1, 2, 3])",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "sum(([1, 2, 3]*))",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "A = [1, 2]\nA.count",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "count([], [])",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "count(([], []))",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "count([1, [2], 3])",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "take([1, 2, 3], 1)",
+        "expectedNeutral": "ok raw=L[1] n=1"
+      },
+      {
+        "source": "contains([1, 2, 3], 2)",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "A list is ONE collection argument: `count([1, 2, 3])` and `A.count` count three items through the post-binding one-level collection view. The view is never recursive — a grouped pair of lists counts its two opaque list items (`count(([], []))` is 2), and a nested list stays one item. Spread supplies ordinary argument slots, so `count([1, 2, 3]*)` and the bare two-argument `count([], [])` are arity errors; re-group a spread (`sum(([1, 2, 3]*))`) to pass its items as one collection.",
+    "includeInGeneratorPrompt": true
+  }
+]

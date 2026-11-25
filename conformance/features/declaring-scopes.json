@@ -1,0 +1,138 @@
+[
+  {
+    "id": "hunt-anchoring-carried-container-reads-the-current-call",
+    "category": "access-boundaries",
+    "source": "F(b, y) = {\n  p = {\n    Q = y\n    1\n  }\n  b.Q\n}\nF(F.p, 5), F(F.p, 9)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n9"
+      }
+    ],
+    "expectedRaw": "S[5, 9]",
+    "expectedEmittedCount": 2,
+    "explanation": "`F.p` is fetched outside any call of `F`; inside each call, `b.Q` is judged on the container's chain read in the site's context, so it reads that call's `y`: `5, 9`."
+  },
+  {
+    "id": "hunt-anchoring-static-owner-above-activation-refused",
+    "category": "access-boundaries",
+    "source": "F(b, y) = {\n  p(k) = {\n    c = {\n      Q = y\n      1\n    }\n    F(c, 5)\n  }\n  b.Q\n}\nF.p(0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "explanation": "Called as `F.p(0)`, the container `c` has a static `F` above the activated `p`; `F` is not activated on the reader's chain, so reading `Q` is `LocalOnlyProperty`."
+  },
+  {
+    "id": "hunt-anchoring-container-written-in-other-call-refused",
+    "category": "access-boundaries",
+    "source": "H(f, n) = if(n != 0, H({ X = n }, 0), f.X)\nH(0, 5)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "explanation": "The container `{ X = n }` was written inside the first call of `H`; read inside the second call, it needs the first call's activation and is refused."
+  },
+  {
+    "id": "hunt-anchoring-root-alias-of-container",
+    "category": "access-boundaries",
+    "source": "F(b, y) = {\n  p = {\n    Q = y * 10\n    1\n  }\n  b.Q\n}\nC = F.p\nF(C, 4), F(C, 6)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "40\n60"
+      }
+    ],
+    "expectedRaw": "S[40, 60]",
+    "expectedEmittedCount": 2,
+    "explanation": "A root alias `C = F.p` carried into each call reads that call's `y`."
+  },
+  {
+    "id": "hunt-anchoring-container-through-call-reference",
+    "category": "access-boundaries",
+    "source": "Cap(meta r) = r\nF(b, y) = {\n  p = {\n    Q = y * 3\n    1\n  }\n  b.Q\n}\nR = Cap(F(F.p, 2))\nR.Invoke(), R.Algorithm(F.p, 5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6\n15"
+      }
+    ],
+    "expectedRaw": "S[6, 15]",
+    "expectedEmittedCount": 2,
+    "explanation": "A body of `F` invoked through a call reference reads the captured call's `y`, and `R.Algorithm(F.p, 5)` reads its own call's `y`."
+  },
+  {
+    "id": "hunt-anchoring-open-member-and-carried-container",
+    "category": "access-boundaries",
+    "source": "F(b, y) = {\n  p = {\n    public Q = y + 1\n    1\n  }\n  G = {\n    open p\n    Q\n  }\n  G + b.Q\n}\nF(F.p, 1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "4"
+      }
+    ],
+    "expectedRaw": "4",
+    "expectedEmittedCount": 1,
+    "explanation": "Inside the call, `open p` and the carried `b.Q` both read the call's `y`."
+  },
+  {
+    "id": "hunt-anchoring-recursive-owner-innermost-call",
+    "category": "access-boundaries",
+    "source": "F(b, y) = {\n  p = {\n    Q = y\n    1\n  }\n  if(y > 0, F(b, y - 1) + b.Q, b.Q)\n}\nF(F.p, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "explanation": "Each recursive call reads the carried container on its own activation: `0 + 1 + 2 + 3`."
+  },
+  {
+    "id": "hunt-open-owner-walk-before-opens",
+    "category": "name-resolution",
+    "source": "X = 9\nF = {\n  open M\n  M = { public X = 1 }\n  X\n}\nF",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "9"
+      }
+    ],
+    "expectedRaw": "9",
+    "expectedEmittedCount": 1,
+    "explanation": "The owner walk runs before any open: the root property `X = 9` is found on the walk, so the opened `X` is never consulted."
+  },
+  {
+    "id": "hunt-open-prelude-before-opens",
+    "category": "errors",
+    "source": "open M\nM = { public count = 7 }\ncount",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "The prelude is the outermost property level of the walk, so `count` is the builtin, not the opened member; a bare builtin that requires an argument is its own arity error."
+  },
+  {
+    "id": "hunt-open-nested-levels-inner-first",
+    "category": "name-resolution",
+    "source": "open A\nA = { public X = 1 }\nF = {\n  open B\n  B = { public X = 2 }\n  X\n}\nF, X",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2\n1"
+      }
+    ],
+    "expectedRaw": "S[2, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Each level consults its own opens after the walk: inside `F` the inner provider wins, at the root the outer one."
+  },
+  {
+    "id": "hunt-open-overlap-without-use-is-legal",
+    "category": "name-resolution",
+    "source": "open A, B\nA = { public X = 1 }\nB = { public X = 2 }\n5",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "explanation": "Two providers of `X` are legal while no written name reaches that open level with `X`."
+  }
+]

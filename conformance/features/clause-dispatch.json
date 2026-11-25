@@ -1,0 +1,325 @@
+[
+  {
+    "id": "collecting-pattern-list-merges-after-the-collector",
+    "category": "variadic-calls",
+    "source": "Bad = 1 / 0\nP(x, *rest, x) = x\n\nP(1, Bad, 2)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "Bad = 1 / 0\nP(x, x, *rest, (a, b)) = a\nP(1, 2, Bad)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Bad = 1 / 0\nP(x, *rest, x, (a, b)) = a\nP(1, 9, 2, Bad)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P(x, *rest, x) = rest\nP(1, 9, 1)",
+        "expectedNeutral": "ok raw=L[9] n=1"
+      }
+    ],
+    "explanation": "A collector binds a lazy slice of supplied cells. Pattern traversal continues in written order, and the suffix `x` conflicts with the prefix immediately, before the collector or a later structural argument is demanded. A demanded collector materializes its entire slice from left to right; an unused collector performs no value evaluations."
+  },
+  {
+    "id": "redundant-call-parens-canonical",
+    "category": "variadic-calls",
+    "source": "Inner = (1, 2, 3)\nCountSequenceValue((*values)) = values.count\nNestedCount([(*values)]) = values.count\n\nCountSequenceValue(Inner)\nCountSequenceValue((Inner))\nCountSequenceValue(((1, 2, 3)))\nNestedCount([(1, 2, 3)])\nNestedCount(([(1, 2, 3)]))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n3\n3\n3\n3"
+      }
+    ],
+    "expectedRaw": "S[3, 3, 3, 3, 3]",
+    "expectedEmittedCount": 5,
+    "probes": [
+      {
+        "source": "NestedCount([(*values)]) = values.count\nNestedCount((1, 2, 3))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "NestedCount([(*values)]) = values.count\nNestedCount(([[1, 2, 3]]))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "NestedCount([(*values)]) = values\nNestedCount(7)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "NestedCount([(*values)]) = values\nNestedCount([()]), NestedCount(([(1, 2)]))",
+        "expectedNeutral": "ok raw=S[L[], L[1, 2]] n=2"
+      },
+      {
+        "source": "CountSequenceValue((*values)) = values.count\nCountSequenceValue(((1, 2), 3))",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "S = 1, 2\nF((a, b)) = a + b\nF({S})",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "A = [[1, 2], [3]]\nP((*xs)) = xs\nP((A*))",
+        "expectedNeutral": "ok raw=L[L[1, 2], L[3]] n=1"
+      }
+    ],
+    "explanation": "Parentheses group syntax; they do not introduce a semantic boundary. A pattern-shaped callee opens the argument's VALUE: `Inner`, `(Inner)`, and `((1, 2, 3))` are all the sequence value `(1, 2, 3)`, so the collecting parameter collects its three items in every spelling — a redundant group is never a written level for the pattern to consume, and a single-row block `{S}` or a captured spread `(A*)` is likewise just its value. A nested pattern `[(*values)]` opens two real boundaries, each of its own kind: a one-element LIST whose element is a SEQUENCE (unary sequence structure never survives normalization, so a one-element outer level is always a list). A sequence, a list element, or a scalar where the other kind is required is the pattern's kind mismatch. Non-unary structure is preserved: `((1, 2), 3)` counts 2."
+  },
+  {
+    "id": "call-spread-into-conditional-clauses",
+    "category": "variadic-calls",
+    "source": "F(0, 0) = 100\nF(x, y) = x + y\nA = (1, 2)\nF(A*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F(0, 0) = 100\nF(x, y) = x + y\nA = (1, 2)\nF(A)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "Explicit call-site spread has identical meaning for every callable shape: `F(A*)` supplies A's spread items as ordinary argument slots BEFORE clause selection, so the two-binder clause binds x = 1, y = 2. The unspread `F(A)` supplies ONE closed argument, which no two-argument clause can match.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "patterned-user-call-is-one-value-boundary",
+    "category": "item-supply-vs-value",
+    "source": "F([x]) = 1, 2\nF([7])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2)"
+      }
+    ],
+    "expectedRaw": "S[1, 2]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F([x]) = x, x\nF([7])",
+        "expectedNeutral": "ok raw=S[7, 7] n=1"
+      },
+      {
+        "source": "F((x, y)) = x, y\nF((1, 2))",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      },
+      {
+        "source": "F(x) = 1, 2\nF(7)",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      }
+    ],
+    "explanation": "A user call is a VALUE boundary on every callee shape, including a sequence-value-patterned one: the body's multi-slot output is combined into one value and the emitted count is re-counted to that value's own count (1). Body/root output accumulation is not a value boundary, so without the re-count the call would leak its body's two-slot supply into the caller and emit two rows instead of one."
+  },
+  {
+    "id": "conditional-one-element-list-pattern",
+    "category": "conditionals",
+    "source": "F([x]) = x\nF(n) = 0\n\nF([7])\nF([1, 2])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n0"
+      }
+    ],
+    "expectedRaw": "S[7, 0]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F([x]) = x\nF(n) = 0\nF(7)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "F([x]) = x\nF(n) = 0\nF((1, 2))",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "F([x]) = x\nF(n) = 0\nF([[1, 2]])",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "Kind([]) = 0\nKind([x]) = 1\nKind([x, y]) = 2\nKind(v) = 9\nKind([]), Kind([5]), Kind([5, 6]), Kind([5, 6, 7]), Kind(()), Kind(5)",
+        "expectedNeutral": "ok raw=S[0, 1, 2, 9, 9, 9] n=6"
+      }
+    ],
+    "explanation": "In a clause family the one-element list pattern `[x]` matches exactly a one-element list and binds its element whole; a longer list, a sequence, or a scalar does not match that clause and falls through. List patterns distinguish every list cardinality — `[]`, `[x]`, `[x, y]`. There is no one-item sequence pattern: `(x)` is rejected by the front end, and a plain binder `F(x)` is how a clause takes any one argument whole."
+  },
+  {
+    "id": "conditional-sequence-pattern-matches-sequence-values-only",
+    "category": "conditionals",
+    "source": "F((x, y)) = x + y\nF(z) = 0\n\nF((2, 3))\nF([2, 3])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n0"
+      }
+    ],
+    "expectedRaw": "S[5, 0]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F((x, y)) = x + y\nF((x, y, z)) = 0\n\nF([2, 3])",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "F([x, y]) = x + y\nF(z) = 0\n\nF([2, 3])",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "PairSum((x, y)) = x + y\nPairSum([2, 3])",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "In a clause family a sequence pattern matches sequence values only: an exact list argument does not match `(x, y)` even when its element count fits, so it falls through to a later clause, or fails with no matching branch when none accepts it. The list pattern `[x, y]` is the list twin. An ordinary single-clause definition follows the same kind law, where a wrong-kind value is the pattern's type error instead of a fall-through."
+  },
+  {
+    "id": "empty-structural-patterns-are-distinct-heads",
+    "category": "conditionals",
+    "source": "Kind(()) = 'empty sequence'\nKind([]) = 'empty list'\nKind(x) = 'other'\n\nKind(())\nKind([])\nKind(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "empty sequence\nempty list\nother"
+      }
+    ],
+    "expectedRaw": "S['empty sequence', 'empty list', 'other']",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "F(()) = 1\nF(x) = 2\nF(()), F(5)",
+        "expectedNeutral": "ok raw=S[1, 2] n=2"
+      },
+      {
+        "source": "F([]) = 1\nF(x) = 2\nF([]), F(5)",
+        "expectedNeutral": "ok raw=S[1, 2] n=2"
+      },
+      {
+        "source": "F(()) = 1\nF(x) = 2\nF([])",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "G([]) = 1\nG(x) = 2\nG(())",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "H(()) = 1\nH([]) = 2\nH(0)",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "E(()) = 1\nE([])",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "The empty sequence pattern `()` and the empty list pattern `[]` are ordinary clause heads: `()` matches only the empty sequence and `[]` only the empty list, so one family can tell them apart and send everything else to a catch-all. They are different heads, never duplicates, and neither matches the other kind's empty value. In a single-clause definition a wrong kind is the pattern's type error instead of a fall-through."
+  },
+  {
+    "id": "expression-is-not-a-pattern",
+    "category": "conditionals",
+    "source": "F(1 + 1) = 2\nF(2)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnexpectedToken",
+    "expectedParseDiagnosticFragment": "Expected ')' but found '+'",
+    "probes": [
+      {
+        "source": "F(2) = 2\nF(x) = 0\nF(1 + 1), F(3)",
+        "expectedNeutral": "ok raw=S[2, 0] n=2"
+      },
+      {
+        "source": "F(-1) = 1\nF(x) = 0\nF(0 - 1), F(1)",
+        "expectedNeutral": "ok raw=S[1, 0] n=2"
+      }
+    ],
+    "explanation": "A clause head is written in the pattern language, not as an expression: a pattern is a name, a number, string or Boolean literal (a number may carry a leading `-`), or a sequence pattern `( … )` or list pattern `[ … ]` of patterns, the empty `()` and `[]` included (an ordinary definition may also have one collecting `*name` per level). Arithmetic such as `1 + 1` is not a pattern and is rejected at the operator; write the value itself, `F(2)`, or bind the argument and compare it in the body.",
+    "notes": "Source-level pattern-grammar diagnostic; no elaborated Lean program exists for a rejected parse, and Lean's Pattern has no expression constructor. EmptyStructuralPatternLawTests pins the other expression shapes (a binder operand, a list pattern, a call, a nested group) with their exact diagnostics."
+  },
+  {
+    "id": "conditional-clauses-share-top-level-arity",
+    "category": "conditionals",
+    "source": "F(0) = 1\nF(x, y) = 2\n\nF(0)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "BranchArityMismatch",
+    "expectedParseDiagnosticFragment": "must have the same top-level pattern arity",
+    "probes": [
+      {
+        "source": "F(0) = 1\nF(x) = x + 1\n\nF(0)\nF(5)",
+        "expectedNeutral": "ok raw=S[1, 6] n=2"
+      },
+      {
+        "source": "F(0) = 1\nF(x) = (1, 2)\n\nF(5)",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      }
+    ],
+    "explanation": "Arity never distinguishes branches: all clauses of one family share one top-level pattern arity, and the front end rejects a family whose clauses disagree before anything runs — even though `F(0)` would have matched the first clause. Branches are told apart by their pattern shape alone — literals, string patterns, sequence-value structure, repeated-name constraints, or a catch-all — tried top to bottom."
+  },
+  {
+    "id": "conditional-clauses-share-top-level-output-arity",
+    "category": "conditionals",
+    "source": "F(0) = 1\nF(x) = 1, 2\n\nF(5)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "BranchOutputArityMismatch",
+    "expectedParseDiagnosticFragment": "must have the same top-level output arity",
+    "explanation": "The clauses of one family also share one top-level output arity — the same number of written output slots. `F(x) = 1, 2` writes two slots beside the one-slot `F(0) = 1`, so the family is rejected by the front end; when one branch's result is a pair, write it as the one captured slot `(1, 2)`."
+  },
+  {
+    "id": "conditional-clause-head-rejects-extra-arguments",
+    "category": "conditionals",
+    "source": "F(0) = 1\nF(n) = 2\nF(1, 2)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "F(0) = 1\nF(n) = 2\nF(0, 9)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F(0) = 1\nF(n) = 2\nF()",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F(0) = 1\nF(n) = 2\nF(1)",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "A one-argument family requires exactly one supplied slot. A call with two arguments or no arguments reports ordinary arity mismatch before evaluating ordinary argument cells or attempting a clause. Surplus arguments are never discarded; a correct-count call that fails every pattern reports no matching branch."
+  },
+  {
+    "id": "call-spread-dispatches-before-clause-selection",
+    "category": "variadic-calls",
+    "source": "F(0, 0) = 100\nF(x, y) = x + y\nA = (0, 0)\nF(A*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "100"
+      }
+    ],
+    "expectedRaw": "100",
+    "expectedEmittedCount": 1,
+    "explanation": "Clause selection happens strictly AFTER spread expansion: `F(A*)` with A = (0, 0) supplies the two literal-matching slots, so the literal clause wins. A catch-all clause can never absorb a spread argument as one closed value."
+  },
+  {
+    "id": "call-spread-into-patterned-callee",
+    "category": "variadic-calls",
+    "source": "F(x, x) = x + 1\nA = (7, 7)\nF(A*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F(x, x) = x + 1\nA = (7, 7)\nF(A)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F(x, x) = x + 1\nA = (7, 8)\nF(A*)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "The repeated-name (patterned) callee shape does not change caller-side spread: `F(A*)` supplies two argument slots that must satisfy the repeated-bind equality, exactly like the flat callee `G(x, y)` would receive them. The unspread `F(A)` is one argument against two parameters."
+  }
+]

@@ -20,7 +20,7 @@ namespace KatLang.Tests;
 /// mismatch in Lean. C# was correct; these tests pin the language behavior on the C#
 /// side while the generated Lean guards (<c>spread-arguments-fail-left-to-right</c> and
 /// <c>spread-arguments-keep-written-order</c> in
-/// <c>dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs</c>, plus the
+/// <c>conformance/cases.json</c>, plus the
 /// <c>spreadBuiltinArgument*</c> guards in <c>lean/CoreTests/CollectionBuiltins.lean</c>)
 /// pin the same behavior on the Lean side.</para>
 /// </summary>

@@ -1,0 +1,454 @@
+[
+  {
+    "id": "dot-access-value-boundary",
+    "category": "access-boundaries",
+    "source": "A = {\n    X = 1, 2, 3\n}\nA.X",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2, 3)"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = {\n    X = 1, 2, 3\n}\nA.X()",
+        "expectedNeutral": "ok raw=S[1, 2, 3] n=1"
+      },
+      {
+        "source": "A = {\n    X = 1, 2, 3\n}\ncount(A.X)",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "Structural dot access observes the same value boundary as lexical access: one canonical sequence value."
+  },
+  {
+    "id": "open-local-only-through-capture-row",
+    "category": "access-boundaries",
+    "source": "Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    (Q) } }\n    G\n}\nOuter(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    { Q } } }\n    G\n}\nOuter(1)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    Id(Q) } }\n    Id(v) = v\n    G\n}\nOuter(1)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Outer(p) = {\n    public Lib = { public G = { Q = p + 1\n    (Q) } }\n    0\n}\nA = {\n    open Outer.Lib\n    G\n}\nA",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure follows ownership through every layer: `G` depends on `p` (owned by `Outer`) through its own local `Q` whether the reference is written bare, in a capture row, in a nested block, or in a call argument, so it is local-only. Local-only is context-dependent, not universal: `open Lib` provides `G` to Outer's own body, which lies inside the owner of the captured `p`, and refuses it to a body outside `Outer`."
+  },
+  {
+    "id": "open-self-contained-beside-same-named-sibling",
+    "category": "access-boundaries",
+    "source": "Outer(p) = {\n    open Lib\n    Lib = {\n        public G = { Q = 7\n        (Q) }\n        Q = p + 1\n    }\n    G\n}\nOuter(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "`G`'s capture row names its OWN self-contained `Q = 7`, never Lib's ancestor-capturing `Q = p + 1`, so `G` stays exported through `open Lib`."
+  },
+  {
+    "id": "zero-param-block-higher-order",
+    "category": "access-boundaries",
+    "source": "Call0 = f()\nCall0({42})",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "42"
+      }
+    ],
+    "expectedRaw": "42",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Const = 42\nCall0 = f()\nCall0(Const)",
+        "expectedNeutral": "ok raw=42 n=1"
+      },
+      {
+        "source": "Call0 = f()\nCall0(({42}))",
+        "expectedNeutral": "ok raw=42 n=1"
+      },
+      {
+        "source": "Call0 = f()\nCall0({1, 2})",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      }
+    ],
+    "explanation": "An algorithm block always provides its contained algorithm on the higher-order channel, regardless of parameter or output count: `Call0({42})` invokes the brace algorithm exactly like the named zero-parameter `Call0(Const)`, redundant parentheses around braces normalize away, and a multi-output block's call emits its outputs as one captured sequence value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-member-higher-order-parameter",
+    "category": "access-boundaries",
+    "source": "K(a, t) = t(a)\nD(a, t) = a.t\n\nK(7, {a+1})\nD(7, {a+1})",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8\n8"
+      }
+    ],
+    "expectedRaw": "S[8, 8]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "t = 5\nK(a, t) = a.t\nK(7, {a+1})",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "t = 5\nG(x) = x.t\nK(a, t) = G(a)\nK(7, {a+1})",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Obj = {public V = 42}\nK(a, V) = a.V\nK(Obj, {a+1})",
+        "expectedNeutral": "ok raw=42 n=1"
+      }
+    ],
+    "explanation": "After structural member lookup fails, a dot member name that is a parameter of the calling context resolves exactly like the plain callee: `a.t` and `t(a)` agree, including algorithm-valued parameters. The lexical fallback uses the owner walk, so a captured parameter beats farther properties and opens. Properties matching same-owner or enclosing parameters are declaration errors. Structural members of the resolved receiver always take precedence first.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-member-fallback-implicit-signature",
+    "category": "access-boundaries",
+    "source": "K = a.t\nK(7, {a+1})",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "K(a, t) = a.t\nK(7, {a+1})",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "K = a.t(b)\nK(1, {x + y * 10}, 2)",
+        "expectedNeutral": "ok raw=21 n=1"
+      }
+    ],
+    "explanation": "An opaque receiver may not carry the member structurally, so the dot edge's lexical fallback may be selected at runtime and its callable name participates in implicit parameter inference at the member's semantic source occurrence. DotCall order is receiver, participating member/fallback, then written arguments: `K = a.t` corresponds to `K(a, t) = a.t`, while runtime fallback still invokes `t(a)` and the direct source `t(a)` independently infers callee first.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grace-dot-higher-order-implicit",
+    "category": "access-boundaries",
+    "source": "K = a~.t\nK({a+1}, 7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "K = a.~t\nK({a+1}, 7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "K(t, a) = a.t\nK({a+1}, 7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "K = a~~.t\nK({a+1}, 7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      }
+    ],
+    "explanation": "Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)` — the order the explicit spelling `K(t, a) = a.t` declares — and all three sources elaborate to the same ordinary `a.t` body. Grace is valid only on such FREE names that the algorithm infers as its own parameters: under an explicit parameter list (`K(t, a) = a~.t`) nothing is inferred, so the marker has no parameter to weight and is a front-end error.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grace-dot-keeps-structural-precedence",
+    "category": "access-boundaries",
+    "source": "V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nRead = o~.V\n\nObj.V\nRead(Obj)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "42\n42"
+      }
+    ],
+    "expectedRaw": "S[42, 42]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Obj = {\n    public V = 42\n    0\n}\nRead = o.~V\nRead({x}, Obj)",
+        "expectedNeutral": "ok raw=42 n=1"
+      }
+    ],
+    "explanation": "`~` changes inferred parameter ORDER only — never member selection. `Read = o~.V` graces the FREE receiver name `o` (the marker is valid: `o` becomes Read's own inferred parameter — as the only one it cannot move, and that saturation is no error), and `Read(Obj)` performs ordinary structural-first DotCall lookup, reading Obj's own `V` even though a lexical `V` exists — exactly like the direct `Obj.V`. With no lexical `V` declaration, prefix member Grace behaves the same way on an opaque receiver: `Read = o.~V` infers `(V, o)`, and `Read({x}, Obj)` still reads Obj's structural `V`. To call the lexical `V` with Obj's value, write the call `V(Obj)`. A marker on the bound `Obj` itself (`Obj~.V`) has no inferred parameter to weight and is rejected instead of being ignored.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-member-fallback-in-closed-parameter-list",
+    "category": "access-boundaries",
+    "source": "K(x) = x.V\nObj = {public V = 42}\n\nK(Obj)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "42"
+      }
+    ],
+    "expectedRaw": "42",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Get(obj) = obj.size\nsize(v) = 77\nGet(3)",
+        "expectedNeutral": "ok raw=77 n=1"
+      }
+    ],
+    "explanation": "An explicit parameter list is CLOSED, and it asks the definite question: a member name whose fallback merely MAY be selected — the runtime receiver may declare it — is not required to be declared. `K(x) = x.V` keeps arity 1, resolving `V` structurally on the runtime receiver and reaching the lexical fallback only when the receiver has no such member. A fallback that MUST be selected is checked like the call it is (`closed-list-must-fallback-name-is-checked`).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-fallback-on-known-receiver-stays-valid",
+    "category": "access-boundaries",
+    "source": "Lib = {\n    public Double(x) = 2 * x\n}\nDubel(a, b) = b * 3\n\nLib.Dubel(4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "12"
+      }
+    ],
+    "expectedRaw": "12",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Ceiling(a, b) = b * 2\nMath.Ceiling(2.1)",
+        "expectedNeutral": "ok raw=4.2 n=1"
+      },
+      {
+        "source": "Lib = {\n    public Double(x) = 2 * x\n}\nLib.Dubel(4)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "Math.Ceiling(2.1)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "P = Math.Ceiling(2.1)\nTwice(a, b) = b * 2\nP(Twice)",
+        "expectedNeutral": "ok raw=4.2 n=1"
+      }
+    ],
+    "explanation": "A member name the receiver does not declare is not an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special status: `Lib.Dubel(4)` has no structural `Dubel`, so it is the ordinary lexical fallback `Dubel(Lib, 4)` — `a` receives the `Lib` algorithm and `b` receives `4`. Static receiver knowledge never changes the resolution: it improves the DIAGNOSTIC when no such callable is visible (the report names the receiver, explains the fallback, and suggests a real member), and it makes the fallback statically CERTAIN — so in an implicitly parameterized body the name is inferred like a written callee name, while under a closed parameter list it is checked like one (`closed-list-must-fallback-name-is-checked`).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-string-declared-member-wins",
+    "category": "strings",
+    "source": "Obj = {\n    public string = 5\n    7\n}\n\nObj.string",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Obj = {\n    public string(x) = x * 2\n    7\n}\nObj.string(5)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Obj = {\n    public string = {\n        public Q = 3\n        4\n    }\n    7\n}\nObj.string.Q",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "Apply(f, v) = f(v)\nObj = {\n    public string(x) = x * 2\n    7\n}\nApply(Obj.string, 5)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "G(x) = {\n    public Sub = {\n        public string = x + 1\n        0\n    }\n    0\n}\nG.Sub.string",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(0) = {\n    string = 1\n    0\n}\nF(n) = n\nF.string",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "A dot edge selects a DECLARED member first, whatever its spelling: a member named `string` is selected like any member — read, called, navigated, supplied as a callable — and its accessibility is checked after selection, so a local-only or branch-only `string` member is the LocalOnlyProperty error, never a fall-through to the intrinsic. Declarations named `string` are ordinary declarations."
+  },
+  {
+    "id": "dot-string-intrinsic-on-structural-miss",
+    "category": "strings",
+    "source": "string(x) = 99\nObj = {\n    public V = 1\n    7\n}\n\n3.string\nObj.string\nstring(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n7\n99"
+      }
+    ],
+    "expectedRaw": "S['3', '7', 99]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "string(x) = 99\nA = 5\nA*.string",
+        "expectedNeutral": "ok raw=99 n=1"
+      },
+      {
+        "source": "Use(o) = o.string\nUse(12)",
+        "expectedNeutral": "ok raw='12' n=1"
+      }
+    ],
+    "explanation": "Only on a structural MISS is `.string` the number-to-text intrinsic, and the intrinsic takes the extension call's place: a lexical `string` is never consulted by `.string`. A receiver that declares no member named `string` — a number, a value, an algorithm without such a member — converts its numeric value (`3.string` is '3', `Obj.string` is '7'), while the written call `string(3)` uses the visible `string` callable. The fluent spread `A*.string` is that written call `string(A*)`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grouped-structural-callee-is-the-member",
+    "category": "access-boundaries",
+    "source": "Box = {\n    public G(x) = x * 10\n}\nApply(f, v) = f(v)\n\nBox.G(2)\n(Box.G)(2)\nApply(Box.G, 2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "20\n20\n20"
+      }
+    ],
+    "expectedRaw": "S[20, 20, 20]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Lib = {\n    public F(0) = 0\n    public F(n) = n * 2\n}\n(Lib.F)(4)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "Inc(x) = x * 10\nObj = {\n    public M = Inc\n    7\n}\n(Obj.M)(5)",
+        "expectedNeutral": "ok raw=50 n=1"
+      },
+      {
+        "source": "Lib = {\n    public M(x) = {\n        public Q = 7\n        x\n    }\n}\n(Lib.M)(3)",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "(Math.Abs)(-3)",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "Math = {\n    public Abs(x) = 100\n}\n(Math.Abs)(-3)",
+        "expectedNeutral": "ok raw=100 n=1"
+      }
+    ],
+    "explanation": "Parentheses never change callable identity. A dot expression carries ONE callable identity in every position that uses a callable, and an argumentless member reference is its member's own callable: supplied (`Apply(Box.G, 2)`) or called after grouping (`(Box.G)(2)`), it is the member `G` — with its own parameters, clauses, alias target and members — exactly as `Box.G(2)` calls it. The prelude's `Math` members are ordinary members too.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "grouped-zero-arg-member-call-is-fresh",
+    "category": "access-boundaries",
+    "source": "Box = {\n    public V = 7\n}\n\nBox.V\nBox.V()\n(Box.V)()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n7\n7"
+      }
+    ],
+    "expectedRaw": "S[7, 7, 7]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "open Box\nBox = {\n    public V = 7\n}\nV, V(), (V)()",
+        "expectedNeutral": "ok raw=S[7, 7, 7] n=3"
+      }
+    ],
+    "explanation": "`Box.V` is a property READ — evaluated once per run and cached — while `Box.V()` is an explicit CALL that evaluates the member afresh. Grouping does not change the call: `(Box.V)()` IS `Box.V()`, a fresh call that neither reads nor populates the cached value, exactly as `(V)()` is `V()`.",
+    "notes": "Freshness is observable only through effects, which this harness does not run: pinned by DotSemanticsDecisionTests (host operations and seeded draws on six routes) and CoreTests/DotIdentity.lean (binding contexts and cache entries)."
+  },
+  {
+    "id": "computed-dot-callee-is-not-callable",
+    "category": "errors",
+    "source": "Inc(x) = x + 1\n(5.Inc)()",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "probes": [
+      {
+        "source": "(5.string)()",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Other(o) = 7\nObj = {\n    public V = 1\n    5\n}\n(Obj.Other)()",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc(x) = x + 1\n5.Inc, Inc(5)",
+        "expectedNeutral": "ok raw=S[6, 6] n=2"
+      }
+    ],
+    "explanation": "A dot expression whose receiver does not declare the member is a computed VALUE — the extension call's result (`5.Inc` is `Inc(5)`) or the `.string` intrinsic's text — and a computed value has no callable identity, so calling it is NotAnAlgorithm, never a hidden wrapper that re-evaluates the value."
+  },
+  {
+    "id": "call-after-argument-bearing-dot-edge-is-a-parse-error",
+    "category": "parser-layout",
+    "source": "X = {\n    public Mk(k) = k + 1\n}\n\nX.Mk(1)()",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnseparatedSameLineItem",
+    "expectedParseDiagnosticFragment": "after a closed expression on the same line",
+    "explanation": "A call may follow a callable reference — a name, a graced name, an argumentless member reference, or a redundant group of one — never an already computed call result. `X.Mk(1)` is a call, so `X.Mk(1)()` (like `X.G(1){ … }`) is the same-line-item error exactly as `Mk(1)()` is; `(X.Mk)(1)` is the member call.",
+    "notes": "Front-end rejection (SYN-09, Q-18 C-B3); Lean has no surface parser. A host-built call written after an argument-bearing dot edge reaches the runtime law as a computed callee: notAnAlgorithm (CoreTests/DotIdentity.lean).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "closed-list-must-fallback-name-is-checked",
+    "category": "access-boundaries",
+    "source": "Get(obj) = 5.size\n\nGet(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UndeclaredIdentifier",
+    "expectedParseDiagnosticFragment": "so `5.size` is the call `size(5)`",
+    "explanation": "Under an explicit (closed) parameter list, a dot edge whose fallback is statically CERTAIN — a value receiver, or a known receiver that declares no such member — IS the call `size(5)`, so its name is checked exactly like the written callee name: `Get(obj) = 5.size` is the same UndeclaredIdentifier as `Get(obj) = size(5)`, reported at the member token whether or not `Get` is ever called.",
+    "notes": "Front-end rule (Q-75 F-A; FORMAL-02 leaves static validity to the C# front end). The checked set is exactly LexicalFallbackSelection.Always.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "closed-list-may-fallback-name-is-runtime",
+    "category": "access-boundaries",
+    "source": "Get(obj) = obj.size\nObj = {\n    public size = 11\n}\nsize(v) = 77\n\nGet(Obj)\nGet(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "11\n77"
+      }
+    ],
+    "expectedRaw": "S[11, 77]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Get(obj) = obj.size\n7",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "When only the runtime receiver decides — a parameter, an unresolved or ambiguous receiver — the fallback is merely POSSIBLE, so a closed parameter list does not require its name: `obj.size` reads the structural `size` of a receiver that declares one, and falls back to the lexical `size` only for a receiver that does not."
+  },
+  {
+    "id": "branch-must-fallback-name-is-checked",
+    "category": "conditionals",
+    "source": "F(0) = 0\nF(n) = (n + 1).G\n\nF(0)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UndeclaredIdentifier",
+    "expectedParseDiagnosticFragment": "is the call `G(n + 1)`",
+    "probes": [
+      {
+        "source": "F(0) = 0\nF(n) = n.G\nF(0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      }
+    ],
+    "explanation": "A clause-branch body obeys the closed parameter list's law: `(n + 1).G` certainly falls back, so it is the call `G(n + 1)` and `G` must be visible — reported at the member token even though `F(0)` never selects that branch. A binder receiver (`F(n) = n.G`) only MAY fall back and stays valid.",
+    "notes": "Front-end rule (Q-75 F-A) shared with closed parameter lists; a load-bearing branch applies it when the branch is selected (MOD-10)."
+  }
+]

@@ -1,0 +1,117 @@
+[
+  {
+    "id": "string-single-quoted-text-is-raw",
+    "category": "strings",
+    "source": "'{x}'\n'C:\\temp'\n'say \"hi\"'",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "{x}\nC:\\temp\nsay \"hi\""
+      }
+    ],
+    "expectedRaw": "S['{x}', 'C:\\temp', 'say \"hi\"']",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "'a\\nb'",
+        "expectedNeutral": "ok raw='a\\nb' n=1"
+      },
+      {
+        "source": "'{x}' == '{x}'",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "count('C:\\temp')",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "A string is written in single quotes, and its text is exactly what is written between them: there are no escapes and no interpolation, so braces, backslashes and double quotes are ordinary characters. `'{x}'` is the three characters `{x}`, and `'a\\nb'` keeps its backslash.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "string-literal-pattern-selects-a-clause",
+    "category": "strings",
+    "source": "Greeting('en') = 'Hello'\nGreeting('lv') = 'Sveiki'\nGreeting(x) = '?'\n\nGreeting('lv')\nGreeting('de')\nGreeting(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "Sveiki\n?\n?"
+      }
+    ],
+    "expectedRaw": "S['Sveiki', '?', '?']",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "'ab' != 'ba'",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "'1' == 1",
+        "expectedNeutral": "ok raw=false n=1"
+      }
+    ],
+    "explanation": "A string in a clause head is a literal pattern: the clause is selected only for exactly that text. Any other value, a different string or a number, falls through to a later clause."
+  },
+  {
+    "id": "string-and-number-stay-separate-items",
+    "category": "strings",
+    "source": "Total = 3 + 8\n'Total', Total\n['a', 1, 'b']",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "Total\n11\n[a, 1, b]"
+      }
+    ],
+    "expectedRaw": "S['Total', 11, L['a', 1, 'b']]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "'a' + 'b'",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "count(['a', 1, 'b'])",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "Total = 3 + 8\n('Total', Total)[1] + 1",
+        "expectedNeutral": "ok raw=12 n=1"
+      }
+    ],
+    "explanation": "A string is a value like any other: it can stand beside numbers in a sequence or a list, and each item keeps its own kind. Nothing turns a number into text or joins items into one string, so a number beside a string is still a number, and `+` on strings is a type error."
+  },
+  {
+    "id": "string-double-quotes-are-not-supported",
+    "category": "strings",
+    "source": "\"Hello\"",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnsupportedDoubleQuotedString",
+    "expectedParseDiagnosticFragment": "Write text in single quotes",
+    "explanation": "KatLang has one string literal form, single quotes. A double quote outside a single-quoted string or a comment is an error: write `'Hello'`.",
+    "notes": "C#-only by construction (parse-level partition): the diagnostic is a lexical rule and Lean has no lexer or surface parser (STR-03), so no Lean equivalent is fabricated.",
+    "leanExclusionReason": "The diagnostic is a C# lexical rule; Lean has no lexer or surface parser (STR-03).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "string-interpolation-is-not-supported",
+    "category": "strings",
+    "source": "x = 5\n\"Total: {x}\"",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnsupportedDoubleQuotedString",
+    "expectedParseDiagnosticFragment": "string interpolation are not supported",
+    "explanation": "There is no string interpolation: text is never built from values. Return the value itself; where a text value is needed beside it, the two are separate items.",
+    "notes": "C#-only by construction (parse-level partition): the diagnostic is a lexical rule and Lean has no lexer or surface parser (STR-03), so no Lean equivalent is fabricated.",
+    "leanExclusionReason": "The diagnostic is a C# lexical rule; Lean has no lexer or surface parser (STR-03).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "string-double-quote-run-ends-with-its-line",
+    "category": "strings",
+    "source": "A = \"abc\nB = 2\nB",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnsupportedDoubleQuotedString",
+    "explanation": "An unclosed double quote is the same error and reaches only to the end of its line, so the declarations on later lines are still read as written.",
+    "notes": "C#-only by construction (parse-level partition): the diagnostic is a lexical rule and Lean has no lexer or surface parser (STR-03), so no Lean equivalent is fabricated.",
+    "leanExclusionReason": "The diagnostic is a C# lexical rule; Lean has no lexer or surface parser (STR-03)."
+  }
+]

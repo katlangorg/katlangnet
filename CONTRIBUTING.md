@@ -17,6 +17,14 @@ workflows provision the baseline SDK from the same file. The projects target
 Open [the .NET solution](dotnet/KatLang.slnx) in your IDE, or build it from the
 repository root with `dotnet build ./dotnet/KatLang.slnx`.
 
+## Changing the language
+
+Start with the [Lean model](lean/KatLang.lean) and the [rules for the affected subsystem](docs/design/language-rules/README.md). The [.NET alignment guide](dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md) identifies which changes also need a Lean update. Update the [grammar](KatLang.ebnf) for syntax changes and the [tutorial](tutorial.md) when a change affects users.
+
+Add a regression case to the appropriate [shared feature file](conformance/README.md) with a stable ID and hand-written expectations. The .NET suite reads those files directly, and the [Lean differential checks](docs/design/executable-language-spec.md) use the same expectations for the cases the model covers. Use the [validation guide](docs/testing-and-validation.md) to select the checks and regenerate affected artifacts.
+
+Update the [Semantic Constitution](docs/constitution/constitution.md) and its affected companion records in the same change. When a current rule depends on a review finding, record the finding and link to a tracked regression case or Lean declaration so another contributor can verify it from a fresh clone.
+
 ## License of Contributions
 
 By submitting a contribution (including but not limited to code,

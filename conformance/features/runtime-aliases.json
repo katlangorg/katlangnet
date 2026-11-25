@@ -1,0 +1,281 @@
+[
+  {
+    "id": "runtime-alias-of-a-parameter",
+    "category": "name-resolution",
+    "source": "Square(x) = x * x\nApply(f, x) = f(x)\nUse(f) = {\n    A = f\n    A(9), 2.A, Apply(A, 4)\n}\n\nUse(Square)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(81, 4, 16)"
+      }
+    ],
+    "expectedRaw": "S[81, 4, 16]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Use(f) = {\n    A = f\n    A + 1\n}\nUse(5)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "Use(f) = {\n    A = f\n    A(1)\n}\nUse(5)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Describe(0) = 'zero'\nDescribe(n) = 'other'\nUse(f) = {\n    A = f\n    A(0), A(5)\n}\nUse(Describe)",
+        "expectedNeutral": "ok raw=S['zero', 'other'] n=1"
+      }
+    ],
+    "explanation": "A body whose one row names a parameter is a callable alias of whatever callable the parameter receives: inside `Use(f)`, `A = f` makes `A(9)`, `2.A` and `Apply(A, 4)` call the supplied `Square` with exactly those new arguments. When the parameter receives a plain value, `A` is just that value — bare `A` and `A()` read it without rerunning anything — so `A(1)` is an arity error, and a passed `A` is no callable.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "runtime-alias-of-a-projection",
+    "category": "name-resolution",
+    "source": "Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nA = R.Algorithm\nB = A\n\nA(9)\nB(3)\n[1, 2].map(A)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "81\n9\n[1, 4]"
+      }
+    ],
+    "expectedRaw": "S[81, 9, L[1, 4]]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nA = R.Algorithm\nA",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Square(x) = x * x\nCapture(meta op) = op\nS1 = S2\nS2 = S3\nS3 = S4\nS4 = S5\nS5 = S6\nS6 = S7\nS7 = S8\nS8 = S9\nS9 = S10\nS10 = R.Algorithm\nR = Capture(Square(5))\nS1(9)",
+        "expectedNeutral": "ok raw=81 n=1"
+      }
+    ],
+    "explanation": "`A = R.Algorithm` names the captured call's callee, so `A` is an alias of it: `A(9)` is a fresh call with the new argument, `[1, 2].map(A)` uses it as a callback, and an alias of `A` (`B = A`, also declared before its target) is the same callable. Written bare, `A` is the callee read as a value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "runtime-alias-of-a-parameter-member",
+    "category": "name-resolution",
+    "source": "G(o) = o + 100\nBox = { G(x) = x * 10 }\nUse(b) = {\n    A = b.G\n    A(3)\n}\n\nUse(Box)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "30"
+      }
+    ],
+    "expectedRaw": "30",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "G(o) = o + 100\nUse(b) = {\n    A = b.G\n    A, A(3)\n}\nUse(5)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "`A = b.G` is a member reference: its head `b` is a parameter, so `G` is a member name, never an input of `A`. `Use(Box)` calls `Box.G(3)`, the `G` that `b` declares, never the lexical `G`. On a receiver that lacks `G`, `b.G` is the computed value `G(b)`: `A` then names that value, so calling it with an argument is an arity error.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "runtime-alias-transport-reads-the-target-members",
+    "category": "access-boundaries",
+    "source": "Lib(*xs) = {\n    public K = 99\n    0\n}\nK(v) = 7\nNavigate(f) = f.K\nUse(f) = {\n    A = f\n    Navigate(A), A.K\n}\n\nUse(Lib)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(99, 99)"
+      }
+    ],
+    "expectedRaw": "S[99, 99]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Lib(*xs) = {\n    public K = 99\n    0\n}\nUse(f) = {\n    A = { public K = 5\n    f }\n    A.K\n}\nUse(Lib)",
+        "expectedNeutral": "ok raw=5 n=1"
+      }
+    ],
+    "explanation": "`A = f` is a runtime REFERENCE to whatever `f` receives, so every observation of `A` is that target's: passing it (`Navigate(A)`) and writing `A.K` both read `Lib`'s own member `K` (99). A definition written in braces is a structure of its own instead: `{ public K = 5 ⏎ f }` reads its own `K`.",
+    "notes": "M4★ (ALIAS-UNIFY-1, October 2026): formerly written `A.K` on the alias took the fallback `K(A)` (7)."
+  },
+  {
+    "id": "runtime-alias-namespace-of-its-own-declarations",
+    "category": "access-boundaries",
+    "source": "Outer(n) = {\n    Lib = { public X = 10\n    n }\n    P = { open Lib\n    X }\n    P + Lib\n}\n\nOuter(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "11"
+      }
+    ],
+    "expectedRaw": "11",
+    "expectedEmittedCount": 1,
+    "explanation": "A structure whose one row names a parameter is still a namespace of its own declarations: `open Lib` imports `X`, and the bare `Lib` reads the parameter's value."
+  },
+  {
+    "id": "runtime-alias-failure-is-not-absence",
+    "category": "errors",
+    "source": "R = 5\nA = R.Algorithm\n\nA(9)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "explanation": "Calling `A = R.Algorithm` needs `R`'s call reference; `R = 5` is not one, so the call reports that type mismatch instead of treating `A` as an ordinary property."
+  },
+  {
+    "id": "runtime-alias-cycle",
+    "category": "errors",
+    "source": "Capture(meta op) = op\nA = R.Algorithm\nR = Capture(A(1))\n\nA(2)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "demandCycle",
+    "explanation": "`A` needs `R`'s callee, and `R` captures a call of `A` itself, so resolving `A` re-enters its own resolution: a demand cycle, never a loop."
+  },
+  {
+    "id": "runtime-alias-cell-read-and-path-share-one-call",
+    "category": "name-resolution",
+    "source": "G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    B.A, B\n}\n\nF(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 1)"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public P = b.G + 0\n        P + 0\n    }\n    B.P, B\n}\nF(5)",
+        "expectedNeutral": "ok raw=S[1, 1] n=1"
+      },
+      {
+        "source": "G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    C = {\n        open B\n        A + 0\n    }\n    B, C\n}\nF(5)",
+        "expectedNeutral": "ok raw=S[1, 1] n=1"
+      },
+      {
+        "source": "G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    B.A, B\n}\nF(5), F(7)",
+        "expectedNeutral": "ok raw=S[S[1, 1], S[2, 2]] n=2"
+      },
+      {
+        "source": "F(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    G(x) = if(tick() < 3, B + 1, x)\n    B\n}\nF(5)",
+        "expectedNeutral": "err demandCycle"
+      },
+      {
+        "source": "F(b) = {\n    B = {\n        public P = b.G + 0\n        P + 0\n    }\n    G(x) = if(tick() < 3, B + 1, x)\n    B\n}\nF(5)",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "`A = b.G` names what `b.G` gives in this call of `F`, and it is worked out once per call: the path `B.A` and the read of `B` (whose row reads `A`) use the same `A`, so `tick()` runs once. An alias is worked out exactly as often as the same line written as an ordinary property (`P = b.G + 0`) would be.",
+    "notes": "ALIAS-CELL-LIFETIME (November 2026): formerly (1, 2) — the read of `B` minted an activation of its own, and with it a second cell for `A` in the same call of `F`."
+  },
+  {
+    "id": "runtime-alias-cell-explicit-call-is-fresh",
+    "category": "name-resolution",
+    "source": "G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    B, B, B.A, B.A, B(), B.A\n}\n\nF(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 1, 1, 1, 2, 1)"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 1, 1, 2, 1]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public P = b.G + 0\n        P + 0\n    }\n    B, B, B.P, B.P, B(), B.P\n}\nF(5)",
+        "expectedNeutral": "ok raw=S[1, 1, 1, 1, 2, 1] n=1"
+      }
+    ],
+    "explanation": "Reading `B` or `B.A` uses the `A` of this call of `F`, however often and in whatever order. Only the explicit call `B()` runs `B`'s body afresh, with an `A` of its own (the second `tick()`); the `B.A` after it reads the first one again. `A` depends on `b`, so it belongs to one call, exactly like a property that reads `b`.",
+    "notes": "ALIAS-CELL-LIFETIME (November 2026): formerly (1, 1, 2, 2, 3, 2)."
+  },
+  {
+    "id": "runtime-alias-cell-fresh-in-every-call",
+    "category": "name-resolution",
+    "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    A = Pick(tick()).Algorithm\n    A(1)\n}\n\nOuter(0)\nOuter(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n100"
+      }
+    ],
+    "expectedRaw": "S[10, 100]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    P = Pick(tick())\n    P.Algorithm(1)\n}\nOuter(0)\nOuter(0)",
+        "expectedNeutral": "ok raw=S[10, 100] n=2"
+      },
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    A = Pick(tick()).Algorithm\n    A(1), A(2), A(3)\n}\nOuter(0)",
+        "expectedNeutral": "ok raw=S[10, 20, 30] n=1"
+      },
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    A = Pick(tick() + k).Algorithm\n    A(1)\n}\nOuter(0)\nOuter(0)",
+        "expectedNeutral": "ok raw=S[10, 100] n=2"
+      },
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    P = Pick(tick() + k)\n    P.Algorithm(1)\n}\nOuter(0)\nOuter(0)",
+        "expectedNeutral": "ok raw=S[10, 100] n=2"
+      }
+    ],
+    "explanation": "`A = Pick(tick()).Algorithm` is declared inside `Outer`, so every call of `Outer` works out its own `A`: the first call's `tick()` is 1 and picks `Ten`, the second call's is 2 and picks `Hun`. It makes no difference that the line uses nothing the call supplies. Inside one call `A` is worked out once, however often it is used — exactly as the property `P = Pick(tick())` is.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026): every call of the owner has a fresh alias, whether or not its line uses the call's input. Under ALIAS-CELL-LIFETIME alone (from 2026-11-15) this was (10, 10) — one cell for the run, because `A`'s line reads nothing of the call; before that (10, 100), by an activation key that an unused neighbour could change (the next case)."
+  },
+  {
+    "id": "runtime-alias-cell-unused-sibling-changes-nothing",
+    "category": "name-resolution",
+    "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        U = k + 0\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer(), Outer()\n}\n\nF(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(10, 100)"
+      }
+    ],
+    "expectedRaw": "S[10, 100]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer(), Outer()\n}\nF(0)",
+        "expectedNeutral": "ok raw=S[10, 100] n=1"
+      },
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        U = k + 0\n        P = Pick(tick())\n        P.Algorithm(1)\n    }\n    Outer(), Outer()\n}\nF(0)",
+        "expectedNeutral": "ok raw=S[10, 100] n=1"
+      },
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        U = k + 0\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer, Outer\n}\nF(0)",
+        "expectedNeutral": "ok raw=S[10, 10] n=1"
+      },
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer, Outer\n}\nF(0)",
+        "expectedNeutral": "ok raw=S[10, 10] n=1"
+      }
+    ],
+    "explanation": "An unused neighbour never changes what a program gives. `U = k + 0` reads `F`'s input and is never used. Each explicit call `Outer()` is a call of `Outer` and works out its own `A` — the first picks `Ten`, the second `Hun` — with or without `U`.",
+    "notes": "ALIAS-CELL-LIFETIME (November 2026) made this program and its twin without `U` agree (formerly (10, 100) with `U` and (10, 10) without it); they agreed on (10, 10) until INNER-PROPERTY LIFETIME (November 2026), under which each explicit call of `Outer` has its own `A`: (10, 100) for both."
+  },
+  {
+    "id": "runtime-alias-cell-read-from-outside-after-a-call",
+    "category": "name-resolution",
+    "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public A = Pick(tick()).Algorithm\n    A(1)\n}\n\nOuter(0)\nOuter.A(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n100"
+      }
+    ],
+    "expectedRaw": "S[10, 100]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public P = Pick(tick())\n    P.Algorithm(1)\n}\nOuter(0)\nOuter.P.Algorithm(1)",
+        "expectedNeutral": "ok raw=S[10, 100] n=2"
+      },
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public A = Pick(tick()).Algorithm\n    A(1)\n}\nOuter.A(1)\nOuter(0)",
+        "expectedNeutral": "ok raw=S[10, 100] n=2"
+      },
+      {
+        "source": "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public A = Pick(tick()).Algorithm\n    A(1)\n}\nOuter.A(1)\nOuter(0)\nOuter.A(1)",
+        "expectedNeutral": "ok raw=S[10, 100, 10] n=3"
+      }
+    ],
+    "explanation": "`Outer(0)` works out the `A` of that call (`tick()` is 1: `Ten`). `Outer.A(1)` is written outside every call of `Outer`, so it uses the `A` that belongs to the run, worked out separately (`tick()` is 2: `Hun`). The order does not matter, and every read from outside uses that same one: a call of `Outer` never supplies it and never replaces it.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026): the read from outside every call of the owner has its own alias, apart from every call's. Under ALIAS-CELL-LIFETIME alone (from 2026-11-15) this was (10, 10) — one cell for the run, shared by the call and the outside read."
+  }
+]

@@ -1,0 +1,176 @@
+[
+  {
+    "id": "hunt-output-spread-marked-family",
+    "category": "item-supply-vs-value",
+    "source": "M(0)* = 1, 2\nM(n)* = n, n\nG(a, b) = a * 10 + b\nG(M(0)), G(M(5))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "12\n55"
+      }
+    ],
+    "expectedRaw": "S[12, 55]",
+    "expectedEmittedCount": 2,
+    "explanation": "Every clause of the family carries the marker, so each call of `M` in an argument slot spreads its two rows into the supply."
+  },
+  {
+    "id": "hunt-output-spread-bare-read-is-one-value",
+    "category": "item-supply-vs-value",
+    "source": "P* = 1, 2\nG(a, b) = a * 10 + b\nG(P)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "A bare read of a marked declaration is not a call and is never spread: `G` receives one sequence value and reports an arity error."
+  },
+  {
+    "id": "hunt-output-spread-zero-supply-call-spreads",
+    "category": "item-supply-vs-value",
+    "source": "P* = 1, 2\nG(a, b) = a * 10 + b\nG(P())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "12"
+      }
+    ],
+    "expectedRaw": "12",
+    "expectedEmittedCount": 1,
+    "explanation": "The explicit call `P()` is an eligible call, so its rows are spread into `G`'s two slots."
+  },
+  {
+    "id": "hunt-output-spread-if-slot-no-exemption",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nif(true, A(1, 2), 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "Argument slots of every callee spread, `if` included: `if(true, 1, 2, 0)` has four arguments, an arity error."
+  },
+  {
+    "id": "hunt-output-spread-selector-slot",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\n[10, 20, 30][A(0, 2)]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(10, 30)"
+      }
+    ],
+    "expectedRaw": "S[10, 30]",
+    "expectedEmittedCount": 1,
+    "explanation": "A marked call in a selector slot spreads: the selection is `[10, 20, 30][0, 2]`."
+  },
+  {
+    "id": "hunt-output-spread-step-row-spreads",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nS(n) = A(n + 1, n < 2)\nS(0).while",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "A step row that is a marked call spreads, so the flag is its last item and the loop runs."
+  },
+  {
+    "id": "hunt-output-spread-unmarked-step-row-is-one-slot",
+    "category": "errors",
+    "source": "A(x, y) = x, y\nS(n) = A(n + 1, n < 2)\nS(0).while",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "explanation": "Without the marker the row is one sequence slot, which is then both the state and the flag: a flag that is not a Boolean is `TypeMismatch`."
+  },
+  {
+    "id": "hunt-output-spread-marked-step-call-is-two-arguments",
+    "category": "errors",
+    "source": "M(n)* = n + 1, n < 2\nM(0).while",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "`M(0).while` is `while(M(0))`, and the inserted spread gives `while` two arguments: an arity error before any `meta` question."
+  },
+  {
+    "id": "hunt-output-spread-through-transparent-alias",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nB = A\nG(a, b, c) = a * 100 + b * 10 + c\nG(B(1, 2), 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "123"
+      }
+    ],
+    "expectedRaw": "123",
+    "expectedEmittedCount": 1,
+    "explanation": "A call through a transparent alias of a marked declaration spreads like the target's call."
+  },
+  {
+    "id": "hunt-output-spread-not-through-carrier",
+    "category": "errors",
+    "source": "A(x, y)* = x, y\nB = { A }\nG(a, b, c) = a * 100 + b * 10 + c\nG(B(1, 2), 3)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "A carrier `{ A }` is its own declaration, unmarked: its call is one value, and `G` reports an arity error."
+  },
+  {
+    "id": "hunt-output-spread-member-path-call",
+    "category": "item-supply-vs-value",
+    "source": "Lib = { public A(x, y)* = x, y }\nG(a, b, c) = a * 100 + b * 10 + c\nG(Lib.A(1, 2), 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "123"
+      }
+    ],
+    "expectedRaw": "123",
+    "expectedEmittedCount": 1,
+    "explanation": "A member path call `Lib.A(1, 2)` to a marked member spreads."
+  },
+  {
+    "id": "hunt-output-spread-empty-rows-supply-nothing",
+    "category": "item-supply-vs-value",
+    "source": "E* = ()\nG(*xs) = xs.count\nG(E(), 5), G(E, 5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 2]",
+    "expectedEmittedCount": 2,
+    "explanation": "`E()` spreads `()` into no item, while the bare read `E` passes the one value `()`."
+  },
+  {
+    "id": "hunt-output-spread-nested-marked-calls",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nB(p, q, r)* = p, q + r\nG(a, b) = a * 10 + b\nG(B(A(1, 2), 3))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "15"
+      }
+    ],
+    "expectedRaw": "15",
+    "expectedEmittedCount": 1,
+    "explanation": "The inner marked call spreads into `B`'s three slots, and `B`'s call spreads into `G`'s two."
+  },
+  {
+    "id": "hunt-output-spread-repeat-count-slot",
+    "category": "errors",
+    "source": "A(x, y)* = x, y\nInc(v) = v + 1\nrepeat(Inc(0), A(2, 3))",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "The count slot of `repeat` spreads too, giving three arguments: an arity error."
+  },
+  {
+    "id": "hunt-output-spread-extension-receiver",
+    "category": "item-supply-vs-value",
+    "source": "A(x, y)* = x, y\nAdd(a, b) = a + b\nA(3, 4).Add",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "An extension edge's receiver spreads: `A(3, 4).Add` is `Add(3, 4)`."
+  }
+]

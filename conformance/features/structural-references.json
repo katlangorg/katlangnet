@@ -1,0 +1,340 @@
+[
+  {
+    "id": "runtime-alias-self-link-is-a-demand-cycle",
+    "category": "errors",
+    "source": "A = A.Algorithm\n\nA",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "demandCycle",
+    "probes": [
+      {
+        "source": "A = B.Algorithm\nB = A\nB(1)",
+        "expectedNeutral": "err demandCycle"
+      },
+      {
+        "source": "A = B.Algorithm\nB = A\nA",
+        "expectedNeutral": "err demandCycle"
+      }
+    ],
+    "explanation": "`A`'s callable is the callee of the call reference its receiver `A` holds, so working it out needs `A` itself: deciding the `.Algorithm` edge leads straight back into `A`, and reading `A` re-enters its own value. That is a demand cycle, reported as one, never an endless loop; `A = B.Algorithm` with `B = A` is the same cycle through one more name.",
+    "notes": "ALIAS-UNIFY-1 review: the route decision of an alias step reads its receiver's structure through the asking chase's own visited keys; formerly it re-entered itself without bound."
+  },
+  {
+    "id": "reference-head-resolves-in-its-own-scope",
+    "category": "name-resolution",
+    "source": "Lib = { public Inc(x) = x + 1 }\nA = Lib\nF = {\n    open A\n    Lib = { public Dec(x) = x - 1 }\n    G = Inc\n    G(5)\n}\n\nF",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Box = {\n    Lib2 = { public Inc(x) = x + 1 }\n    public A = Lib2\n}\nF = {\n    open Box.A\n    G = Inc\n    G(5)\n}\nF",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "Lib2 = { public Inc = 100 }\nBox = {\n    Lib2 = { public Inc(x) = x + 1 }\n    public A = Lib2\n}\nF = {\n    open Box.A\n    G = Inc\n    G(5)\n}\nF",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "`A = Lib` names the `Lib` visible where `A` is written, so `open A` inside `F` opens that root `Lib` even though `F` declares a `Lib` of its own: `G = Inc` is the root `Lib`'s `Inc`, and `G(5)` is 6. A reference reached through a member, like `Box.A`, likewise names what its own scope sees.",
+    "notes": "ALIAS-UNIFY-1 review: formerly the resolver looked the reference's head up in the opener's map."
+  },
+  {
+    "id": "reference-receiver-is-its-target-structure",
+    "category": "name-resolution",
+    "source": "Lib = {\n    Defaults = { public Rate = 2 }\n    public Cfg = Defaults\n}\nTax = Lib.Cfg.Rate * 100\n\nTax",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "200"
+      }
+    ],
+    "expectedRaw": "200",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "open Lib\nLib = {\n    Defaults = { public Rate = 2 }\n    public Cfg = Defaults\n}\nTax = Cfg.Rate * 100\nTax",
+        "expectedNeutral": "ok raw=200 n=1"
+      },
+      {
+        "source": "Outer = {\n    Lib = {\n        Defaults = { public Rate = 2 }\n        public Cfg = Defaults\n    }\n    T = {\n        open Lib\n        Cfg.Rate * 100\n    }\n    T\n}\nOuter",
+        "expectedNeutral": "ok raw=200 n=1"
+      }
+    ],
+    "explanation": "`Cfg = Defaults` is a reference, so `Cfg` has `Defaults`' members: `Lib.Cfg.Rate` is `Defaults.Rate`, 2, and `Tax` needs no input. The same holds when `Cfg` comes from `open Lib`, and when `Lib` is declared inside another body.",
+    "notes": "ALIAS-UNIFY-1 review: formerly a receiver that was a reference reached through a member or an open made `Rate` an inferred input."
+  },
+  {
+    "id": "block-headed-reference-navigates-its-block",
+    "category": "name-resolution",
+    "source": "A = {\n    V = { public W = 7 }\n    K = V\n}.K\n\nA.W",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "V = A\nA = {\n    V = { public W = 7 }\n    K = V\n}.K\nA.W",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "A = B.K\nB = {\n    V = { public W = 7 }\n    K = V\n    U = A\n}\nV = A\nA.W",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "B = {\n    V = { public W = 7 }\n    K = V\n    U = A\n}\nA = B.K\nV = A\nA.W",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "`A` names the block's member `K`, and `K = V` names the block's own `V`, so `A` has `V`'s member `W`: 7. A root `V`, or a body declared before or after `A`, never changes what the block's `K` names.",
+    "notes": "ALIAS-UNIFY-1 review: formerly the alias kept the unelaborated block and the reference chase looked rows up in the wrong scope."
+  },
+  {
+    "id": "reference-behind-a-carrier-that-reads-it-back",
+    "category": "name-resolution",
+    "source": "A = B\nB = {\n    public F(x) = x * x\n    A.F\n}\n\nA(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "9"
+      }
+    ],
+    "expectedRaw": "9",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = B\nB = {\n    public F(x) = x * x\n    A.F\n}\nB(3), A(3)",
+        "expectedNeutral": "ok raw=S[9, 9] n=2"
+      },
+      {
+        "source": "B = {\n    public F(x) = x * x\n    A.F\n}\nA = B\nB(3)",
+        "expectedNeutral": "ok raw=9 n=1"
+      }
+    ],
+    "explanation": "`A = B` names the carrier `B`, whose row `A.F` reads `F` through `A`. A reference has its target's members, so `A.F` is `B`'s own `F`: `A(3)` and `B(3)` both call `F(3)`, 9.",
+    "notes": "ALIAS-UNIFY-1 second review: formerly the alias chase keyed what it passed by the alias's shape and lent its own visited set to the structure a step's route decision needs, so the receiver `A` of B's row met the outer chase's carrier and failed as an alias cycle (Lean and C#)."
+  },
+  {
+    "id": "reference-through-a-carrier-reads-the-carriers-member",
+    "category": "name-resolution",
+    "source": "Settings = Config\nConfig = {\n    public Rate = 2\n    Default\n}\nDefault = Settings.Rate\n\nSettings",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "`Settings` names the carrier `Config`, whose row `Default` names `Settings.Rate` — `Config`'s own `Rate` — so reading `Settings` reads `Config`'s value, 2.",
+    "notes": "ALIAS-UNIFY-1 second review: formerly an IllegalInEval alias cycle (the VALUE chase lent its visited set to the receiver's structure chase)."
+  },
+  {
+    "id": "same-shape-references-are-distinct-bindings",
+    "category": "name-resolution",
+    "source": "Primary = Config\nBackup = Config\nConfig = {\n    public Rate = 2\n    Backup.Rate\n}\n\nPrimary",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "`Primary` and `Backup` are written alike but are two declarations: reading `Primary` reads `Config`, whose row `Backup.Rate` is `Config`'s own `Rate`, 2.",
+    "notes": "ALIAS-UNIFY-1 second review: Lean keyed a chase's visited set by algorithm shape, so two references with the same written row looked like one alias met twice."
+  },
+  {
+    "id": "algorithm-member-of-a-reference-behind-a-carrier",
+    "category": "name-resolution",
+    "source": "P = C\nC = {\n    public Algorithm = 5\n    A\n}\nA = P.Algorithm\n\nP",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "explanation": "A declared member wins over the `.Algorithm` intrinsic, so `A = P.Algorithm` names `C`'s member `Algorithm`; reading `P` reads `C`'s row `A`, which is that member, 5.",
+    "notes": "ALIAS-UNIFY-1 second review: formerly an IllegalInEval alias cycle while deciding whether `.Algorithm` was the member or the intrinsic."
+  },
+  {
+    "id": "carrier-of-a-parameter-in-every-activation",
+    "category": "name-resolution",
+    "source": "Inc(x) = x + 1\nF(f, n) = {\n    A = { f }\n    if(n == 0, A(5), F(A, n - 1))\n}\n\nF(Inc, 1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nF(f, n) = {\n    A = f\n    if(n == 0, A(5), F(A, n - 1))\n}\nF(Inc, 1)",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "Each call of `F` has its own `A`: the outer `A` forwards to `Inc`, and the inner `A` forwards to the outer one, so `A(5)` in the inner call is `Inc(5)`, 6.",
+    "notes": "ALIAS-UNIFY-1 second review: formerly the inner activation's `A`, whose `f` is the outer `A`, was mistaken for the outer `A` met again (an alias cycle)."
+  },
+  {
+    "id": "reference-cycle-through-an-open-is-no-alias",
+    "category": "name-resolution",
+    "source": "open Lib\nLib = { public B = A }\nA = B\nSame(x, x) = 0\n\nSame(A, A)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "explanation": "`A = B` names the `B` that `open Lib` provides, and `B = A` leads back to `A`: a reference whose target never ends is no alias. `A` stays an ordinary definition, so `Same(A, A)` binds the same `A` twice without reading it: 0.",
+    "notes": "ALIAS-UNIFY-1 second review: formerly the OD-D check stopped at opened names, so `A` and `B` formed aliases that failed as an alias cycle."
+  },
+  {
+    "id": "reference-to-a-carrier-that-leads-back-is-no-alias",
+    "category": "name-resolution",
+    "source": "A = B\nB = {\n    public X = 1\n    A\n}\nG(p) = A.X\n\nG(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UndeclaredIdentifier",
+    "expectedParseDiagnosticFragment": "Property 'X' was not found on `A`",
+    "explanation": "Calling `A` would call `B`, whose row calls `A` again: the target never ends, so neither `A` nor `B` is an alias (OD-D). `A` is an ordinary definition without a member `X`, so `A.X` is the call `X(A)`, and `X` is not declared in `G`'s closed parameter list.",
+    "notes": "ALIAS-UNIFY-1 second review (OD-D read on the TARGET chase): formerly the detector stopped at the carrier and made `A` a reference with member X while the resolver classified the cycle, so the layers disagreed. No elaborated Lean program exists."
+  },
+  {
+    "id": "sibling-cycle-member-path-is-read-statically",
+    "category": "name-resolution",
+    "source": "A = B.C\nB = Lib\nLib = {\n    public C = { public X = 1 }\n    public D = A\n}\n\nA.X",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Lib = {\n    public C = { public X = 1 }\n    public D = A\n}\nB = Lib\nA = B.C\nA.X",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "A = B.K\nB = {\n    V(x) = x * 10\n    K = V\n    U = A\n}\nZ = A + 1\nZ(4)",
+        "expectedNeutral": "ok raw=41 n=1"
+      },
+      {
+        "source": "B = {\n    V(x) = x * 10\n    K = V\n    U = A\n}\nA = B.K\nZ = A + 1\nZ(4)",
+        "expectedNeutral": "ok raw=41 n=1"
+      }
+    ],
+    "explanation": "`A = B.C` names the member `C` of whatever `B` names, and `B = Lib`; `Lib`'s `D` refers back to `A`, but that cycle runs through a member, not through `A`'s target, so `A` is `Lib.C` and `A.X` is 1 in every declaration order.",
+    "notes": "ALIAS-UNIFY-1 second review: formerly, inside a sibling cycle, the resolver read an unprocessed reference receiver without following it, so alias formation depended on the declaration order."
+  },
+  {
+    "id": "open-block-member-reference-opens-its-target",
+    "category": "name-resolution",
+    "source": "open {\n    public Lib = { public K = 7 }\n    public A = Lib\n}.A\n\nK",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "The block's `A = Lib` names `Lib`, so opening `{ … }.A` opens `Lib`'s public members: `K` is 7.",
+    "notes": "ALIAS-UNIFY-1 second review: formerly parameter detection read a lone row inside an open block as its own namespace, so `K` became an inferred input."
+  },
+  {
+    "id": "block-receiver-reference-member",
+    "category": "name-resolution",
+    "source": "V = { public W = 7 }\nY = { K = V }.K.W + 0\n\nY",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "The block's `K = V` names the root `V`, so `{ K = V }.K` is `V` and `.W` is its member `W`: `Y` is 7.",
+    "notes": "ALIAS-UNIFY-1 second review: formerly the block receiver lost its scope in parameter detection, so `W` became an inferred input."
+  },
+  {
+    "id": "member-miss-makes-the-body-its-own-structure",
+    "category": "name-resolution",
+    "source": "B = { Q = 1 }\nA = B.foo\nG(p) = A.bar\n\nG(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UndeclaredIdentifier",
+    "expectedParseDiagnosticFragment": "Property 'bar' was not found on `A`",
+    "explanation": "`B` has no member `foo`, so `A = B.foo` is the call `foo(B)`, not a reference: `A` is its own definition without a member `bar`, so `A.bar` is the call `bar(A)`, and `bar` is not declared in `G`'s closed parameter list.",
+    "notes": "ALIAS-UNIFY-1 second review: formerly a member step that missed left the receiver unknown, so the closed body's certain fallback name was never checked. No elaborated Lean program exists."
+  },
+  {
+    "id": "reference-cycle-only-the-final-providers-close-is-no-alias",
+    "category": "name-resolution",
+    "source": "open Back\nA = B\nB = {\n    public N = 5\n    A\n}\nBack = { public N = G.Z }\nG = {\n    open A\n    public Z = N\n    0\n}\nSame(x, x) = 0\n\nSame(G.Z, G.Z)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "open Back\nG = {\n    open A\n    public Z = N\n    0\n}\nBack = { public N = G.Z }\nB = {\n    public N = 5\n    A\n}\nA = B\nSame(x, x) = 0\nSame(G.Z, G.Z)",
+        "expectedNeutral": "ok raw=0 n=1"
+      }
+    ],
+    "explanation": "`A = B` and `B`'s row `A` lead back to each other, so `A` is no alias and `open A` opens `A`'s own, empty namespace. `Z = N` then names `Back.N`, whose `G.Z` leads back to `Z`: neither is an alias, so `Same(G.Z, G.Z)` binds the same `Z` twice without reading it: 0.",
+    "notes": "ALIAS-UNIFY-1 third review: formerly OD-D was read only through the open providers that follow every reference, where `open A` provides `B.N`, while the alias formed through the final providers, where `N` is `Back.N` — so `Z` and `Back.N` became aliases of each other and evaluation failed with IllegalInEval (a callable alias cycle)."
+  },
+  {
+    "id": "member-path-through-a-lower-cyclic-receiver-is-no-alias",
+    "category": "name-resolution",
+    "source": "X(v) = 0\nA = B\nB = {\n    public X = D\n    A\n}\nD = {\n    public Q = 7\n    A.X\n}\nE = D\nSame(x, x) = 0\n\nSame(E, D)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "explanation": "Following `A` to the carrier `B` finds its member `X`, which names `D`, so `E`'s target leads `E` -> `D` -> `A.X` -> `D` again: `E` is no alias. `E` and `D` are two definitions, so binding both to the repeated `x` is a type mismatch.",
+    "notes": "ALIAS-UNIFY-1 third review: formerly implicit-argument resolution followed `A.X` only when parameter detection's final dot verdict called it a member, while detection followed it through `A`'s target, so the two layers disagreed: `E` became an alias of `D` and `Same(E, D)` matched."
+  },
+  {
+    "id": "reference-head-is-the-parameter-its-own-scope-binds",
+    "category": "name-resolution",
+    "source": "F(x) = {\n    A = x\n    G(x) = A.W + 0\n    G(5)\n}\n\nF({ public W = 9 })",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "9"
+      }
+    ],
+    "expectedRaw": "9",
+    "expectedEmittedCount": 1,
+    "explanation": "`A = x` names `F`'s parameter `x` — the one `A`'s own scope sees, whatever `G`'s own `x` is — so `A` is a reference to `F`'s argument, and `A.W` reads its member `W`: 9.",
+    "notes": "ALIAS-UNIFY-1 third review: formerly the reference's head was looked up with the parameter bindings of the site that asked, where G's own `x` hid F's, so `A` looked like a memberless definition and `G` reported `W` as undeclared."
+  },
+  {
+    "id": "open-path-into-a-parameterized-body-is-its-own-namespace",
+    "category": "name-resolution",
+    "source": "p = { public K = 1 }\nQ(p) = {\n    public M = p\n    0\n}\nF(z) = {\n    open Q.M\n    K\n}\n\nF(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UndeclaredIdentifier",
+    "expectedParseDiagnosticFragment": "Identifier 'K' is used in an explicitly parameterized algorithm",
+    "explanation": "`M = p` names `Q`'s parameter, so `M` is a reference to a run-time value: opening it opens `M`'s own, empty namespace. `K` is therefore not declared in `F`'s closed parameter list.",
+    "notes": "ALIAS-UNIFY-1 third review: formerly the open target's chase did not see `Q`'s parameter `p`, so it opened the root `p` and `K` failed only at run time as a local-only property. No elaborated Lean program exists."
+  }
+]

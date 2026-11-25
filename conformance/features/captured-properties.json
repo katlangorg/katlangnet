@@ -1,0 +1,158 @@
+[
+  {
+    "id": "hunt-exposure-inline-block-head-per-call",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = { public Q = y * 10 }.Q + 0\n  A\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n[30, 40]"
+      }
+    ],
+    "expectedRaw": "S[10, 20, L[30, 40]]",
+    "expectedEmittedCount": 3,
+    "explanation": "A property whose inline-block-headed path reads the owner's parameter (`{ public Q = y * 10 }.Q`) depends on it, so it is local-only: each call of `F`, direct or mapped, evaluates it again with its own `y`."
+  },
+  {
+    "id": "hunt-exposure-opened-member-read-per-call",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open B\n  B = { public Q = y * 10 }\n  R = Q + 0\n  R\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n[30, 40]"
+      }
+    ],
+    "expectedRaw": "S[10, 20, L[30, 40]]",
+    "expectedEmittedCount": 3,
+    "explanation": "`R = Q + 0` reads `Q` through `open B`, and `B.Q` reads `y`, so `R` is local-only and every call of `F` evaluates it with its own `y`."
+  },
+  {
+    "id": "hunt-exposure-carrier-of-dependent-property-per-call",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  B = y * 10\n  A = { B }\n  R = A + 0\n  R\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n[30, 40]"
+      }
+    ],
+    "expectedRaw": "S[10, 20, L[30, 40]]",
+    "expectedEmittedCount": 3,
+    "explanation": "`A = { B }` is a carrier of `B`, which reads `y`; `R = A + 0` therefore depends on `y` and is evaluated once per call of `F`."
+  },
+  {
+    "id": "hunt-exposure-deconstruction-target-per-call",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  a, b = y * 10, y\n  R = a + 0\n  R\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n[30, 40]"
+      }
+    ],
+    "expectedRaw": "S[10, 20, L[30, 40]]",
+    "expectedEmittedCount": 3,
+    "explanation": "A deconstruction inside `F` whose right-hand side reads `y` gives local-only targets: each call of `F` unpacks its own value."
+  },
+  {
+    "id": "hunt-exposure-lifted-formula-uses-enclosing-parameter",
+    "category": "access-boundaries",
+    "source": "A = y * 10\nF(y) = {\n  G = A + 0\n  G\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n[30, 40]"
+      }
+    ],
+    "expectedRaw": "S[10, 20, L[30, 40]]",
+    "expectedEmittedCount": 3,
+    "explanation": "`G = A + 0` lifts the root formula `A(y)` and supplies `y` from `F`'s own parameter (automatic forwarding reuses an existing parameter binding), so `G` depends on `y` and is evaluated per call."
+  },
+  {
+    "id": "hunt-exposure-bare-forwarding-clause-uses-enclosing-parameter",
+    "category": "access-boundaries",
+    "source": "Inc(y) = y * 10\nF(y) = {\n  K(0) = Inc\n  K(n) = n\n  G = K(0) + 0\n  G\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n[30, 40]"
+      }
+    ],
+    "expectedRaw": "S[10, 20, L[30, 40]]",
+    "expectedEmittedCount": 3,
+    "explanation": "The clause `K(0) = Inc` is bare forwarding: `Inc`'s `y` is supplied by `F`'s parameter of the same name, so `G = K(0) + 0` depends on `y` and each call of `F` sees its own value."
+  },
+  {
+    "id": "hunt-exposure-inline-open-target-lifted-with-enclosing-parameter",
+    "category": "name-resolution",
+    "source": "F(y) = {\n  open { public Q = y * 10 }\n  A = Q + 0\n  A\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n[30, 40]"
+      }
+    ],
+    "expectedRaw": "S[10, 20, L[30, 40]]",
+    "expectedEmittedCount": 3,
+    "explanation": "An inline `open` target is rooted at the prelude, so its `y` is not `F`'s: `Q` infers its own `y`, and `A = Q + 0` lifts `Q(y)` with `F`'s parameter. The result follows each call's argument."
+  },
+  {
+    "id": "hunt-exposure-self-contained-property-fresh-in-every-call",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = tick()\n  A + y * 0\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n[3, 4]"
+      }
+    ],
+    "expectedRaw": "S[1, 2, L[3, 4]]",
+    "expectedEmittedCount": 3,
+    "explanation": "`A = tick()` is declared inside `F`, so every call of `F`, direct or mapped, works out its own `A`: `tick()` runs once in each of the four calls. It makes no difference that `A`'s definition uses nothing of the call.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026). The bug hunt wrote this case before that rule as `hunt-exposure-self-contained-property-shared-across-calls` with (1, 1, [1, 1]): `A` uses nothing of the call, so it was worked out once for the whole run."
+  },
+  {
+    "id": "hunt-exposure-dependent-property-evaluated-per-call",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = tick() + y * 0\n  A\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n[3, 4]"
+      }
+    ],
+    "expectedRaw": "S[1, 2, L[3, 4]]",
+    "expectedEmittedCount": 3,
+    "explanation": "`A = tick() + y * 0` reads `y`, so it is local-only: each call of `F` evaluates it, and the ticks count the calls."
+  },
+  {
+    "id": "hunt-exposure-call-reference-property-per-call",
+    "category": "access-boundaries",
+    "source": "Cap(meta r) = r\nId(v) = v\nF(y) = {\n  R = Cap(Id(y * 10))\n  R.Invoke()\n}\nF(1), F(2), map([3, 4], F)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n[30, 40]"
+      }
+    ],
+    "expectedRaw": "S[10, 20, L[30, 40]]",
+    "expectedEmittedCount": 3,
+    "explanation": "`R = Cap(Id(y * 10))` holds a call reference whose captured call reads `y`, so `R` is local-only: each call of `F` captures and invokes its own call."
+  },
+  {
+    "id": "hunt-exposure-member-mixes-exported-and-dependent",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  B = {\n    public P = tick()\n    public Q = P + y\n  }\n  B.Q\n}\nF(10), F(20)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "11\n22"
+      }
+    ],
+    "expectedRaw": "S[11, 22]",
+    "expectedEmittedCount": 2,
+    "explanation": "`B` and its members are declared inside `F`, so every call of `F` works out its own `P` and its own `Q`: the first call's `P` is 1 and its `Q` is `1 + 10`, the second call's `P` is 2 and its `Q` is `2 + 20`. `P = tick()` uses nothing of the call and `Q = P + y` uses `y`; both belong to the call.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026). The bug hunt wrote this case before that rule with (11, 21): `P` uses nothing of the call, so it was worked out once for the whole run and only `Q` followed the call."
+  }
+]

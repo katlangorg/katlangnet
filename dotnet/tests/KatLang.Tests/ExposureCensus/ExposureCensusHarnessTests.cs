@@ -908,7 +908,9 @@ public sealed class ExposureCensusHarnessTests
             Assert.Contains("<ProjectReference Include=\"$(KatLangHeadProject)\" />", text, StringComparison.Ordinal);
             Assert.Contains("CensusHeadProbe.RunAsync(args[0], args[1])", File.ReadAllText(Path.Combine(project, CensusHeadProbe.EntryFileName)), StringComparison.Ordinal);
             Assert.Throws<FileNotFoundException>(() => CensusHeadProbe.WriteProject(project, Path.Combine(directory, "missing.cs")));
-            Assert.Contains(CensusHeadProbe.Steps(directory), step => step.Contains($"git archive {CensusHeadProbe.Revision} ", StringComparison.Ordinal));
+            var steps = CensusHeadProbe.Steps(directory);
+            Assert.Contains(steps, step => step.Contains($"git archive {CensusHeadProbe.Revision} src/KatLang ", StringComparison.Ordinal));
+            Assert.Contains(steps, step => step.Contains($"-p:KatLangHeadProject=\"$probe_scratch/{CensusHeadProbe.Revision}/src/KatLang/KatLang.csproj\"", StringComparison.Ordinal));
         }
         finally
         {

@@ -385,7 +385,7 @@ public class LanguageSpecArtifactsGeneratorPromptTests
         builder.Append($"""
 
             Verified reference examples ({selected.Count} of the {cases.Count}-case canonical language specification,
-            dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
+            conformance/cases.json). Every program and expected
             output below is executed against the KatLang engine and (where representable)
             guarded against the Lean model on every build. Treat these as ground truth for the
             language behaviors they demonstrate.
@@ -407,7 +407,7 @@ public class LanguageSpecArtifactsGeneratorPromptTests
             {
                 case SpecOutcome.Evaluates:
                     builder.Append("\n  Displays:\n");
-                    foreach (var row in specCase.ExpectedDisplay!.Split('\n'))
+                    foreach (var row in specCase.RequireDefaultDisplay().Split('\n'))
                         builder.Append($"    {row}\n");
                     break;
                 case SpecOutcome.EvalError:

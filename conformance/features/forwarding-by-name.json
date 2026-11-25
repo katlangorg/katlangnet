@@ -1,0 +1,178 @@
+[
+  {
+    "id": "hunt-forwarding-closed-bare-row-uses-enclosing-parameter",
+    "category": "name-resolution",
+    "source": "A = y + 1\nF(y) = {\n  H(q) = A\n  H(0)\n}\nF(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "explanation": "`H(q) = A` is bare forwarding; `H`'s list binds no `y`, so `A`'s `y` comes from the enclosing parameter `y` of `F`: `F(5)` is `6`."
+  },
+  {
+    "id": "hunt-forwarding-closed-bare-row-uses-own-parameter",
+    "category": "name-resolution",
+    "source": "A = y + 1\nF(y) = {\n  H(y) = A\n  H(0)\n}\nF(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "explanation": "`H(y) = A` binds its own `y`, which bare forwarding passes to `A`: `H(0)` is `A(0)`, whatever `F`'s `y` is."
+  },
+  {
+    "id": "hunt-forwarding-closed-formula-reuses-enclosing-parameter",
+    "category": "name-resolution",
+    "source": "A = y + 1\nF(y) = {\n  H(q) = A + 0\n  H(0)\n}\nF(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "explanation": "A formula inside the closed list `H(q)` lifts `A` and supplies its `y` from the enclosing parameter binding; a closed list gains no parameter, but it can reuse an enclosing one."
+  },
+  {
+    "id": "hunt-forwarding-branch-formula-reuses-enclosing-parameter",
+    "category": "name-resolution",
+    "source": "A = y + 1\nF(y) = {\n  K(0) = A + 0\n  K(n) = n\n  K(0)\n}\nF(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "explanation": "A clause branch is closed at its own level; its formula `A + 0` lifts `A` with the enclosing parameter `y` of `F`."
+  },
+  {
+    "id": "hunt-forwarding-closed-list-without-source-is-a-demand",
+    "category": "errors",
+    "source": "A = y + 1\nH(q) = A + 0\nH(0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "No parameter binding supplies `y` to `A` inside the closed list `H(q)`, so the reference stays a zero-argument demand of `A`, which requires an argument: an arity error at run time."
+  },
+  {
+    "id": "hunt-forwarding-collector-to-collector-respreads",
+    "category": "name-resolution",
+    "source": "Coll(*xs) = xs.count\nA(p, *xs) = Coll\nA(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "Bare forwarding supplies `Coll`'s collector from `A`'s own collector `xs` and re-spreads it, so `Coll` counts the two items."
+  },
+  {
+    "id": "hunt-forwarding-fixed-binding-passed-whole",
+    "category": "name-resolution",
+    "source": "Coll(*xs) = xs\nA(xs) = Coll\nA((1, 2))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[(1, 2)]"
+      }
+    ],
+    "expectedRaw": "L[S[1, 2]]",
+    "expectedEmittedCount": 1,
+    "explanation": "A fixed source binding is passed whole even into a collector: `Coll` collects the one pair `(1, 2)`."
+  },
+  {
+    "id": "hunt-forwarding-collecting-only-callee-is-read",
+    "category": "name-resolution",
+    "source": "Cnt(*xs) = xs.count\nF(*xs) = {\n  G = Cnt + 0\n  G\n}\nF(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "explanation": "`Cnt(*xs)` accepts an empty supply, so a bare `Cnt` in a formula is never lifted: it is `Cnt`'s cached zero-supply read (`0`), not a forward of `F`'s `xs`."
+  },
+  {
+    "id": "hunt-grace-block-inside-closed-branch",
+    "category": "name-resolution",
+    "source": "Apply(f) = f(1, 10)\nF(0) = Apply({ y - ~x })\nF(n) = n\nF(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "9"
+      }
+    ],
+    "expectedRaw": "9",
+    "expectedEmittedCount": 1,
+    "explanation": "A block nested in a clause branch is an ordinary owner with its own Grace: `{ y - ~x }` infers `(x, y)`, so `f(1, 10)` is `10 - 1`."
+  },
+  {
+    "id": "hunt-forwarding-builtin-parameter-by-name",
+    "category": "name-resolution",
+    "source": "C(collection) = count\nC([1, 2, 3])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "explanation": "Bare forwarding reads `count`'s parameter name `collection`; the body binds `collection`, so the row is `count(collection)`."
+  },
+  {
+    "id": "hunt-forwarding-enclosing-bindings-at-two-levels",
+    "category": "name-resolution",
+    "source": "A = y * 10 + z\nF(y) = {\n  G(z) = {\n    H(q) = A + q\n    H(1)\n  }\n  G(2)\n}\nF(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "33"
+      }
+    ],
+    "expectedRaw": "33",
+    "expectedEmittedCount": 1,
+    "explanation": "Inside `H(q)`, `A`'s `y` and `z` come from the nearest enclosing parameter bindings, `F`'s `y` and `G`'s `z`: `3 * 10 + 2 + 1`."
+  },
+  {
+    "id": "hunt-forwarding-nearest-parameter-binding-wins",
+    "category": "name-resolution",
+    "source": "A = y * 10\nF(y) = {\n  G(y) = A + 0\n  G(7)\n}\nF(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "70"
+      }
+    ],
+    "expectedRaw": "70",
+    "expectedEmittedCount": 1,
+    "explanation": "`G(y)` binds its own `y`, the nearest binding of that name, so `A + 0` lifts with `G`'s `y`: `G(7)` is `70`."
+  },
+  {
+    "id": "hunt-forwarding-property-is-never-a-source",
+    "category": "name-resolution",
+    "source": "A = y * 10\nF = {\n  y = 4\n  G = A + 0\n  G\n}\nF(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "20"
+      }
+    ],
+    "expectedRaw": "20",
+    "expectedEmittedCount": 1,
+    "explanation": "The property `y = 4` is not a parameter binding, so it never supplies `A`; `G` gains `y` as a new forwarded parameter, and the carrier `F` forwards its argument to `G`: `F(2)` is `20`."
+  }
+]

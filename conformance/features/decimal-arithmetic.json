@@ -1,0 +1,301 @@
+[
+  {
+    "id": "avg-decimal-mean",
+    "category": "collection-builtins",
+    "source": "avg((1, 2))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1.5"
+      }
+    ],
+    "expectedRaw": "1.5",
+    "expectedEmittedCount": 1,
+    "explanation": "`avg` returns the decimal mean in the runtime; the Lean Int-core model truncates and is documented as a model limitation, not the runtime contract.",
+    "leanExclusionReason": "Decimal mean: the C# runtime performs Decimal128 division and returns `1.5`; the Lean Int core uses `Int.tdiv` and returns `1` (documented model limitation: the two-tier numeric bullet of dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md)."
+  },
+  {
+    "id": "decimal-fraction-arithmetic",
+    "category": "arithmetic",
+    "source": "0.5 + 0.5",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1.0"
+      }
+    ],
+    "expectedRaw": "1.0",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "0.1 + 0.2 == 0.3",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "2.50 * 4",
+        "expectedNeutral": "ok raw=10.00 n=1"
+      },
+      {
+        "source": "1.50",
+        "expectedNeutral": "ok raw=1.50 n=1"
+      }
+    ],
+    "explanation": "Numbers are IEEE 754 Decimal128, so decimal fractions are exact (`0.1 + 0.2 == 0.3` is `true`) and ordinary arithmetic exposes the Decimal128-selected result quantum without canonicalizing it: `0.5 + 0.5` displays `1.0`, not `1`. Quantum affects display, not structural numeric equality; formatting never re-rounds the computed value.",
+    "leanExclusionReason": "Fractional Decimal128 literals and values are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design rather than approximating them, so the program itself has no faithful Lean form."
+  },
+  {
+    "id": "division-decimal-quotient",
+    "category": "arithmetic",
+    "source": "1 / 3",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0.3333333333333333333333333333333333"
+      },
+      {
+        "maxDecimalPlaces": 2,
+        "text": "0.33"
+      },
+      {
+        "maxDecimalPlaces": 4,
+        "text": "0.3333"
+      }
+    ],
+    "expectedRaw": "0.3333333333333333333333333333333333",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "7 / 2",
+        "expectedNeutral": "ok raw=3.5 n=1"
+      }
+    ],
+    "explanation": "`/` returns the exact decimal quotient, correctly rounded to KatLang's 34 significant digits: `1 / 3` is `0.3333333333333333333333333333333333` and `7 / 2` is `3.5`. Use `div` for the truncated integer quotient.",
+    "notes": "The truncating spellings stay cross-engine: see the Lean-comparable `integer-division-truncates` case for `div`/`mod`.",
+    "leanExclusionReason": "Non-exact `/` quotients are correctly rounded 34-digit Decimal128 values; the Lean Int core truncates the quotient (`1 / 3 = 0` there) — the documented Int-core limitation in the lean/KatLang.lean numeric-model header, not the runtime contract."
+  },
+  {
+    "id": "nan-equality-vs-ordering",
+    "category": "arithmetic",
+    "source": "N = (-2) ^ 0.5\nN == (-3) ^ 0.5\nN < 1\nN <= 1\nN > 1\nN >= 1",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true\nfalse\nfalse\nfalse\nfalse"
+      }
+    ],
+    "expectedRaw": "S[true, false, false, false, false]",
+    "expectedEmittedCount": 5,
+    "probes": [
+      {
+        "source": "N = (-2) ^ 0.5\nN != (-3) ^ 0.5",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "N = (-2) ^ 0.5\ncontains((1, N), (-3) ^ 0.5)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "N = (-2) ^ 0.5\ndistinct((N, (-3) ^ 0.5))",
+        "expectedNeutral": "ok raw=L[NaN] n=1"
+      },
+      {
+        "source": "N = (-2) ^ 0.5\norder((1, N, -1))",
+        "expectedNeutral": "ok raw=L[NaN, -1, 1] n=1"
+      },
+      {
+        "source": "N = (-2) ^ 0.5\norderDesc((1, N, -1))",
+        "expectedNeutral": "ok raw=L[1, -1, NaN] n=1"
+      },
+      {
+        "source": "N = (-2) ^ 0.5\nmin((3, N, 1))",
+        "expectedNeutral": "ok raw=NaN n=1"
+      },
+      {
+        "source": "N = (-2) ^ 0.5\nif(N, 1, 2)",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "NaN splits by operation: structural `==`/`!=` (also `contains`/`distinct`) treat NaN as ONE value, so two independently computed NaN results compare equal; the ordering operators follow IEEE, so every `<`/`>`/`<=`/`>=` involving NaN is `false`; and `order`/`orderDesc` sort by the total order, where NaN comes before every other value ascending. `min`/`max` propagate NaN. Like every number, NaN is rejected in a Boolean predicate position.",
+    "notes": "`(-2) ^ 0.5` produces NaN through the operator surface alone (a fractional power of a negative base), keeping this case independent of the separately excluded Math-native surface. The equality, `contains`, and `distinct` rows deliberately compare SEPARATELY computed NaN values so each consumer reaches the structural atom rule instead of succeeding through the zero-arg property cache's reference identity.",
+    "leanExclusionReason": "NaN is a Decimal128 runtime value with no counterpart in the Lean Int numeric model; the equality-vs-ordering split (structural `==` treats NaN as one value, ordering comparisons follow IEEE and are false) is Decimal128-specific by construction."
+  },
+  {
+    "id": "overflow-produces-infinity",
+    "category": "arithmetic",
+    "source": "9e6144 * 10",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "Infinity"
+      }
+    ],
+    "expectedRaw": "Infinity",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "(0 - 9e6144) * 10",
+        "expectedNeutral": "ok raw=-Infinity n=1"
+      },
+      {
+        "source": "9e6144 * 10 - 9e6144 * 10",
+        "expectedNeutral": "ok raw=NaN n=1"
+      },
+      {
+        "source": "9e6144 * 10 > 9e6144",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "Arithmetic past Decimal128's finite range (about ±1e6145) produces `Infinity`/`-Infinity` instead of erroring or clamping to a finite boundary, and the infinities then behave by IEEE rules: `Infinity - Infinity` is `NaN`, and an infinity compares beyond every finite value.",
+    "leanExclusionReason": "Lean's unbounded Int has no finite range and no Infinity value (`9e6144 * 10` is an ordinary integer there); Decimal128 overflow producing a signed infinity is runtime-only range behavior."
+  },
+  {
+    "id": "negative-zero-display",
+    "category": "arithmetic",
+    "source": "-0",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "-0"
+      }
+    ],
+    "expectedRaw": "-0",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "-0 == 0",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "distinct((-0, 0))",
+        "expectedNeutral": "ok raw=L[-0] n=1"
+      },
+      {
+        "source": "1 / -0",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "`-0` (unary minus on zero — literals are unsigned) is an observable Decimal128 value: it displays with its sign while comparing structurally equal to `0`, and it remains a zero-valued divisor (`1 / -0` is the ordinary division-by-zero error, not `-Infinity`).",
+    "notes": "The canonical case keeps the representative signed-zero boundary: construction/display, structural equality (including the hashed `distinct` consumer), and the shared zero-divisor rule. Decimal128NumericsTests retains the denser relational, arithmetic-sign, and Boolean-predicate rejection matrix.",
+    "leanExclusionReason": "Decimal128 signed zero is outside the Lean Int numeric model: Int negation of zero is zero, so the Lean form of this program observes `0` where the runtime observes the sign-preserving `-0`."
+  },
+  {
+    "id": "pow-integer-exponent-inexact-accuracy",
+    "category": "arithmetic",
+    "source": "0.9999999 ^ 10000000",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0.3678794227774694966078669291031613"
+      }
+    ],
+    "expectedRaw": "0.3678794227774694966078669291031613",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Math.Pow(0.9999999, 10000000)",
+        "expectedNeutral": "ok raw=0.3678794227774694966078669291031613 n=1"
+      },
+      {
+        "source": "pow(0.9999999, 10000000)",
+        "expectedNeutral": "ok raw=0.3678794227774694966078669291031613 n=1"
+      },
+      {
+        "source": "5 ^ 49",
+        "expectedNeutral": "ok raw=17763568394002504646778106689453120 n=1"
+      },
+      {
+        "source": "1.1 ^ -34",
+        "expectedNeutral": "ok raw=0.03914251301220414284805399307112554 n=1"
+      }
+    ],
+    "explanation": "An integer power that does not fit 34 significant digits is the exact mathematical power rounded ONCE to the nearest Decimal128 (ties to even): `0.9999999 ^ 10000000` is correct in every digit, `5 ^ 49` resolves its exact midpoint to even, and a negative exponent rounds once at the reciprocal. `^`, `Math.Pow`, and `pow` share the implementation.",
+    "notes": "The dense accuracy matrix (independent 90/140-digit references, exact-midpoint and near-midpoint cases, the exactness boundary `2 ^ 112` / `2 ^ 113`, the certification loop) lives in Decimal128NumericsTests.",
+    "leanExclusionReason": "A fractional base and a 34-digit inexact power are outside the Lean Int numeric model: Lean's `intPow` is exact Int arithmetic, while the Decimal128 runtime rounds the exact mathematical power once to 34 significant digits."
+  },
+  {
+    "id": "pow-zero-base-negative-exponent",
+    "category": "arithmetic",
+    "source": "0 ^ -0.5",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "illegalInEval",
+    "probes": [
+      {
+        "source": "0 ^ -1",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "0 ^ -2.5",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "Math.Pow(0, -0.5)",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "pow(0, -2.5)",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "(-0) ^ -0.5",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "z = 1 - 1\nz ^ -0.5",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "0 ^ 0",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "0 ^ 1",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "0 ^ 0.5",
+        "expectedNeutral": "ok raw=0 n=1"
+      }
+    ],
+    "explanation": "Raising zero to ANY negative exponent is an evaluation error, whether or not the exponent is an integer: `0 ^ -1`, `0 ^ -0.5`, and `Math.Pow(0, -2.5)` all report `zero cannot be raised to a negative exponent` instead of producing `Infinity`. Zero and positive exponents are unchanged (`0 ^ 0` is `1`, `0 ^ 0.5` is `0`).",
+    "notes": "The rule is the power-side counterpart of the zero-divisor rule (`1 / 0` is an error, never `Infinity`): a negative power of zero is reciprocal-like, so integrality of the exponent is irrelevant. The integer instance has a Lean guard in `CoreTests/Numerics.lean` and a C#-only probe in `integer-division-truncates`; the denser boundary matrix (signed zero, -Infinity exponent, NaN exponent) lives in Decimal128NumericsTests.",
+    "leanExclusionReason": "A fractional exponent is outside the Lean Int numeric model. The rule itself — a zero base rejects EVERY negative exponent — is shared: Lean's `negativeIntPow` states it at its only reachable instance (integer exponents, Lean-guarded by `CoreTests/Numerics.lean`; the `integer-division-truncates` probe `0 ^ -1` runs only in C#), while the fractional side is Decimal128-only."
+  },
+  {
+    "id": "native-flat-callback-binding",
+    "category": "collection-builtins",
+    "source": "F(x) = [1, -2].map(abs)\nF(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2]"
+      }
+    ],
+    "expectedRaw": "L[1, 2]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "[1, -2].map(abs)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "[1, -2].map(Math.Abs)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "G(radians) = [0, 1].map(sin)\nG(0.5) == [sin(0), sin(1)]",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "abs(-2)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "F(x, y) = reduce([2, 3], pow, 1)\nF(100, 200)",
+        "expectedNeutral": "ok raw=9 n=1"
+      }
+    ],
+    "explanation": "A math function is an ordinary callable, so its lowercase alias, opened canonical name, and qualified `Math.X` spelling work directly as callbacks: the callback binds its own arguments and never captures same-named values from the surrounding algorithm — the ambient `x = 5` does not leak into `abs`. Direct calls such as `abs(-2)` are unchanged.",
+    "leanExclusionReason": "Math native bodies (Expr.NativeCall) are C#-only by design (Q-34, 2026-10-13), outside the current executable Lean model; the counted-first native-argument lookup matches the modeled Expr.Param dual-view order.",
+    "includeInGeneratorPrompt": true
+  }
+]

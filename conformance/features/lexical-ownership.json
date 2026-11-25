@@ -1,0 +1,634 @@
+[
+  {
+    "id": "callable-argument-parameter-shadowing",
+    "category": "access-boundaries",
+    "source": "A = q + 1\nAdd1(x) = x + 1\nF(x) = Add1(A)\n\nF(7)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "A = q + 1\nAdd1(x) = x + 1\nF(zz) = Add1(A)\nF(7)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = q + 1\nP(x, (a, b)) = x + a\nF(x) = P(A, (1, 2))\nF(7)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = q + 1\nC(x, *rest) = x + 1\nF(x) = C(A, 5)\nF(7)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = q + 1\nApply(x) = x(10)\nF(x) = Apply(A)\nF(7)",
+        "expectedNeutral": "ok raw=11 n=1"
+      },
+      {
+        "source": "Outer(v) = Inner\n  Inner = v + 1\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      }
+    ],
+    "explanation": "Passing a callable binds the receiving parameter on the callable channel, not the value channel, so reading that parameter as a value asks the callable for a zero-argument value — an arity error here, because `A` still needs its implicit `q`. The callee never sees the caller's own `x`: a parameter always means the argument bound at this call, whatever the surrounding algorithm happens to name its parameters. Call the parameter (`x(10)`) to use it, or pass a value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "value-argument-parameter-shadowing",
+    "category": "access-boundaries",
+    "source": "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(f) = f(2)\n    Inner(5)\n}\n\nApply(Inc)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "probes": [
+      {
+        "source": "Inner(f) = f(2)\nInner(5)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = {\n    Inner(f, (a, b)) = f(2)\n    Inner(5, (1, 2))\n}\nApply(Inc)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = {\n    Inner(f, *rest) = f(2)\n    Inner(5, 1)\n}\nApply(Inc)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = f(2)\n    [5].map(Inner)\n}\nApply(Inc)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = f(2)\n    repeat(Inner(5), 1)\n}\nApply(Inc)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = 2.f\n    Inner(5)\n}\nApply(Inc)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = {\n    Pass(g) = g(1)\n    Inner(f) = Pass(f)\n    Inner(5)\n}\nApply(Inc)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc(x) = x + 1\nOuter(f) = {\n    Inner(f) = f + 1\n    Inner(Inc)\n}\nOuter(5)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "`Inner`'s parameter `f` is bound to the value `5` at this call, and a value cannot be called. The callable `Inc` that the surrounding `Apply` received under the same name is never consulted: a parameter owns its name on every channel, so the program fails exactly like the standalone `Inner(5)` instead of silently computing `Inc(2)`."
+  },
+  {
+    "id": "value-parameter-shadowing-through-nested-scope",
+    "category": "access-boundaries",
+    "source": "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(f) = {\n        Local(y) = f(y)\n        Local(2)\n    }\n    Inner(5)\n}\n\nApply(Inc)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = {\n        Local = f(2)\n        Local\n    }\n    Inner(5)\n}\nApply(Inc)",
+        "expectedNeutral": "err notAnAlgorithm"
+      }
+    ],
+    "explanation": "Shadowing is lexical and survives nested scopes: `Local` is called inside `Inner`, whose parameter `f` is the value `5`, so `f(y)` is not a call of a callable. `Local`'s own call binds only `y` and cannot bring back the `Inc` that `Apply` holds under the name `f`."
+  },
+  {
+    "id": "value-binder-parameter-shadowing",
+    "category": "conditionals",
+    "source": "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(0) = 0\n    Inner(f) = f(2)\n    Inner(5)\n}\n\nApply(Inc)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "explanation": "A clause-family binder is bound to the matched argument value, so `f` is `5` inside the selected branch and `f(2)` is not a call of a callable. The binder owns its name exactly like an explicit parameter: the `Inc` that `Apply` received under the same name is not visible in the branch."
+  },
+  {
+    "id": "ancestor-callable-visible-without-same-named-parameter",
+    "category": "access-boundaries",
+    "source": "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(x) = f(x)\n    Inner(5)\n}\n\nApply(Inc)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Outer(v) = Inner\n  Inner = v + 1\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(f) = {\n    Inner(x) = f(x)\n    [5].map(Inner)\n}\nApply(Inc)",
+        "expectedNeutral": "ok raw=L[6] n=1"
+      }
+    ],
+    "explanation": "Shadowing removes only the names the callee itself binds. `Inner` declares `x`, not `f`, so `f` still resolves outward to the callable `Apply` received, and `Inner(5)` computes `Inc(5)`."
+  },
+  {
+    "id": "ownership-same-owner-nested-reference-rejected",
+    "category": "name-resolution",
+    "source": "Outer(v) = {\n    v = 5\n    Inner = v + 1\n    Inner\n}\nOuter(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "ParameterPropertyCollision",
+    "explanation": "SYN-03 C1: the same-owner collision is a declaration error even when v is referenced only inside Inner."
+  },
+  {
+    "id": "ownership-same-owner-later-property-rejected",
+    "category": "name-resolution",
+    "source": "Outer(v) = {\n    Inner = v + 1\n    v = 5\n    Inner\n}\nOuter(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "ParameterPropertyCollision",
+    "explanation": "Writing the conflicting property after the nested reference does not change declaration validity."
+  },
+  {
+    "id": "ownership-branch-binder-property-collision",
+    "category": "name-resolution",
+    "source": "F(0) = 0\nF(v) = {\n    v = 5\n    Inner = v + 1\n    Inner\n}\nF(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "ParameterPropertyCollision",
+    "explanation": "A branch body owns its pattern binders, so a property that body declares cannot have the same name as a binder."
+  },
+  {
+    "id": "ownership-lifted-parameter-property-collision",
+    "category": "name-resolution",
+    "source": "Need(v) = v\nOuter = { v = 5\nInner = v\nNeed + Inner }\nOuter(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "ParameterPropertyCollision",
+    "explanation": "A property is never forwarded as a parameter, so Need's v is not supplied by Outer's property v: Outer receives a forwarded parameter v, and that parameter conflicts with the same-named property, so the front end rejects the declaration even though v was not in Outer's initially inferred signature."
+  },
+  {
+    "id": "forwarded-parameter-leaves-an-opened-reference",
+    "category": "name-resolution",
+    "source": "Lib = { public v = 99 }\nOuter = {\n    Inner = { open Lib\n        v\n    }\n    Need = v\n    Inner + Need\n}\nOuter(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "106"
+      }
+    ],
+    "expectedRaw": "106",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "v = x + 99\nOuter = { Inner = v\nNeed(v) = v\nInner + Need }\nOuter(2, 7)",
+        "expectedNeutral": "ok raw=108 n=1"
+      },
+      {
+        "source": "v = 99\nNeed(v) = v\nOuter = { Inner = v\n  Inner + Need }\nOuter(7)",
+        "expectedNeutral": "ok raw=106 n=1"
+      },
+      {
+        "source": "Lib = { public v = 99 }\nNeed(v) = v\nOuter = {\n    open Lib\n    v + Need\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=106 n=1"
+      }
+    ],
+    "explanation": "Automatic parameter forwarding must not change what an existing name refers to. Need requires v, and no parameter binding named v is available in Outer, so Outer receives a new forwarded parameter v for Need (7). The v written inside Inner was resolved to the opened Lib.v (99) before forwarding, and a forwarded parameter is never what a written name denotes, so it stays 99: 99 + 7. (Before the Q-04 decision the forwarded parameter captured every same-named reference in Outer, and both terms read 7.)"
+  },
+  {
+    "id": "forwarded-parameter-names-nothing-in-a-closed-body",
+    "category": "name-resolution",
+    "source": "Need(v) = v\nOuter = { F(0) = 0\nF(n) = v\nF(1) + Need }\nOuter(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UndeclaredIdentifier",
+    "explanation": "A forwarded parameter exists only for the callee that needed it: Outer receives v for Need, but the v written in the closed branch body is resolved by name resolution alone, which finds nothing, so it stays undeclared. (Before the Q-04 decision the forwarded parameter gave it a meaning after the fact.)"
+  },
+  {
+    "id": "forwarding-reuses-a-captured-ancestor-parameter",
+    "category": "name-resolution",
+    "source": "A = y + 1\nF(y) = {\n    G = y * 1000 + A\n    H(y) = G\n    H(100)\n}\nF(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3004"
+      }
+    ],
+    "expectedRaw": "3004",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F(y) = {\n    G = y * 1000 + (y + 1)\n    H(y) = G\n    H(100)\n}\nF(3)",
+        "expectedNeutral": "ok raw=3004 n=1"
+      },
+      {
+        "source": "Area = width * height\nReport(width, height) = {\n    Doubled = Area * 2\n    if(width > 1, Doubled, 0)\n}\nReport(3, 4)",
+        "expectedNeutral": "ok raw=24 n=1"
+      },
+      {
+        "source": "A = n * 10\nF(0) = 0\nF(n) = {\n    G = n * 100 + A\n    H(n) = G\n    H(9)\n}\nF(2)",
+        "expectedNeutral": "ok raw=220 n=1"
+      },
+      {
+        "source": "A = y + 1\nG = {\n  F(x) = A + 0\n  F(1) + y\n}\nG(10)",
+        "expectedNeutral": "ok raw=21 n=1"
+      },
+      {
+        "source": "A = y + 1\nG = {\n  F(x) = A\n  F(1) + y\n}\nG(10)",
+        "expectedNeutral": "ok raw=21 n=1"
+      },
+      {
+        "source": "A = y + 1\nOuter(y) = {\n    Inner(y) = A * 2\n    Inner(10) + y\n}\nOuter(3)",
+        "expectedNeutral": "ok raw=25 n=1"
+      },
+      {
+        "source": "A = y + 1\nF = {\n    G = A * 2\n    G\n}\nF(5)",
+        "expectedNeutral": "ok raw=12 n=1"
+      }
+    ],
+    "explanation": "Automatic parameter forwarding must not change what an existing name refers to. G uses A, which needs y, and the y written in G already denotes F's parameter, so forwarding hands A that same binding: G takes no parameter of its own, and G is 3 * 1000 + (3 + 1) whoever reads it — H(100) included, since H's own y is unrelated. Forwarding reuses parameter bindings only (the body's own, or an enclosing owner's parameter or clause binder) and adds a new parameter only when none exists. (Before the Q-04 decision G received its own y, the written y followed it, and the program gave 100101.)",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "forwarding-never-supplies-a-property-an-open-or-a-builtin",
+    "category": "name-resolution",
+    "source": "v = 99\nNeed(v) = v\nOuter = Need + 1\nOuter(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Clamp(x, min, max) = if(x < min, min, if(x > max, max, x))\nSafe = Clamp + 0\nSafe(15, 0, 10)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "NeedMin(min) = min + 1\nSafe = NeedMin + min((3, 4))\nSafe(10)",
+        "expectedNeutral": "ok raw=14 n=1"
+      },
+      {
+        "source": "Lib = { public v = 99 }\nNeed(v) = v\nOuter = {\n    open Lib\n    Need + 1\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      }
+    ],
+    "explanation": "Automatic forwarding reuses parameter bindings only; properties, opened names and builtins are not forwarded as parameters. The root property v = 99 does not satisfy Need's parameter v, so Outer still receives its own forwarded parameter v, and Outer(7) is Need(7) + 1. An unrelated property elsewhere can therefore never turn a parameterized formula into a zero-parameter one."
+  },
+  {
+    "id": "forwarding-reused-binding-kind-preserves-values",
+    "category": "name-resolution",
+    "source": "Target(tag, *items) = items\nCollected(tag, *items) = {\n    G(q) = [Target][0]\n    G(99)\n}\nFixed(tag, items) = {\n    G(q) = [Target][0]\n    G(99)\n}\nHead(x, *rest) = x + rest.count\nPartial(x) = {\n    H = [Head][0]\n    [H, H(10, 20)]\n}\n[Collected(0, (1, 2), [3], ()), Fixed(0, [(1, 2), [3], ()]), Partial(4)]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[[(1, 2), [3], ()], [[(1, 2), [3], ()]], [4, 6]]"
+      }
+    ],
+    "expectedRaw": "L[L[S[1, 2], L[3], S[]], L[L[S[1, 2], L[3], S[]]], L[4, 6]]",
+    "expectedEmittedCount": 1,
+    "explanation": "Automatic parameter forwarding in a formula reuses the enclosing binding's kind. Both closed G(q) formulas reuse tag and items without gaining parameters: a collecting items is re-spread into Target's collector, preserving every structured item, while a fixed items supplies one whole list. Partial reuses x and forwards only rest into H, so H accepts zero arguments: its bare reference reads the empty-rest value under the existing Q-03 rule, while H(10, 20) explicitly supplies two items. (A lone row `G(q) = Target` forwards by name the same way — it reuses tag and items and never renames q — while a bare `H = Head` is a callable alias of Head, its callable — FWD-02.)"
+  },
+  {
+    "id": "ownership-captured-parameter-beats-outer-property",
+    "category": "name-resolution",
+    "source": "v = 99\nOuter(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Outer(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(v) = v + 1\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(v) = {\n    Inner = v + 1\n    Inner + v\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=15 n=1"
+      },
+      {
+        "source": "Wrapper = {\n    v = 99\n    Outer(v) = {\n        Inner = v + 1\n        Inner\n    }\n    Outer(7)\n}\nWrapper",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "Outer(v) = {\n    Inner = v + 1\n    Inner\n}\nv = 99\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(v) = {\n    Mid = {\n        Inner = v + 1\n        Inner\n    }\n    Mid\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "v = 99\nF(0) = 0\nF(v) = {\n    Inner = v + 1\n    Inner\n}\nF(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "v = 99\nOuter((v, w)) = {\n    Inner = v + 1\n    Inner\n}\nOuter((7, 1))",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(*v) = {\n    Inner = v.count\n    Inner\n}\nOuter(7, 8)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(v) = {\n    Inner = v(1)\n    Inner\n}\nOuter({a + 1})",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "v = 99\nAdd1(n) = n + 1\nOuter(v) = {\n    Inner = v.Add1\n    Inner\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(v) = {\n    Add(n) = n + v\n    [1, 2].map(Add)\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=L[8, 9] n=1"
+      },
+      {
+        "source": "v = 99\nOuter(v) = {\n    Step(s) = s + v\n    repeat(Step(0), 2)\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=14 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(v) = {\n    S = {x + v}\n    S(0).repeat(2)\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=14 n=1"
+      },
+      {
+        "source": "Outer(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)\nInner(7)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "Outer(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter.Inner",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(v) = Inner\n  Inner = v + 1\nOuter(7)\nInner(7)",
+        "expectedNeutral": "ok raw=S[8, 8] n=2"
+      }
+    ],
+    "explanation": "Name resolution searches outward by owning scope. `Inner` is nested inside `Outer`, which binds the parameter `v`, so the walk stops there; the root property `v = 99` belongs to a farther owner and is never reached. A parameter therefore means the same thing written directly in its algorithm's body and written inside a body nested in it.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "ownership-same-owner-parameter-beats-property",
+    "category": "name-resolution",
+    "source": "Outer(v) = {\n    v = 5\n    Inner = v + 1\n    Inner + v\n}\nOuter(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "ParameterPropertyCollision",
+    "explanation": "A property cannot share a name with a completed parameter of the same or an enclosing owner. This is a declaration error before evaluation, regardless of whether the name is referenced directly, from a nested body, or not at all. Rename one declaration."
+  },
+  {
+    "id": "ownership-nearer-property-beats-outer-parameter",
+    "category": "name-resolution",
+    "source": "v = 99\nOuter(v) = {\n    Mid = {\n        v = 5\n        Inner = v + 1\n        Inner\n    }\n    Mid\n}\nOuter(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "ParameterPropertyCollision",
+    "probes": [
+      {
+        "source": "v = 99\nOuter(v) = {\n    Mid = {\n        Inner = v + 1\n        Inner\n    }\n    Mid\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(q) = {\n    Mid = {\n        v = 5\n        v + 1\n    }\n    Mid\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(q) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=100 n=1"
+      }
+    ],
+    "explanation": "Mid's property v conflicts with the completed parameter v of enclosing Outer. A nested algorithm does not make this declaration legal; rename the property or parameter. Editor recovery retains the nearer property's identity, but source evaluation is blocked."
+  },
+  {
+    "id": "ownership-nearest-enclosing-parameter-wins",
+    "category": "name-resolution",
+    "source": "v = 99\nOuter(v) = {\n    Mid(v) = {\n        Inner = v + 1\n        Inner\n    }\n    Mid(7)\n}\nOuter(20)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Outer(v) = {\n    Mid(v) = {\n        Inner = v + 1\n        Inner\n    }\n    Mid(7)\n}\nOuter(20)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "v = 99\nOuter(v) = {\n    Mid(w) = {\n        Inner = v + 1\n        Inner\n    }\n    Mid(7)\n}\nOuter(20)",
+        "expectedNeutral": "ok raw=21 n=1"
+      }
+    ],
+    "explanation": "With several enclosing parameters of one name the nearest wins, because the outward walk reaches it first: `Mid`'s `v` is `7`, so `Inner` is `8` — never `Outer`'s `20` and never the root's `99`."
+  },
+  {
+    "id": "ownership-parameter-beats-prelude-alias",
+    "category": "name-resolution",
+    "source": "Outer(pi) = {\n    Inner = pi + 1\n    Inner\n}\nOuter(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Outer(count) = {\n    Inner = count + 1\n    Inner\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "Outer(q) = {\n    Inner = count([1, 2, 3])\n    Inner\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "The prelude is simply the outermost owner, so any parameter is nearer than a builtin or a `Math` alias of the same name — from a nested body exactly as from the algorithm's own body."
+  },
+  {
+    "id": "ownership-parameter-beats-opened-name",
+    "category": "name-resolution",
+    "source": "Lib = {\n    public v = 99\n}\nOuter(v) = {\n    open Lib\n    Inner = v + 1\n    Inner\n}\nOuter(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Lib = {\n    public v = 99\n}\nOuter(v) = {\n    open Lib\n    v + 1\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "Lib = {\n    public v = 99\n}\nOuter(q) = {\n    open Lib\n    Inner = v + 1\n    Inner\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=100 n=1"
+      },
+      {
+        "source": "Lib = {\n    public v = 99\n}\nOuter = {\n    v = 5\n    Inner = {\n        open Lib\n        v + 1\n    }\n    Inner\n}\nOuter",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "`open` is consulted only after the whole owner walk, so an owned parameter beats an opened name exactly as an owned property does — and the nested reference agrees with the one written directly in `Outer`'s body."
+  },
+  {
+    "id": "ownership-open-target-parameter-rejected",
+    "category": "name-resolution",
+    "source": "Lib = {\n    public X = 7\n}\nOther = {\n    public X = 8\n}\nF(Lib) = {\n    open Lib\n    X, Lib.X\n}\nF(Other)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OpenTargetIsParameter",
+    "expectedParseDiagnosticFragment": "Cannot open 'Lib': 'Lib' refers to a parameter",
+    "probes": [
+      {
+        "source": "Other = {\n    public X = 8\n}\nF(Lib) = Lib.X\nF(Other)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "Lib = {\n    public X = 7\n}\nF = {\n    open Lib\n    X\n}\nF",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Root = {\n    public Sub = {\n        public X = 7\n    }\n}\nF = {\n    open Root.Sub\n    X\n}\nF",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Lib = {\n    public v = 99\n}\nOuter(v) = {\n    open Lib\n    v + 1\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "Q.X\nM = {\n    open Q\n    Q = {\n        public Z = 1\n    }\n    Z\n}\nM",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      }
+    ],
+    "explanation": "`open` is static, and lexical ownership still applies to its target name. Inside `F` the nearest binding of `Lib` is the parameter `Lib`, so the parameter owns the name; a parameter cannot be opened, and KatLang reports that instead of looking farther outward for the root property `Lib`. Adding or removing that farther declaration changes nothing — `Lib.X` in the same body reads the parameter, and so does `open Lib`."
+  },
+  {
+    "id": "ownership-open-target-parameter-without-farther-declaration",
+    "category": "name-resolution",
+    "source": "Other = {\n    public X = 8\n}\nF(Lib) = {\n    open Lib\n    X\n}\nF(Other)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OpenTargetIsParameter",
+    "explanation": "The same rejection without any farther `Lib`: the verdict depends only on the nearest binding of the target name, never on whether a farther declaration of that name exists."
+  },
+  {
+    "id": "ownership-open-qualified-target-parameter-rejected",
+    "category": "name-resolution",
+    "source": "Root = {\n    public Sub = {\n        public X = 7\n    }\n}\nF(Root) = {\n    open Root.Sub\n    X\n}\nF(Root)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OpenTargetIsParameter",
+    "expectedParseDiagnosticFragment": "Cannot open 'Root.Sub': its first name 'Root' refers to a parameter",
+    "explanation": "A qualified target is decided at its first name: `Root` is owned by the parameter, so `open Root.Sub` is rejected there and is never resolved through the farther root declaration `Root`."
+  },
+  {
+    "id": "ownership-open-target-enclosing-parameter-rejected",
+    "category": "name-resolution",
+    "source": "Lib = {\n    public X = 7\n}\nOuter(Lib) = {\n    Inner = {\n        open Lib\n        X\n    }\n    Inner\n}\nOuter(3)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OpenTargetIsParameter",
+    "explanation": "Ownership is inherited by nested bodies: `Inner`'s `open Lib` names the parameter `Lib` of the enclosing `Outer`, exactly as a reference to `Lib` written in `Inner` would, so it is rejected the same way."
+  },
+  {
+    "id": "ownership-open-target-branch-binder-rejected",
+    "category": "name-resolution",
+    "source": "Lib = {\n    public X = 7\n}\nF(0) = 0\nF(Lib) = {\n    open Lib\n    X\n}\nF(Lib)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OpenTargetIsParameter",
+    "explanation": "A clause binder is a parameter of its branch body: in the second clause the nearest binding of `Lib` is the binder, so `open Lib` names a parameter and is rejected, whatever the root `Lib` declares."
+  },
+  {
+    "id": "ownership-open-target-collecting-parameter-rejected",
+    "category": "name-resolution",
+    "source": "Lib = {\n    public X = 7\n}\nF(*Lib) = {\n    open Lib\n    X\n}\nF(Lib)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OpenTargetIsParameter",
+    "explanation": "A collecting parameter owns its name like any other: `open Lib` inside `F(*Lib)` names the collected parameter, not the root `Lib`."
+  },
+  {
+    "id": "ownership-open-target-grouped-binder-rejected",
+    "category": "name-resolution",
+    "source": "Lib = {\n    public X = 7\n}\nF((Lib, y)) = {\n    open Lib\n    X + y\n}\nF((Lib, 1))",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OpenTargetIsParameter",
+    "explanation": "A name bound inside a grouped parameter pattern is a parameter of the body too, so `open Lib` names that binder and is rejected."
+  },
+  {
+    "id": "ownership-open-target-captured-branch-binder-rejected",
+    "category": "name-resolution",
+    "source": "Lib = {\n    public X = 7\n}\nF(0) = 0\nF(Lib) = {\n    Inner = {\n        open Lib\n        X\n    }\n    Inner\n}\nF(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OpenTargetIsParameter",
+    "explanation": "A body nested in a clause body inherits the binder's ownership: `Inner`'s `open Lib` names the binder `Lib` of the enclosing clause, exactly as a reference to `Lib` written in `Inner` would."
+  },
+  {
+    "id": "ownership-open-target-inferred-parameter-rejected",
+    "category": "name-resolution",
+    "source": "Other = {\n    public X = 8\n}\nF = {\n    open Lib\n    Lib.X\n}\nF(Other)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "OpenTargetIsParameter",
+    "explanation": "With no visible `Lib`, the formula `F` infers the parameter `Lib` from the receiver `Lib.X`, and the inferred parameter owns the open target `Lib` exactly as a written one does."
+  },
+  {
+    "id": "native-argument-value-demand",
+    "category": "errors",
+    "source": "Z = 1 / 0\n\nMath.Abs(Z)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "probes": [
+      {
+        "source": "C(0) = 1\nC(n) = 2\nF(g) = Math.Abs(g)\nF(C)",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "F(g) = Math.Abs(g)\nF(count)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "C(0) = 1\nC(n) = 2\nMath.Abs(C)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "Math.Abs(count)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "A = q + 1\nF(q) = Math.Abs(A)\nF(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "A = q + 1\nF = (Math.Abs)(A)\nF(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "F = (Math.Abs)(A)\nA = B + 1\nB = q\nF(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "F(x) = Math.Abs(x)\nF(0 - 9)",
+        "expectedNeutral": "ok raw=9 n=1"
+      }
+    ],
+    "explanation": "A math function needs a VALUE, so its argument is read exactly like any other parameter: the value bound at this call, and otherwise whatever the bound callable yields with no arguments — here `Z`'s own division by zero. The failure is always about the argument, never about the math function's declared parameter name (`x`, `value`, `digits`, ...), which the program never binds.",
+    "leanExclusionReason": "Math native bodies (Expr.NativeCall) are C#-only by design (Q-34, 2026-10-13), outside the current executable Lean model; the wrapper's declared-argument read is the modeled Expr.Param value read applied to a native body Lean does not represent."
+  },
+  {
+    "id": "closed-list-strict-value-forwarding",
+    "category": "errors",
+    "source": "A = q + 1\nF(x) = Math.Abs(A)\n\nF(7)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "A = q + 1\nF(q) = Math.Abs(A)\nF(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "A = q + 1\nF = Math.Abs(A)\nF(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "A = q + 1\nApply(f) = f(10)\nF(x) = Apply(A)\nF(7)",
+        "expectedNeutral": "ok raw=11 n=1"
+      },
+      {
+        "source": "F(x) = [0 - 1, 0 - 2].map(abs).sum\nF(9)",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "An explicit parameter list is closed. `F(x)` gains no implicit `q`, but referencing the resolved callable `A` is legal. When `Math.Abs` actually demands its value, the ordinary zero-argument call to `A(q)` rejects with arity mismatch. An unused argument or unselected branch does not demand it. Declaring `q`, calling `A` explicitly, or leaving the list open enables forwarding. Undeclared names remain static errors.",
+    "leanExclusionReason": "Math.Abs executes a C#-only native body by design (Q-34, 2026-10-13); the shared pure-core demand counterpart remains need-closed-core-demand-is-runtime.",
+    "includeInGeneratorPrompt": true
+  }
+]

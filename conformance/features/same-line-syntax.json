@@ -1,0 +1,67 @@
+[
+  {
+    "id": "not-cannot-be-a-tighter-operand",
+    "category": "parser-layout",
+    "source": "2 ^ not false",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnexpectedToken",
+    "expectedParseDiagnosticFragment": "Unexpected 'not'",
+    "explanation": "`not` binds below the comparisons (comparisons > not > and > xor > or), so it can begin only a whole expression or an operand of `and`, `xor`, or `or`. Where a comparison, arithmetic, power, or prefix-minus operand is required — `2 ^ not x`, `1 + not x`, `a == not b`, `-not x` — the parser reports the `not` and asks for parentheses: `2 ^ (not x)`, `a == (not b)`.",
+    "notes": "Source-level precedence diagnostic (see not-binds-below-comparisons); no elaborated Lean program exists. Recovery parses the negation as if parenthesized, so later diagnostics see the tree of `2 ^ (not false)`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "same-line-slots-need-comma",
+    "category": "parser-layout",
+    "source": "1 2 3",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnseparatedSameLineItem",
+    "expectedParseDiagnosticFragment": "Unexpected item after a closed expression on the same line",
+    "explanation": "Whitespace never separates slots: two slots on one physical line need an explicit comma (`1, 2, 3`), while a newline separates rows where the context permits (`1` newline `2` newline `3`). `1 2 3` reports the separator diagnostic once per missing comma, at the second item.",
+    "notes": "SYN-07A retired the implicit same-line comma (`adjacency-is-comma` used to pin `1 2 3` as `1, 2, 3`). Source-level separator diagnostic; the recovered AST is that of `1, 2, 3`, but no elaborated Lean program exists for a rejected parse.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "same-line-call-arguments-need-comma",
+    "category": "parser-layout",
+    "source": "F(a, b) = a + b\nF(1 2)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnseparatedSameLineItem",
+    "expectedParseDiagnosticFragment": "Unexpected item after a closed expression on the same line",
+    "explanation": "Argument slots are separated by commas: `F(1, 2)` is the two-argument call, `F(1 2)` is rejected at `2`, and `F(1 -2)` is one argument (the subtraction `1 - 2`) because a same-line operator continues the expression before any slot boundary is considered.",
+    "notes": "Source-level SYN-07A separator diagnostic; no elaborated Lean program exists. Recovery keeps the two argument slots, so later diagnostics see the call `F(1, 2)`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "same-line-declaration-begins-a-line",
+    "category": "parser-layout",
+    "source": "x = 3 y = 4\nx + y",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnseparatedSameLineItem",
+    "expectedParseDiagnosticFragment": "Unexpected item after a closed expression on the same line",
+    "explanation": "A declaration begins a physical line (or is the first item directly after `{`). `x = 3 y = 4` is rejected at `y`; write the two definitions on separate lines. The same rule rejects `1 P = 3` and the one-line block `{ d = 2 n * d }`, so a missing line break can never silently move a declaration or an expression into the preceding definition's body.",
+    "notes": "Source-level SYN-07A declaration-row diagnostic; no elaborated Lean program exists. Recovery keeps `y = 4` a declaration (never swallowed into x's body), so `x + y` still resolves both names.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "same-line-slot-before-spread-needs-comma",
+    "category": "parser-layout",
+    "source": "A = (1, 2)\nB = (3, 4)\nA B*, 997",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnseparatedSameLineItem",
+    "expectedParseDiagnosticFragment": "Unexpected item after a closed expression on the same line",
+    "explanation": "A slot before a spread needs the comma like every other same-line slot: `A, B*` supplies `A` and then B's items, while `A B*` is rejected at `B`. The comma after a spread is required for a second reason as well (`B* C` is the multiplication `B * C`).",
+    "notes": "Source-level SYN-07A separator diagnostic; no elaborated Lean program exists. SYN-07B star classification is unchanged: `B*` is still the spread marker, only the missing comma before it is rejected."
+  },
+  {
+    "id": "same-line-parameter-patterns-need-comma",
+    "category": "parser-layout",
+    "source": "F(a b) = a + b\nF(1, 2)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnseparatedSameLineItem",
+    "expectedParseDiagnosticFragment": "Unexpected item after a parameter pattern on the same line",
+    "explanation": "Parameter lists are comma-separated like every other same-line list: `F(a, b) = a + b` declares two parameters, while `F(a b) = a + b` is rejected once, at `b`, with the pattern-list report (inside a parameter list the comma is the only repair). The same rule covers literal, nested, and collecting patterns: `F(1 2) = 3`, `F((a b)) = a`, and `F(a, *b c) = a` are each rejected at their unseparated item.",
+    "notes": "Source-level SYN-07A separator diagnostic for parameter-pattern lists (clause heads and nested sequence-value patterns); no elaborated Lean program exists. Recovery keeps `b` a parameter of F — the head recovers as `F(a, b)` — so `a + b` stays F's body and nothing leaks into the root as output rows or implicit parameters.",
+    "includeInGeneratorPrompt": true
+  }
+]

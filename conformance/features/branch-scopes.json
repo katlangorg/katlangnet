@@ -1,0 +1,229 @@
+[
+  {
+    "id": "clause-family-nested-in-branch-body-binds-its-own-binders",
+    "category": "conditionals",
+    "source": "n = 99\nF(0) = {\n  G(0) = 'zero'\n  G(n) = n\n  G(5)\n}\nF(k) = k\n\nF(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "n = 99\nK = {\n  G(0) = 'zero'\n  G(n) = n\n  G(5)\n}\nK",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "n = 99\nG(0) = 'zero'\nG(n) = n\nG(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      }
+    ],
+    "explanation": "A clause family declared inside a conditional branch body is elaborated exactly like one declared in a brace block or at the root: `G(n) = n` binds its own pattern binder `n`, so `G(5)` is 5. The outer sibling `n = 99` is never consulted — a branch body is a scope-owning body under the same rules as every other body, not a weaker one.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "conditional-branch-pattern-is-a-closed-input-specification",
+    "category": "conditionals",
+    "source": "A = x + 1\nF(0) = A + 0\nF(n) = n\n\nF(0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "A = n + 1\nF(0) = 0\nF(n) = A + 0\nF(4)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "A = x + 1\nF(k) = A + 0\nF(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = n + 1\nF(0) = 0\nF(n) = A\nF(4)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "A = k + 1\nF(k) = A\nF(0)",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "A conditional branch pattern is a closed input specification, like a written explicit parameter list: the branch body's only inputs are its pattern binders, and the front end never invents a body parameter to feed a referenced callable. In a formula `F(0) = A + 0` therefore keeps `A` as a bare reference whose zero-argument value demand fails with the ordinary arity error, exactly as `F(k) = A + 0` does — never with an `Unknown name` for a parameter nothing binds. A body that is ONLY the callee is bare forwarding (FWD-02): it reuses a binder of the branch's own pattern by name (`F(n) = A` with `A = n + 1` is `F(n) = A(n)`), and a pattern that binds no such name — `F(0) = A` with `A = x + 1` — is rejected at the front end instead of renaming anything."
+  },
+  {
+    "id": "expression-position-block-closed-list-is-diagnosed",
+    "category": "errors",
+    "source": "{\n  F(x) = y\n  F(1)\n}",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UndeclaredIdentifier",
+    "expectedParseDiagnosticFragment": "Identifier 'y' is used in an explicitly parameterized algorithm",
+    "probes": [
+      {
+        "source": "{\n  F(x) = x\n  F(1)\n}",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "Brace blocks work in any expression position and are scope-owning bodies under the same rules as the root, so a closed explicit parameter list inside an output-position block reports its undeclared identifier at the front end exactly as the same declaration would at the root — it does not fall through to a runtime `Unknown name`."
+  },
+  {
+    "id": "conditional-branch-inline-open-exposes-members-to-the-branch",
+    "category": "conditionals",
+    "source": "F(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(n) = n\n\nF(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Helpers = {\n  public Helper = 5\n}\nF(0) = {\n  open Helpers\n  Helper\n}\nF(n) = n\nF(0)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "F(0) = {\n  open {\n    public Helper(x) = x\n  }\n  Helper(5)\n}\nF(n) = n\nF(0)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "F(0) = 0\nF(n) = {\n  open {\n    public Helper(x) = x\n  }\n  Helper(n)\n}\nF(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "F(0) = 0\nF(n) = {\n  open {\n    public Helper = n\n  }\n  Helper(n + 1)\n}\nF(5)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "F(0) = 0\nF(n) = {\n  open {\n    public Helper = n\n  }\n  Helper\n}\nF(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Helpers = {\n  public Helper = n\n}\nF(0) = 0\nF(n) = {\n  open Helpers\n  Helper\n}\nF(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Outer = {\n  F(0) = {\n    open { public Helper = 5 }\n    1\n  }\n  F(n) = n\n  F(0), Helper\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=S[1, 7] n=1"
+      },
+      {
+        "source": "Outer = {\n  F(0) = {\n    open { public Helper = 5 }\n    Helper\n  }\n  F(n) = n\n  F(0), Helper\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=S[7, 7] n=1"
+      },
+      {
+        "source": "Outer = {\n  Helper = 9\n  F(0) = {\n    open { public Helper = 5 }\n    Helper\n  }\n  F(n) = n\n  F(0)\n}\nOuter",
+        "expectedNeutral": "ok raw=9 n=1"
+      }
+    ],
+    "explanation": "An `open` target is a provider for the body that opens it, not a definition of that body. An inline block opened by a conditional branch therefore exposes its self-contained public members to that branch exactly as an equivalent named open of an outer library would — `Helper` is 5 inside `F(0)` — while the block lives only for that branch: sibling branches, the enclosing algorithm, and callers never see `Helper`. Properties DECLARED in the branch stay branch-local as before, and the branch pattern stays closed — a binder reaches an opened helper as an explicit argument, never as a captured name inside the block.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "conditional-branch-inline-open-does-not-leak-to-sibling-branches",
+    "category": "errors",
+    "source": "F(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(1) = Helper\nF(n) = n\n\nF(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UndeclaredIdentifier",
+    "expectedParseDiagnosticFragment": "Identifier 'Helper' is used in conditional branch 'F'",
+    "probes": [
+      {
+        "source": "F(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(1) = {\n  Helper = 6\n  Helper\n}\nF(n) = n\nF(1)",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "Exposure through an inline open ends at the branch that wrote it: `F(1)` resolves through its own lookup chain, which never contains the first branch's open list, so its `Helper` is an undeclared identifier under the closed branch-pattern rule — the same diagnostic any other unbound name in a branch body receives."
+  },
+  {
+    "id": "conditional-branch-inline-open-does-not-shadow-an-enclosing-open-in-sibling-branches",
+    "category": "conditionals",
+    "source": "open Lib\nLib = {\n  public Helper = 7\n}\nF(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(1) = Helper\nF(n) = n\n\nF(0), F(1), F(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7\n2"
+      }
+    ],
+    "expectedRaw": "S[5, 7, 2]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "open Lib\nLib = {\n  public Helper = 7\n}\nF(1) = Helper\nF(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(n) = n\n\nF(0), F(1), F(2)",
+        "expectedNeutral": "ok raw=S[5, 7, 2] n=3"
+      },
+      {
+        "source": "open Lib\nLib = {\n  public Y = 9\n}\nF(0) = {\n  open L\n  L = {\n    public H = 1\n  }\n  Y\n}\n\nF(0)",
+        "expectedNeutral": "ok raw=9 n=1"
+      }
+    ],
+    "explanation": "An open written in one clause provides its names to that branch body and its nested scopes only. The sibling branch `F(1) = Helper` never sees branch 0's inline open, so its `Helper` is the one the enclosing `open Lib` provides — in whatever order the clauses are written.",
+    "notes": "Constitution PV-24 (September 2026): Lean's `Algorithm.elaborateClauseGroup` copied branch 0's opens onto the family, whose scope is the parent level of every selected branch, so through that helper this program gave `5, 5, 2` (and `5, 7, 2` with the clauses swapped), and the branch-local `open L` failed. C# builds the family with no opens, and Lean now does too; this case's program is derived from the C# elaboration and evaluated by Lean, and `CoreTests/Conditionals.lean` pins the helper on the same programs."
+  },
+  {
+    "id": "conditional-branch-local-library-is-openable-within-the-branch",
+    "category": "conditionals",
+    "source": "F(0) = {\n  Lib = {\n    public X = 1\n  }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(n) = n\n\nF(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F(0) = {\n  Lib = {\n    public X(n) = n\n  }\n  G = {\n    open Lib\n    X(5)\n  }\n  G\n}\nF(n) = n\nF(0)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "F(0) = {\n  Lib = { public X = 1 }\n  Lib.X\n}\nF(n) = n\nF(0)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "F(0) = {\n  Lib = { public X = 1 }\n  G = {\n    H = {\n      open Lib\n      X\n    }\n    H\n  }\n  G\n}\nF(n) = n\nF(0)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "F(0) = {\n  Lib = { public X = 1 }\n  G(0) = {\n    open Lib\n    X\n  }\n  G(k) = k\n  G(0)\n}\nF(n) = n\nF(0)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "F(0) = 0\nF(n) = {\n  Lib = { public X = n }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Apply(f) = f.X\nF(0) = 0\nF(n) = {\n  Lib = { public X = n }\n  Apply(Lib)\n}\nF(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(0) = {\n  Lib = { public X = 1 }\n  Lib.X\n}\nF(n) = n\nF.Lib",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer = {\n  F(0) = {\n    Lib = { public X = 1 }\n    G = {\n      open Lib\n      X\n    }\n    G\n  }\n  F(n) = n\n  F(0)\n}\nOuter",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Lib = { public X = 1 }\nOuter = {\n  F(0) = {\n    G = {\n      open Lib\n      X\n    }\n    G\n  }\n  F(n) = n\n  F(0), X\n}\nOuter(7)",
+        "expectedNeutral": "ok raw=S[7, 7] n=1"
+      }
+    ],
+    "explanation": "A library declared inside a conditional branch classifies exactly like one declared in a parameterized body: its self-contained public members are exported, so any body nested in that branch may `open` it (or reach its members with dot access) — `X` is 1 inside `G`. What stays branch-local is the declaration's reach by name: a conditional exposes no members of its branches, so `F.Lib` and `open F.Lib` are refused at the family, and a sibling branch or the enclosing algorithm never sees `Lib` or `X`. A member that captures the branch's pattern binder is local-only for the same reason a parameter-capturing member is.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "conditional-branch-local-library-does-not-leak-to-sibling-branches",
+    "category": "errors",
+    "source": "F(0) = {\n  Lib = {\n    public X = 1\n  }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(1) = X\nF(n) = n\n\nF(1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UndeclaredIdentifier",
+    "expectedParseDiagnosticFragment": "Identifier 'X' is used in conditional branch 'F'",
+    "probes": [
+      {
+        "source": "F(0) = {\n  Lib = { public X = 1 }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(1) = {\n  open Lib\n  Lib = { public X = 2 }\n  X\n}\nF(n) = n\nF(1)",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "A branch-local library is visible only inside the branch that declares it: the sibling branch `F(1)` resolves through its own lookup chain, which never contains the first branch's declarations, so its `X` is an undeclared identifier under the closed branch-pattern rule."
+  }
+]

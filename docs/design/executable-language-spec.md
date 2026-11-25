@@ -1,8 +1,8 @@
 # The Executable Language Specification
 
 This document is the maintainer guide for KatLang's canonical executable
-specification: a single corpus of named semantic cases that four layers
-consume and verify — the Lean model, the C# implementation, `tutorial.md`,
+specification. Contributors author shared source programs and expectations in
+`conformance/features/`. The existing consumers are the Lean model, the C# implementation, `tutorial.md`,
 and the katlang-generator prompt files. It complements (and does not replace)
 the semantic explorer described in
 [sequence-boundary-audit-2026-07.md](sequence-boundary-audit-2026-07.md).
@@ -11,7 +11,7 @@ the semantic explorer described in
 
 The rules `AGENTS.md` § Executable language specification summarizes, in full. The sections below are the maintainer detail.
 
-- `dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs` is the canonical executable specification: named cases with stable IDs and HAND-WRITTEN canonical expectations. Never regenerate its expectations from observed behavior — a failing `LanguageSpec*` test means either fix the implementation or edit the canonical case in a reviewed diff.
+- [The shared feature files](../../conformance/README.md) are the canonical executable specification: named cases with stable IDs and HAND-WRITTEN canonical expectations. Never regenerate its expectations from observed behavior — a failing `LanguageSpec*` test means either fix the implementation or edit the canonical case in a reviewed diff.
 - Same-program fidelity: the Lean program of every Lean-comparable case in BOTH differential corpora (`LanguageSpecCorpus` and `SemanticExplorerCorpus`, internal-node cases included) is DERIVED from the source's real elaborated AST through `dotnet/tests/KatLang.Tests/LeanAstEncoder.cs` — never authored by hand and never rebuilt by test-side parser-rule templates. C#-only cases carry an explicit non-blank `LeanExclusionReason`, a hand-authored LanguageSpec Lean program requires the exceptional `LeanProgramOverride` + `LeanOverrideReason` (currently unused), and per-corpus exact-ID exclusions plus `FidelityRatchet_*` tests pin the derived-case partitions. The host-built AST corpus `HostParentDifferentialCorpus` (HOST-DIFF-1, pre-wired `ScopeCtx` parents, `lean/CoreTests/HostParentDifferential.lean`) encodes the SAME constructed graph C# evaluates, one host-scope token per original `ScopeCtx` object; every case is comparable (a future reviewed divergence is pinned on both sides by exact id); its three coverage floors in `HostParentDifferentialTests` are the CURRENT counts, so raise them in the diff that adds cases (a coverage-drop control fails while a floor is stale). ZERO-ARGUMENT CACHE PUBLICATIONS (KL-06) are compared on every host-parent case and on a four-case pilot in each source corpus (`CachePublicationPilotTests`): no observation, a completed run with an empty cache and a completed run with entries are three different states, and a `SpecCase.ExpectedCachePublications` is hand-written like every canonical expectation (`docs/design/differential-observations.md` § Cache publications). A PUBLICATION is the first establishment of a zero-argument property's reusable value in its owning invocation (F01, owner decision 2026-11-21): a planned loop round keeps a step property in its frame slot and reports that store (`LoopRunFrame.EstablishTempSlot`, `IPlannedLoopPublicationObserver`), so it counts like a cache store on every route and in Lean (`PlannedLoopPublicationTests`, hand-maintained `lean/CoreTests/PlannedLoopPublications.lean`; the generated temp family `PlannedLoopTempFamilyTests` / `lean/CoreTests/PlannedLoopTempFamily.lean` checks planned, fallback, exported and undemanded temps against constructed expectations, `docs/design/differential-observations.md` § Planned-loop temp family). The third generated corpus, `lean/CoreTests/SemanticGeneratedCases.lean` (SEM-2C, `SemanticGeneratedLeanArtifactTests`), covers every valid SEM-2B generated case (`SemanticCorpus.All()`, kinds `ValidSuccess`/`ValidRuntimeFailure`; invalid front-end cases are excluded by kind): for each case the test builds an IDENTITY-PRELUDE member, the base source with `trace(x) = x` and `wait(x) = x` prepended in place of the host operations Lean does not model, checks that its parse is clean and its C# result is the generator's constructed expectation, and encodes its real elaborated AST; the member is built only in that test (never a `SemanticCase.Members` entry). The case's `alpha-rename` and `declaration-reorder` members get the same prelude and guard, checked in C# against the SEM-2B runner's member relation (SemanticEqual to the base, `Normalized` errors), each guard pinning the base member's neutral text; the host-operation programs, host events, async and optimizer paths stay C# evidence. The encoder is FAIL-LOUD: extend it deliberately (with reviewed goldens in `LeanAstEncoderTests`) rather than approximating, and expected strings in encoder tests are manually reviewed constants. See § 5.
 - GENERATED from it (do not edit by hand): `lean/LanguageSpecCases.lean` and the `=== BEGIN GENERATED: katlang-spec-examples ===` block in both generator files; regenerate all three together ([testing-and-validation.md](../testing-and-validation.md) § Regenerating generated artifacts). `lean/SemanticExplorerCases.lean` is the second GENERATED Lean/C# differential corpus (from `SemanticExplorerCorpus`; see `docs/design/sequence-boundary-audit-2026-07.md`): a failing `#guard` there is a Lean/C# divergence — or a Lean-internal plain/counted mismatch — on that case; after an intentional semantics change regenerate it the same way.
 - Tutorial examples marked `<!-- spec:case-id -->` are verified against the corpus (source and expected output) by `TutorialSpecTests`; when changing a linked example, update the canonical case and the tutorial together.
@@ -22,12 +22,10 @@ The rules `AGENTS.md` § Executable language specification summarizes, in full. 
 
 ## 1. Where the canonical cases live
 
-`dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs` is the single
-authoritative source. Each `SpecCase` (schema:
-`dotnet/tests/KatLang.Tests/LanguageSpec/SpecCase.cs`) carries a stable kebab-case
+The [conformance manifest](../../conformance/cases.json) lists the authored JSON files in reader order. The .NET adapter loads each case as a `SpecCase`, then derives its Lean program where applicable. Each case carries a stable kebab-case
 `Id`, a `Category`, the KatLang `Source`, an expected `Outcome`
 (Evaluates / EvalError / ParseError), and **hand-written canonical
-expectations**: exact engine display, emitted count, raw value shape in the
+expectations**: emitted count, optional display checks on the completed result, raw value shape in the
 neutral `S[...]` encoding, stable error category, optional probes
 (equality / `count` / `.count` / indexing observations), an optional Lean AST
 construction, and a reader-facing explanation.
@@ -38,23 +36,14 @@ either the implementation drifted (fix the implementation) or the language
 intentionally changed (edit the canonical case in a reviewed diff, then
 regenerate the derived artifacts).
 
-ONE FAMILY HAS GENERATED SOURCES (EXPORTED-DETACHED, November 2026).
-`ExposureShapeSpecFamily` (same folder) builds the sources of the
-`exposure-shape-*` cases from a matrix — what holds the member, the route that
-reaches it, where the enclosing parameter is read, the access site and the row
-order — so that no cell is forgotten. Its EXPECTATIONS are hand-written like
-every other case's, one reviewed row per cell (`ExposureShapeSpecFamily.Cells`),
-and never derived from an evaluator. Both evaluators enforce the exposure
-classification, so each cell is an exposure-completeness test in C# and in
-Lean: a route the front end failed to charge would refuse the cell's inside
-program, where it formerly shared one call's value with the next.
+The [exposure-shape cases](../../conformance/features/exposure-shapes.json) cover the container, member route, capture position and access site. The feature file holds each program and its reviewed expectation. `PortableConformanceTests` checks that every matrix cell is represented. Both evaluators enforce the exposure classification.
 
 THE DEFERRED-BRANCH ROUTE of that matrix is C#-ONLY and is NOT part of this
 corpus: a clause that loads its module on demand needs a downloader and
 `KatLangEngine.RunAsync`, and Lean has no deferred-region model. Its cells
 (`ExposureShapeSpecFamily.DeferredCells`: the four containers, both capture
 positions, the container declared at the site or in the loaded module, and
-the same access sites and row orders) are generated in the same file, carry
+the same access sites and row orders) are generated in the .NET test project, carry
 hand-written expectations too, and are run by
 `ExposureShapeDeferredRouteTests` with a counting in-memory downloader — a
 selected materialization, its eager twin and a never-selected zero-download
@@ -73,6 +62,7 @@ summed into one total.
 
 | Layer | Consumer | Drift signal |
 |---|---|---|
+| Other implementations | Read every [shared feature file](../../conformance/README.md) directly | a runner reports the case ID and failed expectation |
 | C# engine | `LanguageSpecRunnerTests` runs every case + probe through `Parser.Parse` / `Evaluator.RunCounted` / `KatLangEngine.Run` (via `SemanticExplorerHarness`) | test failure |
 | Lean model | generated `lean/LanguageSpecCases.lean`: one `#guard obs case_x == "<canonical neutral>"` per Lean-guarded case | `lake build LanguageSpecCases` failure |
 | tutorial.md (linked) | `<!-- spec:case-id -->` markers before fences; `TutorialSpecTests` verifies source + expected output against the case | test failure |
@@ -94,11 +84,10 @@ Every case is in exactly one of three partitions (identity enforced by
 
 - **Lean-guarded** — `LeanProgram` is set; the case is emitted into
   `lean/LanguageSpecCases.lean`.
-- **parse-level** — `Outcome == ParseError`; C#-only because the Lean model
-  has no surface parser. These cases may state their lexical/front-end reason in
+- **parse-level** — `Outcome == ParseError`. Surface implementations check these cases. Lean has no surface parser. These cases may state their lexical/front-end reason in
   `LeanExclusionReason` (required for STR-03); they still count only as parse-level,
   never as model divergences.
-- **C#-only** — evaluates/errs but has no Lean program; requires an explicit
+- **C#-only** (the .NET/Lean report label) — a shared evaluation case outside the Lean model; requires an explicit
   `LeanExclusionReason` naming the reviewed model divergence (the
   Decimal128-vs-Lean-Int numeric family or the unmodeled Math-native
   surface; the numeric boundary itself is defined by the "Core numeric
@@ -106,8 +95,7 @@ Every case is in exactly one of three partitions (identity enforced by
   source is not automatically Lean-comparable: Decimal128 precision/range can
   diverge from unbounded `Int` before the result is observed.
 
-Probes are C#-only auxiliary observations by design and are counted
-separately. Internal-node (`Expr.SequenceConstruct`) cases are owned by the
+Shared surface runners execute the probes as standalone programs. The Lean artifact counts them separately and guards the main programs. Internal-node (`Expr.SequenceConstruct`) cases are owned by the
 semantic-explorer corpus, not this one.
 
 Counts are never maintained by hand. The generated Lean artifacts embed an id
@@ -291,8 +279,7 @@ verification, then run the corresponding `lake build` target.
 
 ## 5. How to add a new case
 
-1. Add a `SpecCase` to `LanguageSpecCorpus.AllCases()` under the right
-   category (`LanguageSpecCorpus.Categories`). Write the expectations from
+1. Add one case to the appropriate JSON file in `conformance/features/`. Choose a stable ID and a category declared in `conformance/cases.json`. Write the expectations from
    the *language rules* (AGENTS.md, the audit doc, the tutorial) — then let
    the runner tell you if the implementation disagrees. Do not paste observed
    output without checking it against the documented rules first.
@@ -309,7 +296,7 @@ verification, then run the corresponding `lake build` target.
    be authored with two unrelated program definitions. Only two explicit
    deviations exist, both schema-enforced and count-ratcheted
    (`FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink`):
-   - `LeanExclusionReason` — the case is C#-only (an intentional model
+   - `LeanExclusionReason` — the case runs on surface implementations (an intentional Lean model
      divergence, e.g. decimal semantics outside the Lean Int core or the
      unmodeled Math-native surface);
    - `LeanProgramOverride` + `LeanOverrideReason` — an exceptional,
@@ -494,13 +481,12 @@ tier (AGENTS.md § Test tiers).
 - **Bounded differential validation**: the generated `#guard` corpora
   (explorer + language spec). Say "generated guards over the representable
   partition", never "formally verified evaluator".
-- **Parser-level cases**: C#-only; Lean has no surface parser.
-- **Implementation-only regressions**: C#-only cases with an explicit
-  exclusion reason (e.g. decimal display).
+- **Parser-level cases** run on surface implementations. Lean has no surface parser.
+- **Cases beyond the Lean model** carry an explicit Lean exclusion reason, for example decimal display. They remain part of surface conformance.
 
 ## 9. Worked example: one case through all four layers
 
-Case `take-single-survivor` (`LanguageSpecCorpus.cs`):
+Case `take-single-survivor` lives in [collection-builtins.json](../../conformance/features/collection-builtins.json).
 source `take(((1, 2), (3, 4)), 1)`, canonical display `[(1, 2)]`, canonical
 neutral `ok raw=L[S[1, 2]] n=1`, probes for `count(...)` = 1, non-equality
 with `(1, 2)`, and re-spreading the result (`take(...)*` is the kept pair).
@@ -533,7 +519,7 @@ with `(1, 2)`, and re-spreading the result (`take(...)*` is the kept pair).
   expected diagnostic (schema-required since the structured-code work) plus,
   sparingly, a message fragment for deliberately worded diagnostics; Lean
   still verifies nothing at parse level.
-- Probes and display expectations are C#-only (Lean has no display layer).
+- Surface runners check probes and display expectations. Lean has no display layer.
 - The generator harness (`experimental/prompts/katlang-generator-harness.ps1`)
   and its test-case JSON are untracked and outside this system; only the two
   tracked prompt files participate. Prompt examples outside the generated

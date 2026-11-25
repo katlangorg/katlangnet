@@ -1,0 +1,153 @@
+[
+  {
+    "id": "wrapped-pair-collapses",
+    "category": "sequence-construction",
+    "source": "((1, 2))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2)"
+      }
+    ],
+    "expectedRaw": "S[1, 2]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "((1, 2)) == (1, 2)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "count(((1, 2)))",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "`((1, 2))` is not a one-item wrapper around a pair — redundant unary sequence structure normalizes to the pair itself. Orphan wrappers are not writable KatLang values."
+  },
+  {
+    "id": "pair-of-pairs-preserved",
+    "category": "sequence-construction",
+    "source": "((1, 2), (3, 4))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "((1, 2), (3, 4))"
+      }
+    ],
+    "expectedRaw": "S[S[1, 2], S[3, 4]]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "count(((1, 2), (3, 4)))",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "x = ((1, 2), (3, 4))\nx[0]",
+        "expectedNeutral": "ok raw=S[1, 2] n=1"
+      },
+      {
+        "source": "x = ((1, 2), (3, 4))\nx == ((1, 2), (3, 4))",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "Non-unary nested structure is never flattened: a pair of pairs keeps both boundaries."
+  },
+  {
+    "id": "pair-then-empty-preserved",
+    "category": "sequence-construction",
+    "source": "((1, 2), ())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "((1, 2), ())"
+      }
+    ],
+    "expectedRaw": "S[S[1, 2], S[]]",
+    "expectedEmittedCount": 1,
+    "explanation": "A written `()` item inside a sequence value stays visible."
+  },
+  {
+    "id": "spread-splices-into-sequence",
+    "category": "sequence-construction",
+    "source": "x = (1, 2)\n(x*, 99)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2, 99)"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 99]",
+    "expectedEmittedCount": 1,
+    "explanation": "Spread inside a written sequence value splices exactly one layer of items beside the sibling slots."
+  },
+  {
+    "id": "spread-empty-between-siblings",
+    "category": "sequence-construction",
+    "source": "(1*, (), 2*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, (), 2)"
+      }
+    ],
+    "expectedRaw": "S[1, S[], 2]",
+    "expectedEmittedCount": 1,
+    "explanation": "Spreading a scalar contributes the scalar itself; the written `()` slot between the spreads stays a visible item."
+  },
+  {
+    "id": "root-spread-beside-slot",
+    "category": "sequence-construction",
+    "source": "A = (1, 2)\nA*, 99",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n99"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 99]",
+    "expectedEmittedCount": 3,
+    "explanation": "At root output a spread slot contributes its spread items as rows beside the other slots."
+  },
+  {
+    "id": "root-spread-then-value-slot",
+    "category": "sequence-construction",
+    "source": "First = 1, 2\nSecond = 3, 4\n\nFirst*, Second",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n(3, 4)"
+      }
+    ],
+    "expectedRaw": "S[1, 2, S[3, 4]]",
+    "expectedEmittedCount": 3,
+    "explanation": "A comma is required after a spread expression when another supplied item follows on the same line, because `First* Second` is the multiplication `First * Second`. `First*, Second` spreads `First` into two rows and `Second` stays one sequence-valued row."
+  },
+  {
+    "id": "spread-slots-capture",
+    "category": "sequence-construction",
+    "source": "A = 1, 2\nB = 1*, 2\n\nA.count\nB.count",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2\n2"
+      }
+    ],
+    "expectedRaw": "S[2, 2]",
+    "expectedEmittedCount": 2,
+    "explanation": "`B = 1*, 2` is a two-slot body: the spread of the scalar `1` supplies one item and `2` is a separate slot, so `B` captures the same two items as `A = 1, 2`. Without the comma, `1* 2` is the multiplication `1 * 2`."
+  },
+  {
+    "id": "spread-one-level-only",
+    "category": "sequence-construction",
+    "source": "(1, (2, 3))*, 4",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n(2, 3)\n4"
+      }
+    ],
+    "expectedRaw": "S[1, S[2, 3], 4]",
+    "expectedEmittedCount": 3,
+    "explanation": "Spread opens exactly one level: the inner `(2, 3)` stays intact, and `4` is a separate expression-list slot (the comma after the spread is required — `(1, (2, 3))* 4` would be multiplication).",
+    "includeInGeneratorPrompt": true
+  }
+]

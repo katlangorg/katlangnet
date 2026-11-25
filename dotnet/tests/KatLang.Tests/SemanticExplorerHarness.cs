@@ -43,7 +43,13 @@ public static class SemanticExplorerHarness
         => Observe(caseId, source, static text => KatLangEngine.Run(text));
 
     internal static ExplorerObservation Observe(string caseId, string source, Func<string, RunResult> runEngine)
+        => ObserveEvaluation(caseId, source, runEngine, out _, includeDisplay: true);
+
+    internal static ExplorerObservation ObserveEvaluation(
+        string caseId, string source, Func<string, RunResult> runEngine,
+        out RunResult.Success? completedRun, bool includeDisplay = false)
     {
+        completedRun = null;
         var parsed = Parser.Parse(source);
         if (parsed.HasErrors)
         {
@@ -101,13 +107,14 @@ public static class SemanticExplorerHarness
                 $"Harness disagreement for '{caseId}': engine value/count differs from RunCounted.");
         }
 
+        completedRun = success;
         return new ExplorerObservation(
             caseId,
             source,
             "ok",
             Neutral(counted.Value.Value),
             counted.Value.EmittedCount,
-            success.ToDisplayString(),
+            includeDisplay ? success.ToDisplayString() : null,
             null,
             counted.Value.Value);
     }

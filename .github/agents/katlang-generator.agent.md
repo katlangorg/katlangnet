@@ -1700,7 +1700,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
 Verified reference examples (184 of the 809-case canonical language specification,
-dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
+conformance/cases.json). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
 language behaviors they demonstrate.

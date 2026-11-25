@@ -1,0 +1,577 @@
+[
+  {
+    "id": "loop-result-is-one-value",
+    "category": "item-supply-vs-value",
+    "source": "Fibonacci(a, b) = b, a + b\nFibonacci(0, 1).repeat(10)\nFibonacci(0, 1).repeat(10)*,\nFibonacci(0, 1).repeat(10), 7",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(55, 89)\n55\n89\n(55, 89)\n7"
+      }
+    ],
+    "expectedRaw": "S[S[55, 89], 55, 89, S[55, 89], 7]",
+    "expectedEmittedCount": 5,
+    "probes": [
+      {
+        "source": "Fibonacci(a, b) = b, a + b\nX = Fibonacci(0, 1).repeat(10)\nX",
+        "expectedNeutral": "ok raw=S[55, 89] n=1"
+      },
+      {
+        "source": "Cd(n, acc) = n - 1, acc + n, n > 1\nwhile(Cd(3, 0))",
+        "expectedNeutral": "ok raw=S[1, 5] n=1"
+      },
+      {
+        "source": "Drop(*xs) = { ()* }\nrepeat(Drop(1), 1), repeat(Drop(1), 1)*, 997",
+        "expectedNeutral": "ok raw=S[S[], 997] n=2"
+      }
+    ],
+    "explanation": "A completed `repeat`/`while` is ONE value, like every call result: the two final state slots come back as the one value `(55, 89)` — one row alone or beside other rows — and only the explicit spread `…*` opens it into separate items.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-step-patterns-only-bind",
+    "category": "item-supply-vs-value",
+    "source": "Dup(x, x) = { (x + 1, x + 1)* }\nSame(x, x) = { x + 1, x + 1 }\nStep((a, b)) = (b, a + b)\nDup(1, 1).repeat(2), Same(1, 1).repeat(2), Step((0, 1)).repeat(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(3, 3)\n(3, 3)\n(2, 3)"
+      }
+    ],
+    "expectedRaw": "S[S[3, 3], S[3, 3], S[2, 3]]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Step2((a, b)) = { (b, a + b)* }\nStep2((0, 1)).repeat(3)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Dup(x, x) = { x + 1, x + 2 }\nDup(1, 1).repeat(2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Grow([*h], n) = [h*, n], n + 1\nGrow([], 0).repeat(3)[0]",
+        "expectedNeutral": "ok raw=L[0, 1, 2] n=1"
+      }
+    ],
+    "explanation": "A loop step's parameter patterns only bind the incoming state; its rows — with `*` opening a value, as everywhere — are the next state. `Dup`'s spread row supplies the same two slots as `Same`'s two rows, and `Step` keeps its pair as ONE slot by writing one value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-nested-step-row-is-one-slot",
+    "category": "item-supply-vs-value",
+    "source": "Fibonacci(a, b) = b, a + b\nTwo(a, b) = { repeat(Fibonacci(a, b), 2)* }\nTwo(0, 1).repeat(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(8, 13)"
+      }
+    ],
+    "expectedRaw": "S[8, 13]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Fibonacci(a, b) = b, a + b\nTwo(a, b) = repeat(Fibonacci(a, b), 2)\nTwo(0, 1).repeat(3)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Fibonacci(a, b) = b, a + b\nInner(a, b) = repeat(Fibonacci(a, b), 2)\nTwo(a, b) = { Inner(a, b)* }\nTwo(0, 1).repeat(3)",
+        "expectedNeutral": "ok raw=S[8, 13] n=1"
+      }
+    ],
+    "explanation": "A nested loop written as a step row is ONE next-state slot, like any call result; spread it with `*` to supply its final items as the next state.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-step-clause-family",
+    "category": "conditionals",
+    "source": "Step(0) = 0\nStep(n) = n - 1\nrepeat(Step(3), 2), Step(3).repeat(5), Step(Step(3))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n0\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 0, 1]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Step(0) = 0\nStep(n) = n - 1\nrepeat(Step(1, 2), 1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Two(0) = 9, 9\nTwo(n) = n, n\nrepeat(Two(1), 2)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "A loop step is an ordinary callable: each iteration invokes a clause family exactly as the call `Step(state…)` would — ordinary clause dispatch over the current state — and the selected clause's rows become the next state, so `repeat(Step(3), 2)` is `Step(Step(3))`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-step-family-while",
+    "category": "conditionals",
+    "source": "Countdown(0) = 0, false\nCountdown(n) = n - 1, true\nCountdown(3).while",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "S(2) = 1, true\nS(1) = 0, true\nwhile(S(2))",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "S(2) = 1, true\nS(1) = 0, false\nwhile(S(2))",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "A clause family is a natural `while` step with a base case: the selected clause's last row is the continuation flag, as for any step.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-while-condition-first-skips-transition",
+    "category": "conditionals",
+    "source": "Step(x) = 10 / (x - 1), x > 1\nStep(1).while",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Step(a, b) = b, a + b, a < 100\nStep(144, 233).while",
+        "expectedNeutral": "ok raw=S[144, 233] n=1"
+      },
+      {
+        "source": "S(x) = 1 / 0, 5\nS(1).while",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Fib(a, b, n) = b, a + b, n - 1, n > 1\nFib(0, 1, 10).while",
+        "expectedNeutral": "ok raw=S[34, 55, 1] n=1"
+      }
+    ],
+    "explanation": "LOOP-06 (condition first): each `while` round evaluates its continuation flag FIRST; `false` returns the state that entered the round without evaluating the other outputs, so the condition protects the transition `10 / (x - 1)`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-while-condition-first-trailing-empty-spread",
+    "category": "conditionals",
+    "source": "Tail(n) = ()\nStep(n) = n + 1, n < 2, Tail(n)*\nStep(0).while",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "E(x) = ()\nS(x) = E(x)*, E(x)*\nS(1).while",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "S(x) = not x\nS(false).while",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "LOOP-06 (condition first): the flag is the LAST EFFECTIVE output item, discovered right to left: a trailing spread that supplies nothing is formed and passed over, and the flag comes from the earlier row `n < 2`."
+  },
+  {
+    "id": "loop-while-condition-first-row-granular",
+    "category": "conditionals",
+    "source": "Pack(x) = x - 1, x > 1\nStep(x) = Pack(x)*\nStep(3).while",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Pack(x) = x + 'a', x > 1\nStep(x) = Pack(x)*\nStep(1).while",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Step(x) = x + 'a', x > 1\nStep(1).while",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "LOOP-06 (condition first) is row-granular: a flag produced inside one call or spread row gets no early exit, because that row is one ordinary value; write the condition as its own output row to protect the transition."
+  },
+  {
+    "id": "loop-step-family-multi-slot",
+    "category": "conditionals",
+    "source": "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nGcd(48, 18).while[0]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nwhile(Gcd(48, 18))",
+        "expectedNeutral": "ok raw=S[6, 0] n=1"
+      },
+      {
+        "source": "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nwhile(Gcd(7, 0))",
+        "expectedNeutral": "ok raw=S[7, 0] n=1"
+      }
+    ],
+    "explanation": "A multi-slot family step matches its literals against the current state slots through ordinary clause dispatch; the selected clause's rows are the next state and its last row is the flag."
+  },
+  {
+    "id": "loop-step-builtin-is-one-row-wrapper",
+    "category": "collection-builtins",
+    "source": "C(c) = count(c)\nrepeat(count([1, 2]), 1) == repeat(C([1, 2]), 1), count([1, 2]).repeat(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true\n2"
+      }
+    ],
+    "expectedRaw": "S[true, 2]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "repeat(take([1, 2, 3], 2), 1)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "repeat(take([1, 2, 3], 2), 2)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "A builtin step runs through its ordinary argument roles over the current state; it has no written rows, so its one result value is one next-state slot — exactly the step its one-row wrapper `C(c) = count(c)` makes.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-step-builtin-empty-result-is-one-slot",
+    "category": "empty-visible-vs-spread",
+    "source": "while(first([()]))",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "Fi(c) = first(c)\nwhile(Fi([()]))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "repeat(first([()]), 1)",
+        "expectedNeutral": "ok raw=S[] n=1"
+      }
+    ],
+    "explanation": "A builtin's `()` result is ONE state slot holding `()`, like a `()` row: as a `while` step that slot is the flag, so a Boolean is required (a zero-slot reading would instead be the empty-supply arity failure)."
+  },
+  {
+    "id": "loop-step-alias-follows-target",
+    "category": "name-resolution",
+    "source": "Step(0) = 0\nStep(n) = n - 1\nA = Step\nC = count\nrepeat(A(3), 2), repeat(C([1, 2]), 1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 2]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Step(0) = 0\nStep(n) = n - 1\nRun(f, *s) = repeat(f(s*), 2)\nRun(Step, 3)",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "A callable alias — and a parameter forwarding a callable — is its target's callable as a loop step too: a family or builtin target is invoked exactly as when written directly."
+  },
+  {
+    "id": "loop-step-value-is-rejected",
+    "category": "errors",
+    "source": "Run(f) = repeat(f(0), 1)\nRun(5)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "probes": [
+      {
+        "source": "A = 1, 2\nRun(f) = repeat(f(0), 1)\nRun(A[0])",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Z = 5\nrepeat(Z(0), 1)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "Any callable is an eligible step, but a value has no callable identity: a number, list, selection or call result supplied for the captured call's callee is still no step, and the first iteration that needs it reports NotAnAlgorithm (Q-06) — by CALLABLE projection, never by demanding the value. A real zero-parameter callable is a step whose interface cannot bind one state value: ArityMismatch."
+  },
+  {
+    "id": "loop-step-zero-iterations-never-projects",
+    "category": "item-supply-vs-value",
+    "source": "Run(f, s) = repeat(f(s), 0)\nRun(5, 1), Run(1 / 0, 5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n5"
+      }
+    ],
+    "expectedRaw": "S[1, 5]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(0) = 1\nrepeat(F(5), 0)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "N = 5\nN(1).repeat(0)",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "A zero-iteration `repeat` returns its initial state without projecting, validating or evaluating its step."
+  },
+  {
+    "id": "loop-step-family-no-match-is-ordinary",
+    "category": "conditionals",
+    "source": "F(0) = 1\nF(1) = 2\nrepeat(F(5), 1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "branch",
+    "explanation": "A family step whose clauses match none of the current state is the family's ordinary NoMatchingBranch, exactly as the call `F(5)`."
+  },
+  {
+    "id": "loop-step-lazy-builtin-roles",
+    "category": "collection-builtins",
+    "source": "repeat(if(false, 1 / 0, 2), 1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "repeat(map([1, 2], { x + 1 }), 1)",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      }
+    ],
+    "explanation": "A builtin step keeps its ordinary argument roles: `if` demands its condition and the selected branch only, so the unselected failing branch is never evaluated."
+  },
+  {
+    "id": "loop-step-builtin-argument-blame",
+    "category": "errors",
+    "source": "G(z) = repeat(count({ q + 1 }), 1)\nG(0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "unresolvedImplicitParams",
+    "probes": [
+      {
+        "source": "G(z) = count({ q + 1 })\nG(0)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "G(z) = while(count({ q + 1 }))\nG(0)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "G(z) = count({ q + 1 }).repeat(1)\nG(0)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "Inc(x) = x + 1\nG(z) = repeat(take(Inc, 1), 1)\nG(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Fam(0) = 1\nFam(1) = 2\nG(z) = repeat(count(Fam), 1)\nG(0)",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "G(z) = repeat(count([1, 2]), 2)\nG(0)",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "A loop's first round runs its step over the captured call's own arguments, exactly as the direct call would: a builtin step such as `count` gets each argument together with the way it was written. So when `count` needs the value of the block `{ q + 1 }` and nobody supplies the block's own parameter `q`, the loop fails with the block's `UnresolvedImplicitParams` — the very failure `count({ q + 1 })` reports — and never with a failure attributed to `count`. Only that failure report depends on how the argument was written; no value, effect or later round does.",
+    "notes": "November 2026 (independent audit of 2026-11-14, section 1.10). Before it the first round passed bare cells, so this was an anonymous ArityMismatch attributed to `count`."
+  },
+  {
+    "id": "loop-meta-plain-and-dot",
+    "category": "variadic-calls",
+    "source": "Step(x) = x + 1, x < 3\nInc(x) = x + 1\nwhile(Step(0)), Step(0).while, Step(0).while(), repeat(Inc(0), 5), Inc(0).repeat(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n3\n3\n5\n5"
+      }
+    ],
+    "expectedRaw": "S[3, 3, 3, 5, 5]",
+    "expectedEmittedCount": 5,
+    "probes": [
+      {
+        "source": "Fib(a, b) = b, a + b\nFib(0, 1).repeat(10)",
+        "expectedNeutral": "ok raw=S[55, 89] n=1"
+      },
+      {
+        "source": "Fib(a, b) = b, a + b\nP = 0, 1\nFib(P*).repeat(10)",
+        "expectedNeutral": "ok raw=S[55, 89] n=1"
+      },
+      {
+        "source": "Id(x) = x\nP = 0, 1\nId(P).repeat(2)",
+        "expectedNeutral": "ok raw=S[0, 1] n=1"
+      }
+    ],
+    "explanation": "`while(meta step)` and `repeat(meta step, count)` capture the written step CALL through their `meta` parameter: the call's callee is the step and its own arguments are the initial state. The dot spelling `Step(0).while` passes the same call as the ordinary leading argument, and `Inc(0).repeat(5)` passes the count as the second.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-meta-no-implicit-provenance",
+    "category": "errors",
+    "source": "Step(x) = x + 1, x < 3\nStart = Step(0)\nStart.while",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "probes": [
+      {
+        "source": "Step(x) = x + 1, x < 3\nStart = Step(0)\nwhile(Start)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Step(x) = x + 1, x < 3\nwhile(Step)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "repeat(5, 1)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Step(x) = x + 1, x < 3\nStart = Step(0)\nStart().while",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "A `meta` parameter captures only a supplied call computation. Reading the property `Start` is an ordinary VALUE read: the loop never recovers the call `Step(0)` written in its definition, so `Start.while` is the ordinary META refusal, with nothing evaluated.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-meta-zero-state",
+    "category": "empty-visible-vs-spread",
+    "source": "Z = false\nZ().while, Z().repeat(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "()\n()"
+      }
+    ],
+    "expectedRaw": "S[S[], S[]]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "C(*xs) = xs*\nC().repeat(3)",
+        "expectedNeutral": "ok raw=S[] n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nInc().repeat(1)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "A captured call with no arguments starts the loop from the ordinary empty state: zero state slots, completed as `()`. A step that needs parameters reports its own arity failure."
+  },
+  {
+    "id": "loop-meta-spread-before-count",
+    "category": "errors",
+    "source": "Inc(x) = x + 1\nInc([1][5]*).repeat(1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "index",
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nP = 0\nInc(P*).repeat(1 / 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Inc(x) = x + 1\nInc(1 / 0).repeat(-1)",
+        "expectedNeutral": "err illegalInEval"
+      },
+      {
+        "source": "Inc(x) = x + 1\nInc(1 / 0).repeat(0)",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "`repeat` prepares the captured call's arguments (opening its explicit spreads) BEFORE it demands its count, so the captured spread's failure is reported first; ordinary arguments are not evaluated by that preparation."
+  },
+  {
+    "id": "loop-meta-qualified-step",
+    "category": "name-resolution",
+    "source": "Box = { S(x) = x + 1, x < 3 }\nBox.S(0).while",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Box = { S(x) = x + 1, x < 3 }\nS = Box.S\nS(0).while",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "Step(x) = x + 1, x < 3\nLoop(meta op) = op.Algorithm(op.Arguments*).while\nStep(0).Loop",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "Box = { S(x) = x + 1, x < 3 }\nBox.S.while",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Inc = { x + 1 }\nInc(0).repeat(3)",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "A `meta` parameter captures any written invocation with an argument list — `Step(0)`, `Box.S(0)`, `Math.Abs(-3)`, `op.Algorithm(op.Arguments*)` — so a qualified member call loops directly. A bare member path such as `Box.S` (no argument list) is not an invocation and is refused.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "loop-meta-exact-arity",
+    "category": "errors",
+    "source": "Step(x) = x + 1, x < 3\nwhile(Step, 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nrepeat(Inc, 3, 0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Step(x) = x + 1, x < 3\nStep(0).while(1)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "`while` takes exactly one argument and `repeat` exactly two; the initial state is written inside the captured step call, never after it."
+  },
+  {
+    "id": "loop-meta-forwarding",
+    "category": "variadic-calls",
+    "source": "Step(x) = x + 1, x < 3\nW(step) = while(step)\nW(Step(0))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Step(x) = x + 1, x < 3\nW(meta step) = while(step)\nW(Step(0))",
+        "expectedNeutral": "err notAnAlgorithm"
+      }
+    ],
+    "explanation": "An ordinary parameter forwards the original supplied call to the loop, which captures it; a `meta` parameter would forward its captured reference instead, which the loop's own `meta step` refuses."
+  }
+]

@@ -1,0 +1,126 @@
+[
+  {
+    "id": "hunt-builtin-reduce-demands-initial-on-empty",
+    "category": "collection-builtins",
+    "source": "Add(a, b) = a + b\nreduce([], Add, 1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "`reduce` demands its initial value even for an empty collection: `DivisionByZero`."
+  },
+  {
+    "id": "hunt-builtin-filter-count-predicate-per-item",
+    "category": "collection-builtins",
+    "source": "filter([1, 2, 3], { x + tick() * 0 > 1 }).count, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2\n4"
+      }
+    ],
+    "expectedRaw": "S[2, 4]",
+    "expectedEmittedCount": 2,
+    "explanation": "The predicate runs once per item (ticks 1 to 3), so the next `tick()` is 4."
+  },
+  {
+    "id": "hunt-meta-family-redispatch-on-new-supply",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = r\nK(0) = 100\nK(n) = n * 2\nR = Cap(K(0))\nR.Invoke(), R.Algorithm(5), R.Algorithm(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "100\n10\n100"
+      }
+    ],
+    "expectedRaw": "S[100, 10, 100]",
+    "expectedEmittedCount": 3,
+    "explanation": "`R.Algorithm(5)` re-dispatches the family on the new supply; `R.Algorithm(0)` selects the literal clause again."
+  },
+  {
+    "id": "hunt-family-repeated-name-identity-nonmatch",
+    "category": "conditionals",
+    "source": "F(x, x) = 'same'\nF(x, y) = 'diff'\nA = 1\nB = 1\nF(A, B), F(A, A)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "diff\nsame"
+      }
+    ],
+    "expectedRaw": "S['diff', 'same']",
+    "expectedEmittedCount": 2,
+    "explanation": "Two different properties are two identities, a successful incompatibility, so the repeated-name clause does not match and the next clause is tried."
+  },
+  {
+    "id": "hunt-family-empty-and-pair-sequence-patterns",
+    "category": "conditionals",
+    "source": "F(()) = 'empty'\nF((a, b)) = 'pair'\nF((1, 2)), F(())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "pair\nempty"
+      }
+    ],
+    "expectedRaw": "S['pair', 'empty']",
+    "expectedEmittedCount": 2,
+    "explanation": "`()` and `(a, b)` are distinct sequence patterns; each argument selects its own clause."
+  },
+  {
+    "id": "hunt-comparison-chain-operands-once",
+    "category": "equality-and-indexing",
+    "source": "A = (tick() < tick() < tick() < tick())\nA, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true\n5"
+      }
+    ],
+    "expectedRaw": "S[true, 5]",
+    "expectedEmittedCount": 2,
+    "explanation": "Every operand of a comparison chain is evaluated exactly once, so the chain consumes four ticks and the next `tick()` is 5."
+  },
+  {
+    "id": "hunt-logical-xor-operands-both-evaluated",
+    "category": "equality-and-indexing",
+    "source": "true xor tick() == 1, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "false\n2"
+      }
+    ],
+    "expectedRaw": "S[false, 2]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "false xor tick() == 1, tick()",
+        "expectedNeutral": "ok raw=S[true, 2] n=2"
+      },
+      {
+        "source": "false xor 1 / 0 > 0",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "true xor 1 / 0 > 0",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "true xor 1",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "`xor` needs both operands, so it never short-circuits: `tick() == 1` runs even though the left operand is `true`. Only `and` and `or` skip a right operand that the left one already decides."
+  },
+  {
+    "id": "hunt-builtin-map-callbacks-run-in-collection-order",
+    "category": "collection-builtins",
+    "source": "Only(*xs) = tick() + xs.count\nmap([1, 2], Only), Only",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[3, 4]\n1"
+      }
+    ],
+    "expectedRaw": "S[L[3, 4], 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Both rows are evaluated before the result is read: `map` builds its list without invoking the callback, so the bare `Only` is the first tick (its own cached read, `1`). Reading the result then invokes the callback once per item, in collection order (ticks 2 and 3, each plus one supplied item), and each invocation of `Only` is fresh."
+  }
+]

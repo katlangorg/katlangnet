@@ -1,0 +1,586 @@
+[
+  {
+    "id": "first-program",
+    "category": "arithmetic",
+    "source": "2 + 3 * 4",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "14"
+      }
+    ],
+    "expectedRaw": "14",
+    "expectedEmittedCount": 1,
+    "explanation": "Multiplication binds tighter than addition; a bare expression is the program's output."
+  },
+  {
+    "id": "boolean-values-and-equality",
+    "category": "arithmetic",
+    "source": "true\nfalse\n[true, 1, false, 0]\ntrue == 1\n1 == true\nfalse != 0\n0 != false\ndistinct([true, 1, false, 0, true])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true\nfalse\n[true, 1, false, 0]\nfalse\nfalse\ntrue\ntrue\n[true, 1, false, 0]"
+      }
+    ],
+    "expectedRaw": "S[true, false, L[true, 1, false, 0], false, false, true, true, L[true, 1, false, 0]]",
+    "expectedEmittedCount": 8,
+    "explanation": "Booleans are a distinct scalar kind. Equality is total and symmetric across kinds, with no Boolean/number conversion; lists, sequences, and distinct preserve that distinction.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "boolean-predicates-and-patterns",
+    "category": "conditionals",
+    "source": "F(true) = false\nF(false) = true\nF(true)\nF(false)\nrange(-2, 2).filter{x >= 0}\nrange(-2, 2).map{x >= 0}.contains(true)\nif(not 1 == 1, 10, 20)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "false\ntrue\n[0, 1, 2]\ntrue\n20"
+      }
+    ],
+    "expectedRaw": "S[false, true, L[0, 1, 2], true, 20]",
+    "expectedEmittedCount": 5,
+    "explanation": "Comparisons and contains produce Booleans. Predicate consumers require them, and true/false in clause heads are literal patterns, never parameter names.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "boolean-loop-state-transition",
+    "category": "conditionals",
+    "source": "S(x) = if(x == true, 0, true), x != 0\nS(true).while",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "explanation": "Loop state may change value kind. The continuation is Boolean, and a false continuation returns the current state without committing the proposed next state."
+  },
+  {
+    "id": "boolean-predicate-rejects-visible-empty",
+    "category": "conditionals",
+    "source": "F(x) = true, ()\nrange(0, 2).filter(F).count",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "explanation": "A predicate must return one Boolean value. A Boolean beside a visible empty output is a sequence, and cannot be searched or flattened for a truth value."
+  },
+  {
+    "id": "logical-and-or-short-circuit",
+    "category": "conditionals",
+    "source": "Safe(n, d) = d != 0 and n / d > 1\nSafe(10, 0)\nSafe(10, 2)\nfalse and 1 / 0 > 0\ntrue or 1 / 0 > 0",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "false\ntrue\nfalse\ntrue"
+      }
+    ],
+    "expectedRaw": "S[false, true, false, true]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "true and 1 / 0 > 0",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "false or 1 / 0 > 0",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Skip(n, d) = d == 0 or n / d > 1\nSkip(10, 0), Skip(10, 2), Skip(2, 4)",
+        "expectedNeutral": "ok raw=S[true, true, false] n=3"
+      },
+      {
+        "source": "F(a, b) = a and b\nF(false, 1 / 0 > 0)",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "F(a, b) = a or b\nF(false, 1 / 0 > 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "true or 1 / 0 > 0 and 1 / 0 > 0",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "false and 1 / 0 > 0 or true",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "false and (true or 1 / 0 > 0)",
+        "expectedNeutral": "ok raw=false n=1"
+      }
+    ],
+    "explanation": "`and` and `or` short-circuit. The left operand is evaluated first, and the right operand is evaluated only when the left one does not already decide the result: `false and …` is `false` and `true or …` is `true` without evaluating `…`. So `d != 0 and n / d > 1` guards the division, and `Safe(10, 0)` is `false` instead of a division by zero.",
+    "notes": "Issue #202. Lean `evalBinaryCounted` (`BinaryOp.leftOperandDecides`) / C# `Evaluator.DecideLogicalAfterLeftOperand`, shared by the expression-spine machine, its async twin and the planned loop evaluator.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "logical-short-circuit-skips-effects",
+    "category": "conditionals",
+    "source": "false and tick() == 1, true or tick() == 1, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "false\ntrue\n1"
+      }
+    ],
+    "expectedRaw": "S[false, true, 1]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "true and tick() == 1, false or tick() == 2, tick()",
+        "expectedNeutral": "ok raw=S[true, true, 3] n=3"
+      },
+      {
+        "source": "tick() == 1 and tick() == 2, tick()",
+        "expectedNeutral": "ok raw=S[true, 3] n=2"
+      },
+      {
+        "source": "tick() == 2 and tick() == 2, tick()",
+        "expectedNeutral": "ok raw=S[false, 2] n=2"
+      },
+      {
+        "source": "tick() == 1 or tick() == 2, tick()",
+        "expectedNeutral": "ok raw=S[true, 2] n=2"
+      },
+      {
+        "source": "tick() == 2 or tick() == 2, tick()",
+        "expectedNeutral": "ok raw=S[true, 3] n=2"
+      },
+      {
+        "source": "tick() == 1 and tick() == 9 and tick() == 3, tick()",
+        "expectedNeutral": "ok raw=S[false, 3] n=2"
+      },
+      {
+        "source": "tick() == 9 or tick() == 2 or tick() == 3, tick()",
+        "expectedNeutral": "ok raw=S[true, 3] n=2"
+      }
+    ],
+    "explanation": "A skipped right operand does not run at all: neither `tick() == 1` executes, so the last `tick()` is the first tick of the run."
+  },
+  {
+    "id": "logical-left-operand-is-judged-first",
+    "category": "errors",
+    "source": "1 and 1 / 0 > 0",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "0 or 1 / 0 > 0",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "1 / 0 > 0 and 1",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "1 / 0 > 0 or 1",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "true and 1",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "false or 'x'",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "false and 1",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "true or 'x'",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "false and ()",
+        "expectedNeutral": "ok raw=false n=1"
+      }
+    ],
+    "explanation": "The left operand of `and` and `or` must be a Boolean, and that is checked before the right operand is evaluated: `1 and …` is a type error whatever `…` is. A right operand is checked only when it is evaluated, so `true and 1` is a type error while `false and 1` is `false`."
+  },
+  {
+    "id": "power-unary-precedence",
+    "category": "arithmetic",
+    "source": "-2 ^ 2\n(-2) ^ 2\n2 ^ 3 ^ 2",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "-4\n4\n512"
+      }
+    ],
+    "expectedRaw": "S[-4, 4, 512]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "2 ^ -2",
+        "expectedNeutral": "ok raw=0.25 n=1"
+      },
+      {
+        "source": "-2 ^ -2",
+        "expectedNeutral": "ok raw=-0.25 n=1"
+      },
+      {
+        "source": "1 + -2 ^ 2",
+        "expectedNeutral": "ok raw=-3 n=1"
+      },
+      {
+        "source": "2 * -3 ^ 2",
+        "expectedNeutral": "ok raw=-18 n=1"
+      },
+      {
+        "source": "-2 ^ 3 ^ 2",
+        "expectedNeutral": "ok raw=-512 n=1"
+      },
+      {
+        "source": "2 ^ -2 ^ 2",
+        "expectedNeutral": "ok raw=0.0625 n=1"
+      },
+      {
+        "source": "not 0 ^ 0",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "2 ^ (not false)",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "`^` binds tighter than prefix `-` on the left (and than `not`, which sits below the comparisons altogether), so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "not-binds-below-comparisons",
+    "category": "arithmetic",
+    "source": "not 5 > 3\nnot 2 > 3\nnot 5 == 5\nnot 5 == 4\nnot true == false\nnot true == 1",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "false\ntrue\nfalse\ntrue\ntrue\ntrue"
+      }
+    ],
+    "expectedRaw": "S[false, true, false, true, true, true]",
+    "expectedEmittedCount": 6,
+    "probes": [
+      {
+        "source": "not 5 < 3",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "not 3 <= 3",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "not 2 >= 3",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "not 5 != 4",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "not 1 + 1 > 3",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "not 2 ^ 3 > 7",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "A = false\nB = false\nnot A and B",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "A = true\nB = true\nnot A or B",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "not 1 > 2 and 2 > 1",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "not not 5 > 3",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "(not true) == false",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "(not true) > 3",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "(not 5) > 3",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "Comparisons bind tighter than `not`, and `not` binds tighter than `and`, `xor`, and `or` (comparisons > not > and > xor > or), so `not x > 3` negates the whole comparison — it is `not (x > 3)` — and `not a and b` is `(not a) and b`. Parentheses override the rule: `(not x) > 3` compares the negation itself, a type error for a numeric `x`. A `not` can only begin an operand of a logical operator or a whole expression; `1 + not x` and `2 ^ not x` are parse errors, so parenthesize the negation there.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "comparison-chains-compare-adjacent-pairs",
+    "category": "arithmetic",
+    "source": "1 < 2 < 3\n1 < 2 <= 2 == 2 != 3\n1 == 1 == 1\n1 != 2 != 1\n1 != 1 != 1\n3 < 2 < 1\n1 == 1 < 2\n1 < 2 == true",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true\ntrue\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse"
+      }
+    ],
+    "expectedRaw": "S[true, true, true, true, false, false, true, false]",
+    "expectedEmittedCount": 8,
+    "probes": [
+      {
+        "source": "(1 < 2) == true",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "1 == (1 < 2)",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "(1 < 2) == (3 < 4)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "(1 < 2 < 3) == true",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "1 == (2 < 3 < 4)",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "1 < (2 == 2)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "(1 == 1) < 2",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "not 1 < 2 < 3",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "1 < 2 < 3 and 4 < 5",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "1 + 1 < 3 * 1 <= 4 - 1",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "-2 ^ 2 < -3 < 0",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "1 < 3 < 2 < 4",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "1 <= 1 == 1",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "1 < 1 == 1",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "'a' == 'a' == 'a'",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "(1, 2) == (1, 2) != (2, 1)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "true < false",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "1 < 2 < 3 < true",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "All six comparison operators share one precedence tier and CHAIN: `a < b <= c == d != e` compares the adjacent pairs `a < b`, `b <= c`, `c == d`, and `d != e`, and the whole chain is `true` only when every pair holds. Each operand is evaluated once, left to right. `1 != 2 != 1` is `true` (adjacent pairs, not \"all distinct\"), `1 == 1 < 2` is `true`, and `1 < 2 == true` compares `2` with `true` (false). Parentheses break a chain: `(1 < 2) == true` compares the Boolean result of the group.",
+    "notes": "The six comparison operators form ONE chainable precedence tier (September 2026): consecutive unparenthesized comparisons are one `Expr.comparison` chain with adjacent-pair links, evaluated incrementally with every operand exactly once. Before this change equality bound looser than ordering, so `1 == 1 < 2` read `1 == (1 < 2)` (false) and `1 < 2 < 3` ordered a Boolean against a number (an error).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "comparison-chain-boolean-and-arithmetic-operands",
+    "category": "arithmetic",
+    "source": "true == true == true\ntrue != false != true\ntrue == 1 == false\ntrue == true == false\n1 + 1 < 3 == 2 + 0\n-2 ^ 2 < 0 == true",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true\ntrue\nfalse\nfalse\nfalse\nfalse"
+      }
+    ],
+    "expectedRaw": "S[true, true, false, false, false, false]",
+    "expectedEmittedCount": 6,
+    "explanation": "Comparisons use adjacent operand values even across Boolean/numeric kinds; arithmetic and power bind inside operands. The Boolean result accumulated by a chain never becomes an operand of its next link."
+  },
+  {
+    "id": "comparison-chain-is-eager-after-false",
+    "category": "errors",
+    "source": "3 < 2 < true",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "3 < 2 < 1 / 0",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "1 == 2 == 1 / 0",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "1 / 0 < true < 1",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "1 < true < 1 / 0",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "'a' < 'b' < 1 / 0",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "1 < true < (1 / 0)",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "A `false` comparison never stops a chain — unlike `and` and `or`, which short-circuit, a comparison chain evaluates every operand — so `3 < 2 < true` still performs `2 < true`, and that comparison is the error (Booleans are not ordered). Errors do stop a chain: once an operand or a comparison fails, the later operands are not evaluated.",
+    "notes": "A chain is eager, unlike `and`/`or` (which short-circuit, issue #202): `false` never stops a chain, so `3 < 2 < true` still compares `2 < true` and reports that link's ordering rejection (`while evaluating `2 < true``). Errors do terminate: an error in an earlier operand or link is the chain's outcome and later operands are not evaluated. Lean `evalComparisonCounted` / C# `EvalExpressionSpineCounted`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "integer-division-truncates",
+    "category": "arithmetic",
+    "source": "-7 div 2\n-7 mod 2\n7 div 2",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "-3\n-1\n3"
+      }
+    ],
+    "expectedRaw": "S[-3, -1, 3]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "8 / 2",
+        "expectedNeutral": "ok raw=4 n=1"
+      },
+      {
+        "source": "0 ^ -1",
+        "expectedNeutral": "err illegalInEval"
+      }
+    ],
+    "explanation": "Integer division `div` and remainder `mod` truncate toward zero: `-7 div 2` is `-3` and `-7 mod 2` is `-1`. These representative exact integer operations are cross-engine semantics shared with the Lean core model; Decimal128 precision remains a boundary only when the truncated quotient itself needs more than 34 significant digits.",
+    "notes": "Shared Lean-modeled law on these common exact integer operands: `div`/`mod` truncate toward zero (Lean `Int.tdiv`/`Int.tmod`; C# `Decimal128Numerics.IntegerDivide`/`%`). Since G-3 the C# `div` truncates the EXACT quotient and is exact wherever the truncated quotient is representable — see `integer-division-exact-quotient`; only a truncated quotient that needs more than 34 significant digits is a Decimal128 precision boundary (the C#-only `integer-division-beyond-consecutive-integers`). Contrast the C#-only `division-decimal-quotient` case, where a non-exact `/` result diverges from the Int core by design."
+  },
+  {
+    "id": "integer-division-exact-quotient",
+    "category": "arithmetic",
+    "source": "X = 8999999999999999999999999999999999\nX div 3\nX mod 3\nX == 3 * (X div 3) + (X mod 3)\nY = 3e32\n(13 * Y - 1) div Y\n(12 * Y + 1) div Y\n-X div 3\nX div -3\n-X div -3\n1e34 div 7\n1e34 mod 7\n1e40 div 1e5",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2999999999999999999999999999999999\n2\ntrue\n12\n12\n-2999999999999999999999999999999999\n-2999999999999999999999999999999999\n2999999999999999999999999999999999\n1428571428571428571428571428571428\n4\n100000000000000000000000000000000000"
+      }
+    ],
+    "expectedRaw": "S[2999999999999999999999999999999999, 2, true, 12, 12, -2999999999999999999999999999999999, -2999999999999999999999999999999999, 2999999999999999999999999999999999, 1428571428571428571428571428571428, 4, 100000000000000000000000000000000000]",
+    "expectedEmittedCount": 11,
+    "probes": [
+      {
+        "source": "Y = 3e32\nX = 13 * Y - 1\nX div Y",
+        "expectedNeutral": "ok raw=12 n=1"
+      },
+      {
+        "source": "Y = 3e32\nX = 12 * Y + 1\nX div Y",
+        "expectedNeutral": "ok raw=12 n=1"
+      },
+      {
+        "source": "10000000000000000000000000000000000 div 7",
+        "expectedNeutral": "ok raw=1428571428571428571428571428571428 n=1"
+      },
+      {
+        "source": "10000000000000000000000000000000000 mod 7",
+        "expectedNeutral": "ok raw=4 n=1"
+      },
+      {
+        "source": "-8999999999999999999999999999999999 div 3",
+        "expectedNeutral": "ok raw=-2999999999999999999999999999999999 n=1"
+      },
+      {
+        "source": "8999999999999999999999999999999999 div -3",
+        "expectedNeutral": "ok raw=-2999999999999999999999999999999999 n=1"
+      },
+      {
+        "source": "-8999999999999999999999999999999999 div -3",
+        "expectedNeutral": "ok raw=2999999999999999999999999999999999 n=1"
+      },
+      {
+        "source": "-8999999999999999999999999999999999 mod 3",
+        "expectedNeutral": "ok raw=-2 n=1"
+      },
+      {
+        "source": "9999999999999999999999999999999999 div 10\n9999999999999999999999999999999999 mod 10",
+        "expectedNeutral": "ok raw=S[999999999999999999999999999999999, 9] n=2"
+      },
+      {
+        "source": "1e40 div 1e5",
+        "expectedNeutral": "ok raw=100000000000000000000000000000000000 n=1"
+      }
+    ],
+    "explanation": "`div` truncates the exact quotient, not a quotient that was first rounded to 34 digits: `8999999999999999999999999999999999 div 3` is `2999999999999999999999999999999999` (while `/` rounds that quotient to `3000000000000000000000000000000000`), `mod` is the exact remainder `2`, and `x == y * (x div y) + (x mod y)` holds when the truncated quotient is representable and the intermediate arithmetic is exact. Every integer with magnitude at most 10^34 is representable, as are sparse larger integers.",
+    "notes": "Shared Lean-modeled law (G-3, September 2026): `div` is the EXACT quotient truncated toward zero (Lean `Int.tdiv`; C# `Decimal128Numerics.IntegerDivide`), returned exactly whenever the truncated quotient is representable — throughout the exact consecutive-integer domain |q| <= 10^34 (every such integer is a Decimal128) — and `mod` is the exact remainder for finite operands and a nonzero divisor (`Int.tmod`; Decimal128 `%`). The mathematical identity holds for representable truncated quotients; its KatLang recomposition also requires exact intermediate arithmetic. The former C# rule `Decimal128.Truncate(x / y)` truncated a quotient ALREADY rounded to 34 significant digits and answered `3000000000000000000000000000000000` here (and `13` for the first probe), silently one integer away while Lean was right all along. Beyond the domain see the C#-only `integer-division-beyond-consecutive-integers` case."
+  },
+  {
+    "id": "integer-division-beyond-consecutive-integers",
+    "category": "arithmetic",
+    "source": "1e40 div 7\n1e40 / 7",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1428571428571428571428571428571428000000\n1428571428571428571428571428571429000000"
+      }
+    ],
+    "expectedRaw": "S[1428571428571428571428571428571428000000, 1428571428571428571428571428571429000000]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "99999999999999999999999999999999990 div 6",
+        "expectedNeutral": "ok raw=16666666666666666666666666666666660 n=1"
+      },
+      {
+        "source": "2e40 div 3",
+        "expectedNeutral": "ok raw=6666666666666666666666666666666666000000 n=1"
+      },
+      {
+        "source": "-2e40 div 3",
+        "expectedNeutral": "ok raw=-6666666666666666666666666666666666000000 n=1"
+      },
+      {
+        "source": "X = 1e40\n(X div 7) * 7 <= X",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "9999999999999999999999999999999999e10 div 3",
+        "expectedNeutral": "ok raw=33333333333333333333333333333333330000000000 n=1"
+      },
+      {
+        "source": "5 div 1e-6176",
+        "expectedNeutral": "ok raw=Infinity n=1"
+      }
+    ],
+    "explanation": "Beyond 34 significant digits `div` keeps the leading 34 digits of the exact truncated quotient, rounding toward zero rather than to nearest: `1e40 div 7` is `1428571428571428571428571428571428000000`, while `1e40 / 7` correctly rounds to `…429000000`. For finite quotients, `div` therefore never exceeds the true quotient in magnitude, for either sign; an exactly representable quotient such as `1e40 div 1e5` stays exact. IEEE overflow still produces signed infinity.",
+    "notes": "Decimal128 has 34 significant decimal digits. |n| <= 10^34 is KatLang's exact CONSECUTIVE-integer domain (10^34 + 1 is the first integer that is not a Decimal128); larger sparse integers such as 1e40 or 3333…3e10 are still exactly representable, so this boundary is not the largest representable integer. A truncated `div` quotient that needs more than 34 significant digits is rounded toward zero to 34 digits — the largest-magnitude Decimal128 integer not exceeding it — never to nearest. When IEEE division remains finite, `div` stays a truncation and, for finite operands and a nonzero divisor, `(x div y) * y` never exceeds `x` in magnitude even after the product rounds; `/` stays correctly rounded to nearest. The mathematical identity requires a representable truncated quotient; its KatLang recomposition also requires exact intermediate arithmetic. `mod` is exact for finite operands and a nonzero divisor. IEEE division overflow still produces signed infinity.",
+    "leanExclusionReason": "The truncated quotient 1428571428571428571428571428571428571428 has 40 significant digits, so it is not a Decimal128: the runtime rounds it TOWARD ZERO to its leading 34 digits (`div` stays a truncation), while the Lean Int core returns the exact 40-digit integer — Decimal128 precision is the documented model divergence (and `1e40 / 7`, correctly rounded to nearest, diverges from the Int core's truncating `/` as well)."
+  }
+]

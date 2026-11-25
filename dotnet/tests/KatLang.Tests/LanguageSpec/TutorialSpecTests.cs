@@ -112,8 +112,9 @@ public class TutorialSpecTests
             {
                 Assert.True(specCase.Outcome == SpecOutcome.Evaluates,
                     $"tutorial.md line {example.MarkerLine}: spec:{example.CaseId} shows a value result but the canonical case outcome is {specCase.Outcome}.");
-                Assert.True(specCase.ExpectedDisplay == inline,
-                    $"tutorial.md line {example.MarkerLine}: spec:{example.CaseId} inline result `{inline}` differs from canonical display `{specCase.ExpectedDisplay}`.");
+                var display = specCase.RequireDefaultDisplay();
+                Assert.True(display == inline,
+                    $"tutorial.md line {example.MarkerLine}: spec:{example.CaseId} inline result `{inline}` differs from canonical display `{display}`.");
                 continue;
             }
 
@@ -123,9 +124,10 @@ public class TutorialSpecTests
                 // grouping (one group per source row); the display rows are
                 // the non-blank lines in order.
                 var tutorialDisplay = TutorialCorpus.StripPresentationBlanks(fence);
-                Assert.True(specCase.ExpectedDisplay == tutorialDisplay,
+                var display = specCase.RequireDefaultDisplay();
+                Assert.True(display == tutorialDisplay,
                     $"tutorial.md line {example.MarkerLine}: spec:{example.CaseId} results block differs from canonical display.\n" +
-                    $"--- canonical ---\n{specCase.ExpectedDisplay}\n--- tutorial (blank-stripped) ---\n{tutorialDisplay}");
+                    $"--- canonical ---\n{display}\n--- tutorial (blank-stripped) ---\n{tutorialDisplay}");
                 continue;
             }
 
@@ -164,7 +166,7 @@ public class TutorialSpecTests
                 .Where(IsValueLiteral)
                 .ToList();
 
-            var rows = specCase.ExpectedDisplay!.Split('\n');
+            var rows = specCase.RequireDefaultDisplay().Split('\n');
             if (claims.Count != rows.Length)
                 continue;
 

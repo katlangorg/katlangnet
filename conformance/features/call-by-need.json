@@ -1,0 +1,304 @@
+[
+  {
+    "id": "need-selected-signature-payload",
+    "category": "errors",
+    "source": "Inc(x) = x + 1\nF(x, y) = x(y)\nF(Inc)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        2,
+        1
+      ]
+    },
+    "explanation": "Cardinality of the selected F signature rejects before either argument channel is demanded (historical X-43 is superseded)."
+  },
+  {
+    "id": "need-variadic-minimum-payload",
+    "category": "errors",
+    "source": "F(x, *middle, z) = x + z\nF(1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        2,
+        1
+      ]
+    },
+    "explanation": "A collecting middle consumes no mandatory supplied slot; the two fixed positions require two."
+  },
+  {
+    "id": "need-closed-core-demand-is-runtime",
+    "category": "errors",
+    "source": "A(q) = q + 1\nF(x) = A + 0\nF(7)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        1,
+        0
+      ]
+    },
+    "explanation": "A closed body gains no q. Its resolved callable reference is legal, but an actual value demand rejects the ordinary zero-argument call to A(q)."
+  },
+  {
+    "id": "need-unused-ordinary-argument",
+    "category": "variadic-calls",
+    "source": "F(x) = 10\nF(1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "explanation": "An ordinary non-spread argument is a suspended cell. The unused plain binder x never demands its value."
+  },
+  {
+    "id": "need-unused-collector-slice",
+    "category": "variadic-calls",
+    "source": "F(*xs) = 10\nF(1, 1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "explanation": "A collector stores a lazy slice. An unused slice does not demand its members."
+  },
+  {
+    "id": "need-forwarding-preserves-unused-cell",
+    "category": "variadic-calls",
+    "source": "G(x) = 10\nF(x) = G\nF(1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "explanation": "Bare forwarding transports the same parameter cell without forcing it."
+  },
+  {
+    "id": "need-collector-forwarding-preserves-unused-slice",
+    "category": "variadic-calls",
+    "source": "G(*xs) = 10\nF(*xs) = G\nF(1, 1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10"
+      }
+    ],
+    "expectedRaw": "10",
+    "expectedEmittedCount": 1,
+    "explanation": "Re-spreading an existing collector transfers its member cells without materializing the slice."
+  },
+  {
+    "id": "need-ordinary-conditional-selects-one-cell",
+    "category": "variadic-calls",
+    "source": "Choose(true, yes, no) = yes\nChoose(false, yes, no) = no\nChoose(true, 7, 1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "An ordinary clause family forces its literal condition and then only the selected branch's value cell."
+  },
+  {
+    "id": "need-family-shares-failed-attempt-value",
+    "category": "variadic-calls",
+    "source": "F(0, x) = 7\nF(n, 0) = n\nF(3, 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "explanation": "Clause attempts reuse supplied cells. The first literal mismatch does not force its later binder."
+  },
+  {
+    "id": "need-first-loop-step-can-ignore-initial",
+    "category": "variadic-calls",
+    "source": "Step(x) = 7\nrepeat(Step(1 / 0), 1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "The first loop step receives the suspended initial cell. A step that ignores it can produce the final state."
+  },
+  {
+    "id": "need-closed-demand-can-remain-unused",
+    "category": "variadic-calls",
+    "source": "A(q) = q + 1\nKeep(x) = 7\nF(x) = Keep(count(A))\nF(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "A closed body gains no q, but an unused argument containing a zero-argument demand does not fail."
+  },
+  {
+    "id": "need-wrong-arity-precedes-cell-demand",
+    "category": "variadic-calls",
+    "source": "F(x) = x\nF(1 / 0, 2)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        1,
+        2
+      ]
+    },
+    "explanation": "After explicit spread formation, wrong cardinality rejects before ordinary argument cells are demanded."
+  },
+  {
+    "id": "need-explicit-spread-precedes-arity",
+    "category": "variadic-calls",
+    "source": "F(x) = 7\nF(9, (1 / 0)*)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "An arbitrary explicit spread must demand its operand to form supply, even when the resulting call would have wrong arity."
+  },
+  {
+    "id": "need-collector-demand-materializes-whole-slice",
+    "category": "variadic-calls",
+    "source": "F(*xs) = xs\nF(1, 1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "A VALUE read of a collector materializes the full collected list left to right."
+  },
+  {
+    "id": "need-callable-projection-does-not-force-value",
+    "category": "variadic-calls",
+    "source": "Inc(x) = x + 1\nApply(f) = f(4)\nApply(Inc)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "explanation": "A callable consumer projects Inc's identity without making a zero-argument value demand."
+  },
+  {
+    "id": "need-demand-order-decides-the-first-failure",
+    "category": "errors",
+    "source": "F(x, y) = y + x\nF(1 / 0, 'a' + 1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "explanation": "Supplied arguments run in the order they are first demanded, not in written order. The body demands y first, so its type error is the failure the call reports, and the division by zero is never evaluated."
+  },
+  {
+    "id": "need-wrapper-keeps-builtin-if-selection",
+    "category": "conditionals",
+    "source": "MyIf(c, t, e) = if(c, t, e)\nApply3(f, a, b, c) = f(a, b, c)\nMyIf(true, 1, 1 / 0)\nApply3(if, false, 1 / 0, 2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 2]",
+    "expectedEmittedCount": 2,
+    "explanation": "A wrapper's parameters are suspended computations that it passes on unevaluated, so builtin `if` reached through a user wrapper or a higher-order parameter still demands only its condition and the selected branch: the unselected `1 / 0` never runs."
+  },
+  {
+    "id": "need-container-call-checks-cardinality-first",
+    "category": "errors",
+    "source": "A = {\n    public X = 1\n}\nA(6)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        0,
+        1
+      ]
+    },
+    "explanation": "A container has no parameters, so a call that supplies an argument fails its cardinality check before the body runs: the error is the arity mismatch, not the container's missing output."
+  },
+  {
+    "id": "need-collection-builtin-demands-its-collection-first",
+    "category": "collection-builtins",
+    "source": "take(1 / 0, 'a' + 1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "A collection builtin demands its collection first and then its controls, each validated before the next is demanded, so the collection's division by zero is the failure the call reports and the count `'a' + 1` is never evaluated."
+  },
+  {
+    "id": "need-dot-receiver-is-a-supplied-computation",
+    "category": "variadic-calls",
+    "source": "Second(a, b) = b\n(1 / 0).Second(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "A dot call's receiver is the call's first argument, supplied like every argument: it runs only if the callee demands it. `Second` reads only `b`, so the receiver's division by zero never runs, exactly as in the written call `Second(1 / 0, 2)`."
+  },
+  {
+    "id": "need-dot-receiver-follows-callee-demand-order",
+    "category": "variadic-calls",
+    "source": "Flip(a, b) = b + a\n(1 / 0).Flip('a' + 1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "explanation": "The receiver is not evaluated before the written arguments: the callee demands its cells in its own order. `Flip` demands `b` first, so the type error of `'a' + 1` is the failure reported and the receiver's division by zero never runs, as in the written call `Flip(1 / 0, 'a' + 1)`."
+  },
+  {
+    "id": "need-family-binder-keeps-the-callable",
+    "category": "conditionals",
+    "source": "Inc(x) = x + 1\nApp(f, 0) = 0\nApp(f, n) = f(n)\nR(z) = App(Inc, 5)\nR(0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "explanation": "A clause family demands only what its patterns inspect, and a binder keeps its argument's callable identity, so the selected clause can invoke `f` as `Inc`. The closed parameter list of `R` keeps `Inc` a callable argument; in a formula that infers its parameters a family argument is a value position, and a bare callable there would be lifted instead."
+  },
+  {
+    "id": "need-deconstruction-runs-on-first-target-demand",
+    "category": "deconstruction",
+    "source": "p, q = 1 / 0, 2\nI(f) = 0\nI(p), I(q)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0\n0"
+      }
+    ],
+    "expectedRaw": "S[0, 0]",
+    "expectedEmittedCount": 2,
+    "explanation": "A deconstruction's right-hand side runs on the first demand of one of its targets. Passing a target to a callee that never reads it is no demand, so the division by zero never runs and the program succeeds."
+  }
+]

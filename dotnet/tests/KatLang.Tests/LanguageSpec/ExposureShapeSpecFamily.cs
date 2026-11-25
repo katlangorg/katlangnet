@@ -1,50 +1,6 @@
 namespace KatLang.Tests.LanguageSpec;
 
-/// <summary>
-/// The EXPOSURE-SHAPE family of the language spec (EXPORTED-DETACHED, November 2026).
-///
-/// <para>A property that reaches an input of its enclosing owner's call is LOCAL-ONLY: it has
-/// one value per activation of that owner, and it is refused from outside the owner. The
-/// front end decides that statically, by charging the reads and access checks of every route
-/// the property takes. Both evaluators ENFORCE the answer — an exported property is evaluated
-/// detached from the activations that exist when its evaluation starts — so a route the
-/// classification misses is no longer a value shared across calls: the program is refused
-/// (<c>unknownName</c>, <c>localOnlyProperty</c>). Every case here is therefore an
-/// exposure-completeness test in C# and in Lean: its INSIDE program has the per-activation
-/// values only when the route was charged, and its OUTSIDE programs are refused in both row
-/// orders only when the property was classified local-only.</para>
-///
-/// <para>The SOURCES are generated from four dimensions, so that no cell of the matrix is
-/// forgotten; the EXPECTATIONS are hand-written, one row per cell
-/// (<see cref="Cells"/>), and are never derived from an evaluator.</para>
-/// <list type="bullet">
-/// <item><b>Container</b> — what holds <c>Sub</c>, the algorithm whose member <c>Q</c> is read:
-/// a member of a block, a transparent reference to that block, a structural forwarding
-/// carrier's own member, an inline block head.</item>
-/// <item><b>Route</b> — how <c>A</c> reaches <c>Q</c>: a dot path, a dotted <c>open</c> in
-/// <c>A</c>'s own body, an <c>open</c> of a reference, an <c>open</c> of the enclosing
-/// level.</item>
-/// <item><b>Capture position</b> — where <c>Sub</c> reads the owner's parameter <c>y</c>: its
-/// output row (selecting <c>Sub</c> is then the access check that requires <c>y</c>; the value
-/// read is <c>1</c>) or the member <c>Q</c> itself (the value read is <c>y</c>).</item>
-/// <item><b>Access site and row order</b> — inside the owner (<c>F(5), F(7)</c>), and outside
-/// it after and before a call (<c>F(5), F.A</c>; <c>F.A, F(5)</c>).</item>
-/// </list>
-/// <para>Two cells have no evaluation at all: an inline block written directly as an
-/// <c>open</c> target is no part of the opening body's lexical chain, so the <c>y</c> in the
-/// output row of its <c>Sub</c> is <c>Sub</c>'s own parameter, and a provider that takes a
-/// parameter cannot be opened (<c>IllegalInOpen</c>, a front-end refusal). Their expectation is
-/// that diagnostic; the member capture of the same shape evaluates, and so does the same
-/// block behind a reference (<c>L = { … }.Sub</c>, <c>open L</c>).</para>
-/// <para>THE DEFERRED-BRANCH ROUTE of the design's matrix is the ASYNC COMPANION at the end of this
-/// file (<see cref="DeferredCells"/>): <c>A</c> reads <c>Q</c> inside a clause that loads a module on
-/// demand. It needs a module downloader and <c>KatLangEngine.RunAsync</c>, and Lean has no
-/// deferred-region model, so it is C#-only and no part of the Lean-comparable spec corpus above; it
-/// is run, with its own coverage checks, by <c>ExposureShapeDeferredRouteTests</c>.
-/// (<c>DeferredBranchForwardingRefusalTests</c> pins the forwarding refusal's own rule — its routes,
-/// wording and positions — and does not cross this matrix's containers, capture positions, access
-/// sites and row orders.)</para>
-/// </summary>
+/// <summary>The .NET-specific deferred module companion to conformance/features/exposure-shapes.json.</summary>
 internal static class ExposureShapeSpecFamily
 {
     internal enum Container
@@ -55,202 +11,15 @@ internal static class ExposureShapeSpecFamily
         InlineHead,
     }
 
-    internal enum Route
-    {
-        DotPath,
-        DottedOpen,
-        OpenOfReference,
-        EnclosingOpen,
-    }
-
     internal enum Capture
     {
         OutputRow,
         Member,
     }
 
-    /// <summary>
-    /// One cell of the matrix with its HAND-WRITTEN expectations: the raw value of
-    /// <c>F(5), F(7)</c>, and the error category of <c>F(5), F.A</c> and of <c>F.A, F(5)</c> —
-    /// or, for a shape the front end refuses, the fragment of its <c>IllegalInOpen</c>
-    /// diagnostic (<see cref="RefusedOpen"/>), which every row order of the cell then reports.
-    /// </summary>
-    internal sealed record Cell(Container Container, Route Route, Capture Capture, string InsideRaw, string OutsideError)
-    {
-        internal bool IsRefusedOpen => InsideRaw == RefusedOpen;
-    }
-
-    private const string PerCallOne = "S[1, 1]";
-    private const string PerCallValue = "S[5, 7]";
-    private const string Refused = "localOnlyProperty";
-
-    /// <summary>The front end's refusal of an open provider that takes a parameter.</summary>
-    internal const string RefusedOpen = "cannot be opened because open providers must have an empty effective parameter list (found: y)";
-
-    /// <summary>
-    /// The reviewed expectation table. An output-row capture makes the read value the constant
-    /// <c>1</c> of each call; a member capture makes it that call's own <c>y</c>. Outside the
-    /// owner every cell is the refusal that names <c>A</c>, whichever row runs first.
-    /// </summary>
-    internal static readonly IReadOnlyList<Cell> Cells =
-    [
-        new(Container.Member, Route.DotPath, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Member, Route.DotPath, Capture.Member, PerCallValue, Refused),
-        new(Container.Member, Route.DottedOpen, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Member, Route.DottedOpen, Capture.Member, PerCallValue, Refused),
-        new(Container.Member, Route.OpenOfReference, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Member, Route.OpenOfReference, Capture.Member, PerCallValue, Refused),
-        new(Container.Member, Route.EnclosingOpen, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Member, Route.EnclosingOpen, Capture.Member, PerCallValue, Refused),
-
-        new(Container.Reference, Route.DotPath, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Reference, Route.DotPath, Capture.Member, PerCallValue, Refused),
-        new(Container.Reference, Route.DottedOpen, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Reference, Route.DottedOpen, Capture.Member, PerCallValue, Refused),
-        new(Container.Reference, Route.OpenOfReference, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Reference, Route.OpenOfReference, Capture.Member, PerCallValue, Refused),
-        new(Container.Reference, Route.EnclosingOpen, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Reference, Route.EnclosingOpen, Capture.Member, PerCallValue, Refused),
-
-        new(Container.Carrier, Route.DotPath, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Carrier, Route.DotPath, Capture.Member, PerCallValue, Refused),
-        new(Container.Carrier, Route.DottedOpen, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Carrier, Route.DottedOpen, Capture.Member, PerCallValue, Refused),
-        new(Container.Carrier, Route.OpenOfReference, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Carrier, Route.OpenOfReference, Capture.Member, PerCallValue, Refused),
-        new(Container.Carrier, Route.EnclosingOpen, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.Carrier, Route.EnclosingOpen, Capture.Member, PerCallValue, Refused),
-
-        new(Container.InlineHead, Route.DotPath, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.InlineHead, Route.DotPath, Capture.Member, PerCallValue, Refused),
-        new(Container.InlineHead, Route.DottedOpen, Capture.OutputRow, RefusedOpen, RefusedOpen),
-        new(Container.InlineHead, Route.DottedOpen, Capture.Member, PerCallValue, Refused),
-        new(Container.InlineHead, Route.OpenOfReference, Capture.OutputRow, PerCallOne, Refused),
-        new(Container.InlineHead, Route.OpenOfReference, Capture.Member, PerCallValue, Refused),
-        new(Container.InlineHead, Route.EnclosingOpen, Capture.OutputRow, RefusedOpen, RefusedOpen),
-        new(Container.InlineHead, Route.EnclosingOpen, Capture.Member, PerCallValue, Refused),
-    ];
-
     internal const string InsideRows = "F(5), F(7)";
     internal const string OutsideAfterCall = "F(5), F.A";
     internal const string OutsideBeforeCall = "F.A, F(5)";
-
-    /// <summary>The two spec cases of every cell: inside the owner, and outside it.</summary>
-    internal static IEnumerable<SpecCase> Cases()
-    {
-        foreach (var cell in Cells)
-        {
-            var shape = $"{Slug(cell.Container)}-{Slug(cell.Route)}-{Slug(cell.Capture)}";
-            var description = $"{Describe(cell.Container)}, {Describe(cell.Route)}, {Describe(cell.Capture)}";
-            if (cell.IsRefusedOpen)
-            {
-                yield return new SpecCase
-                {
-                    Id = $"exposure-shape-{shape}-refused-open",
-                    Category = "access-boundaries",
-                    Source = Program(cell, InsideRows),
-                    Outcome = SpecOutcome.ParseError,
-                    ExpectedParseDiagnosticFragment = RefusedOpen,
-                    ExpectedDiagnosticCode = DiagnosticCode.IllegalInOpen,
-                    Notes = FamilyNote + " A front-end rejection, so no elaborated Lean program exists.",
-                    Explanation = $"Exposure shape ({description}): an inline block written directly as an `open` "
-                        + "target is not inside the opening body's lexical chain, so the `y` its `Sub` reads in the "
-                        + "output row is `Sub`'s own parameter, and a provider that takes a parameter cannot be "
-                        + "opened. The shape is refused before any evaluation; behind a reference (`L = { … }.Sub`, "
-                        + "`open L`) the same block is inside `F` and evaluates.",
-                };
-                continue;
-            }
-
-            yield return new SpecCase
-            {
-                Id = $"exposure-shape-{shape}-inside",
-                Category = "access-boundaries",
-                Source = Program(cell, InsideRows),
-                Outcome = SpecOutcome.Evaluates,
-                ExpectedDisplay = Display(cell.InsideRaw),
-                ExpectedRaw = cell.InsideRaw,
-                ExpectedEmittedCount = 2,
-                Notes = FamilyNote,
-                Explanation = $"Exposure shape ({description}), read INSIDE the owner: `A` reaches the owner's `y` "
-                    + "through this route, so it is local-only and each call of `F` computes its own `A`. An `A` "
-                    + "classified exported would be evaluated detached from the call and refused, and before "
-                    + "EXPORTED-DETACHED would have given both calls the first call's value.",
-            };
-            yield return new SpecCase
-            {
-                Id = $"exposure-shape-{shape}-outside",
-                Category = "access-boundaries",
-                Source = Program(cell, OutsideAfterCall),
-                Outcome = SpecOutcome.EvalError,
-                ExpectedErrorCategory = cell.OutsideError,
-                Probes = [new SpecProbe(Program(cell, OutsideBeforeCall), $"err {cell.OutsideError}")],
-                Notes = FamilyNote,
-                Explanation = $"Exposure shape ({description}), read OUTSIDE the owner: `F.A` needs an activation of "
-                    + "`F` that the access site does not have, so it is refused naming `A` — after a call of `F` "
-                    + "(no entry of that call is reused) and, as the probe pins, before one.",
-            };
-        }
-    }
-
-    private const string FamilyNote =
-        "EXPORTED-DETACHED exposure-shape family (November 2026): generated sources, hand-written expectations "
-        + "(ExposureShapeSpecFamily.Cells).";
-
-    /// <summary>The program of one cell followed by the given root output rows.</summary>
-    internal static string Program(Cell cell, string rows)
-    {
-        var declarations = new List<string>();
-        var opens = new List<string>();
-        IReadOnlyList<string> target;
-        switch (cell.Container)
-        {
-            case Container.Member:
-                declarations.AddRange(Block("Lib", [.. SubDeclaration(cell.Capture), "0"]));
-                target = ["Lib.Sub"];
-                break;
-            case Container.Reference:
-                declarations.AddRange(Block("Lib", [.. SubDeclaration(cell.Capture), "0"]));
-                declarations.Add("Ref = Lib");
-                target = ["Ref.Sub"];
-                break;
-            case Container.Carrier:
-                declarations.AddRange(Block("Base", ["0"]));
-                declarations.AddRange(Block("Car", [.. SubDeclaration(cell.Capture), "Base"]));
-                target = ["Car.Sub"];
-                break;
-            case Container.InlineHead:
-                target = ["{", .. Indent(SubDeclaration(cell.Capture)), "}.Sub"];
-                break;
-            default:
-                throw new InvalidOperationException(cell.Container.ToString());
-        }
-
-        IReadOnlyList<string> property;
-        switch (cell.Route)
-        {
-            case Route.DotPath:
-                property = Written("A = ", target, ".Q + 0");
-                break;
-            case Route.DottedOpen:
-                property = ["A = {", .. Indent(Written("open ", target)), "  Q + 0", "}"];
-                break;
-            case Route.OpenOfReference:
-                declarations.AddRange(Written("L = ", target));
-                property = ["A = {", "  open L", "  Q + 0", "}"];
-                break;
-            case Route.EnclosingOpen:
-                opens.AddRange(Written("open ", target));
-                property = ["A = Q + 0"];
-                break;
-            default:
-                throw new InvalidOperationException(cell.Route.ToString());
-        }
-
-        IEnumerable<string> lines =
-            ["F(y) = {", .. Indent([.. opens, .. declarations, .. property, "A"]), "}", rows];
-        return string.Join("\n", lines);
-    }
 
     private static IReadOnlyList<string> SubDeclaration(Capture capture)
         => Block("public Sub", capture == Capture.OutputRow ? ["public Q = 1", "y"] : ["public Q = y", "0"]);
@@ -270,14 +39,6 @@ internal static class ExposureShapeSpecFamily
         return lines;
     }
 
-    private static string Display(string raw)
-        => raw switch
-        {
-            PerCallOne => "1\n1",
-            PerCallValue => "5\n7",
-            _ => throw new InvalidOperationException(raw),
-        };
-
     private static string Slug(Container container)
         => container switch
         {
@@ -288,43 +49,8 @@ internal static class ExposureShapeSpecFamily
             _ => throw new InvalidOperationException(container.ToString()),
         };
 
-    private static string Slug(Route route)
-        => route switch
-        {
-            Route.DotPath => "dot-path",
-            Route.DottedOpen => "dotted-open",
-            Route.OpenOfReference => "open-of-reference",
-            Route.EnclosingOpen => "enclosing-open",
-            _ => throw new InvalidOperationException(route.ToString()),
-        };
-
     private static string Slug(Capture capture)
         => capture == Capture.OutputRow ? "row-capture" : "member-capture";
-
-    private static string Describe(Container container)
-        => container switch
-        {
-            Container.Member => "`Sub` is a member of the block `Lib`",
-            Container.Reference => "`Sub` is reached through the transparent reference `Ref = Lib`",
-            Container.Carrier => "`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`",
-            Container.InlineHead => "`Sub` is a member of an inline block head",
-            _ => throw new InvalidOperationException(container.ToString()),
-        };
-
-    private static string Describe(Route route)
-        => route switch
-        {
-            Route.DotPath => "`A` reads `Q` by a dot path",
-            Route.DottedOpen => "`A`'s own body opens the path",
-            Route.OpenOfReference => "`A`'s own body opens the reference `L`",
-            Route.EnclosingOpen => "`A` reads `Q` through an open of the enclosing level",
-            _ => throw new InvalidOperationException(route.ToString()),
-        };
-
-    private static string Describe(Capture capture)
-        => capture == Capture.OutputRow
-            ? "`Sub`'s output row reads `y`"
-            : "`Sub`'s member `Q` reads `y`";
 
     // ── The deferred-branch companion (C#-only, async; run by ExposureShapeDeferredRouteTests) ──────
     //
@@ -347,13 +73,13 @@ internal static class ExposureShapeSpecFamily
     // an enclosing binding the family never charged is refused when the branch is selected
     // (`DeferredBranchForwardsEnclosingParameter`). The matrix crosses that route with:
     //
-    // * the four CONTAINERS and the two CAPTURE positions of the family above;
+    // * the four CONTAINERS and the two CAPTURE positions of the shared exposure-shape family;
     // * a PLACEMENT of the container — at the SITE (declared in `F`, so the branch's read of `y`
     //   through it is written in the program and charged; the module contributes the self-contained
     //   `K`), or in the MODULE the branch loads (so only the module decides that `Q` needs `y`: the
     //   uncharged, inadmissible shape). An inline block head is written in the branch itself and has
     //   no module placement;
-    // * the access sites and row orders of the family above;
+    // * the access sites and row orders of the shared exposure-shape family;
     // * three VARIANTS of each cell: the SELECTED branch (the module is downloaded and the unit
     //   materialized), its EAGER TWIN (the module held at the root and opened through the holder, so
     //   nothing is deferred: the oracle of every accepted shape), and the NEVER-SELECTED control

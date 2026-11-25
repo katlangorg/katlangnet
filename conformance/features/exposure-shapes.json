@@ -1,0 +1,922 @@
+[
+  {
+    "id": "exposure-shape-member-dot-path-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = Lib.Sub.Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A` reads `Q` by a dot path, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-dot-path-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = Lib.Sub.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = Lib.Sub.Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A` reads `Q` by a dot path, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-dot-path-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  A = Lib.Sub.Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A` reads `Q` by a dot path, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-dot-path-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  A = Lib.Sub.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  A = Lib.Sub.Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A` reads `Q` by a dot path, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-dotted-open-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = {\n    open Lib.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A`'s own body opens the path, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-dotted-open-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = {\n    open Lib.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = {\n    open Lib.Sub\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A`'s own body opens the path, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-dotted-open-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  A = {\n    open Lib.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A`'s own body opens the path, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-dotted-open-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  A = {\n    open Lib.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  A = {\n    open Lib.Sub\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A`'s own body opens the path, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-open-of-reference-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A`'s own body opens the reference `L`, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-open-of-reference-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A`'s own body opens the reference `L`, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-open-of-reference-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  L = Lib.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A`'s own body opens the reference `L`, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-open-of-reference-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  L = Lib.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  L = Lib.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A`'s own body opens the reference `L`, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-enclosing-open-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A` reads `Q` through an open of the enclosing level, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-enclosing-open-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A` reads `Q` through an open of the enclosing level, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-enclosing-open-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A` reads `Q` through an open of the enclosing level, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-member-enclosing-open-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  A = Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of the block `Lib`, `A` reads `Q` through an open of the enclosing level, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-dot-path-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  A = Ref.Sub.Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A` reads `Q` by a dot path, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-dot-path-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  A = Ref.Sub.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  A = Ref.Sub.Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A` reads `Q` by a dot path, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-dot-path-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  A = Ref.Sub.Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A` reads `Q` by a dot path, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-dot-path-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  A = Ref.Sub.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  A = Ref.Sub.Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A` reads `Q` by a dot path, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-dotted-open-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  A = {\n    open Ref.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A`'s own body opens the path, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-dotted-open-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  A = {\n    open Ref.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  A = {\n    open Ref.Sub\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A`'s own body opens the path, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-dotted-open-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  A = {\n    open Ref.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A`'s own body opens the path, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-dotted-open-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  A = {\n    open Ref.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  A = {\n    open Ref.Sub\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A`'s own body opens the path, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-open-of-reference-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  L = Ref.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A`'s own body opens the reference `L`, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-open-of-reference-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  L = Ref.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  L = Ref.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A`'s own body opens the reference `L`, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-open-of-reference-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  L = Ref.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A`'s own body opens the reference `L`, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-open-of-reference-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  L = Ref.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  L = Ref.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A`'s own body opens the reference `L`, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-enclosing-open-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Ref.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A` reads `Q` through an open of the enclosing level, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-enclosing-open-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Ref.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  A = Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  open Ref.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Ref = Lib\n  A = Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A` reads `Q` through an open of the enclosing level, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-enclosing-open-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Ref.Sub\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A` reads `Q` through an open of the enclosing level, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-reference-enclosing-open-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Ref.Sub\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  A = Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  open Ref.Sub\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    0\n  }\n  Ref = Lib\n  A = Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is reached through the transparent reference `Ref = Lib`, `A` reads `Q` through an open of the enclosing level, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-dot-path-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  A = Car.Sub.Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A` reads `Q` by a dot path, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-dot-path-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  A = Car.Sub.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  A = Car.Sub.Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A` reads `Q` by a dot path, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-dot-path-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  A = Car.Sub.Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A` reads `Q` by a dot path, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-dot-path-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  A = Car.Sub.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  A = Car.Sub.Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A` reads `Q` by a dot path, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-dotted-open-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  A = {\n    open Car.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A`'s own body opens the path, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-dotted-open-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  A = {\n    open Car.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  A = {\n    open Car.Sub\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A`'s own body opens the path, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-dotted-open-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  A = {\n    open Car.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A`'s own body opens the path, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-dotted-open-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  A = {\n    open Car.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  A = {\n    open Car.Sub\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A`'s own body opens the path, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-open-of-reference-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  L = Car.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A`'s own body opens the reference `L`, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-open-of-reference-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  L = Car.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  L = Car.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A`'s own body opens the reference `L`, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-open-of-reference-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  L = Car.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A`'s own body opens the reference `L`, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-open-of-reference-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  L = Car.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  L = Car.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A`'s own body opens the reference `L`, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-enclosing-open-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Car.Sub\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A` reads `Q` through an open of the enclosing level, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-enclosing-open-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Car.Sub\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  open Car.Sub\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    Base\n  }\n  A = Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A` reads `Q` through an open of the enclosing level, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-enclosing-open-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Car.Sub\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A` reads `Q` through an open of the enclosing level, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-carrier-enclosing-open-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Car.Sub\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  open Car.Sub\n  Base = {\n    0\n  }\n  Car = {\n    public Sub = {\n      public Q = y\n      0\n    }\n    Base\n  }\n  A = Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is an own member of the forwarding carrier `Car = { … ⏎ Base }`, `A` reads `Q` through an open of the enclosing level, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-dot-path-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n  }.Sub.Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A` reads `Q` by a dot path, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-dot-path-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n  }.Sub.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  A = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n  }.Sub.Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A` reads `Q` by a dot path, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-dot-path-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub.Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A` reads `Q` by a dot path, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-dot-path-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  A = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub.Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A` reads `Q` by a dot path, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-dotted-open-row-capture-refused-open",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = {\n    open {\n      public Sub = {\n        public Q = 1\n        y\n      }\n    }.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "IllegalInOpen",
+    "expectedParseDiagnosticFragment": "cannot be opened because open providers must have an empty effective parameter list (found: y)",
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A`'s own body opens the path, `Sub`'s output row reads `y`): an inline block written directly as an `open` target is not inside the opening body's lexical chain, so the `y` its `Sub` reads in the output row is `Sub`'s own parameter, and a provider that takes a parameter cannot be opened. The shape is refused before any evaluation; behind a reference (`L = { … }.Sub`, `open L`) the same block is inside `F` and evaluates.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix. A front-end rejection, so no elaborated Lean program exists."
+  },
+  {
+    "id": "exposure-shape-inline-head-dotted-open-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = {\n    open {\n      public Sub = {\n        public Q = y\n        0\n      }\n    }.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A`'s own body opens the path, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-dotted-open-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = {\n    open {\n      public Sub = {\n        public Q = y\n        0\n      }\n    }.Sub\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  A = {\n    open {\n      public Sub = {\n        public Q = y\n        0\n      }\n    }.Sub\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A`'s own body opens the path, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-open-of-reference-row-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  L = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n  }.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A`'s own body opens the reference `L`, `Sub`'s output row reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-open-of-reference-row-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  L = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n  }.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  L = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n  }.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A`'s own body opens the reference `L`, `Sub`'s output row reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-open-of-reference-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A`'s own body opens the reference `L`, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-open-of-reference-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A`'s own body opens the reference `L`, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-enclosing-open-row-capture-refused-open",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open {\n    public Sub = {\n      public Q = 1\n      y\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "IllegalInOpen",
+    "expectedParseDiagnosticFragment": "cannot be opened because open providers must have an empty effective parameter list (found: y)",
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A` reads `Q` through an open of the enclosing level, `Sub`'s output row reads `y`): an inline block written directly as an `open` target is not inside the opening body's lexical chain, so the `y` its `Sub` reads in the output row is `Sub`'s own parameter, and a provider that takes a parameter cannot be opened. The shape is refused before any evaluation; behind a reference (`L = { … }.Sub`, `open L`) the same block is inside `F` and evaluates.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix. A front-end rejection, so no elaborated Lean program exists."
+  },
+  {
+    "id": "exposure-shape-inline-head-enclosing-open-member-capture-inside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A` reads `Q` through an open of the enclosing level, `Sub`'s member `Q` reads `y`), read INSIDE the owner: `A` reaches the owner's `y` through this route, so it is local-only and each call of `F` computes its own `A`. An `A` classified exported would be evaluated detached from the call and refused, and before EXPORTED-DETACHED would have given both calls the first call's value.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  },
+  {
+    "id": "exposure-shape-inline-head-enclosing-open-member-capture-outside",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  open {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\nF.A, F(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Exposure shape (`Sub` is a member of an inline block head, `A` reads `Q` through an open of the enclosing level, `Sub`'s member `Q` reads `y`), read OUTSIDE the owner: `F.A` needs an activation of `F` that the access site does not have, so it is refused naming `A` — after a call of `F` (no entry of that call is reused) and, as the probe pins, before one.",
+    "notes": "EXPORTED-DETACHED exposure-shape family (November 2026): originally expanded from the reviewed container, route, capture and access-site matrix."
+  }
+]

@@ -1,0 +1,212 @@
+[
+  {
+    "id": "property-access-and-call",
+    "category": "arithmetic",
+    "source": "# Define a property:\nAnswer = 42\n\n# Property-style access:\nAnswer\n\n# Explicit zero-parameter call:\nAnswer()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "42\n42"
+      }
+    ],
+    "expectedRaw": "S[42, 42]",
+    "expectedEmittedCount": 2,
+    "explanation": "Property-style access `Answer` and the explicit call `Answer()` observe the same value; the call shape only controls the zero-argument cache."
+  },
+  {
+    "id": "output-is-ordinary-property",
+    "category": "arithmetic",
+    "source": "Output = 5\nOutput",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = 3\nOutput = A + 2",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "A = 3\nOutput = A + 2\nOutput",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "output = 6\noutput",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "Output(x) = x * 2\nOutput(4)",
+        "expectedNeutral": "ok raw=8 n=1"
+      }
+    ],
+    "explanation": "`Output` and `output` are ordinary identifiers: `Output = 5` defines a regular property named `Output`, and only bare expression rows contribute to algorithm output — a program whose rows are all definitions has no output.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "empty-literal",
+    "category": "empty-and-singleton",
+    "source": "()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "()"
+      }
+    ],
+    "expectedRaw": "S[]",
+    "expectedEmittedCount": 1,
+    "explanation": "`()` is the empty sequence value — a real value occupying one visible output slot that contains zero items.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "empty-wrapped",
+    "category": "empty-and-singleton",
+    "source": "(())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "()"
+      }
+    ],
+    "expectedRaw": "S[]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "count((()))",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "() == (())",
+        "expectedNeutral": "ok raw=true n=1"
+      }
+    ],
+    "explanation": "Redundant parentheses around `()` are one written grouping level that normalizes away: `(())` is the same value as `()`."
+  },
+  {
+    "id": "empty-wrapped-twice",
+    "category": "empty-and-singleton",
+    "source": "((()))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "()"
+      }
+    ],
+    "expectedRaw": "S[]",
+    "expectedEmittedCount": 1,
+    "explanation": "Sequence normalization is not depth-limited: `((()))` is still `()`."
+  },
+  {
+    "id": "singleton-paren",
+    "category": "empty-and-singleton",
+    "source": "(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "(7) == 7",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "count((7))",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "Parentheses around one value are transparent grouping, not a one-item sequence: `(7)` is the atom `7`."
+  },
+  {
+    "id": "singleton-paren-deep",
+    "category": "empty-and-singleton",
+    "source": "(((7)))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "Singleton sequence boundaries normalize away at every depth; `(((7)))` is the atom `7`."
+  },
+  {
+    "id": "empty-eq-family",
+    "category": "empty-and-singleton",
+    "source": "() == ()      # true\n() == (())    # true\n() != (())    # false\ncount(())     # 0\ncount((()))   # 0",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true\ntrue\nfalse\n0\n0"
+      }
+    ],
+    "expectedRaw": "S[true, true, false, 0, 0]",
+    "expectedEmittedCount": 5,
+    "explanation": "Equality is structural on canonical values, so `()` and `(())` are the same value, and both count zero items."
+  },
+  {
+    "id": "empty-capture",
+    "category": "empty-and-singleton",
+    "source": "A = ()\nA",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "()"
+      }
+    ],
+    "expectedRaw": "S[]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = ()\nA.count",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "A = ()\nA == ()",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "A = ()\nA[0]",
+        "expectedNeutral": "err index"
+      }
+    ],
+    "explanation": "`()` stores and reloads like any value: it displays as `()`, counts zero items, equals `()`, and has no item to index."
+  },
+  {
+    "id": "supply-three-rows",
+    "category": "item-supply-vs-value",
+    "source": "10, 20, 30",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n30"
+      }
+    ],
+    "expectedRaw": "S[10, 20, 30]",
+    "expectedEmittedCount": 3,
+    "explanation": "A comma expression list at root output creates three top-level output slots — an item supply, not one sequence value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "value-three-items",
+    "category": "item-supply-vs-value",
+    "source": "(1 + 1, 2 + 2, 3 + 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(2, 4, 6)"
+      }
+    ],
+    "expectedRaw": "S[2, 4, 6]",
+    "expectedEmittedCount": 1,
+    "explanation": "Parentheses materialize an expression list as one sequence value occupying one output slot.",
+    "includeInGeneratorPrompt": true
+  }
+]

@@ -1,0 +1,353 @@
+[
+  {
+    "id": "supply-vs-value-patterns",
+    "category": "variadic-calls",
+    "source": "CountValues(*values) = values.count\nCountSequenceValue((*values)) = values.count\n\nCountValues()\nCountValues(1, 2, 3)\nCountValues((1, 2, 3))\nCountSequenceValue((1, 2, 3))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0\n3\n1\n3"
+      }
+    ],
+    "expectedRaw": "S[0, 3, 1, 3]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "CountValues(*values) = values.count\nCountValues((1, 2, 3), 4)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "CountSequenceValue((*values)) = values.count\nCountSequenceValue((1, 2, 3), 4)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "CountValues(*values) = values.count\nCountValues([1, 2, 3])",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "CountSequenceValue((*values)) = values.count\nCountSequenceValue([1, 2, 3])",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "CountListValue([*values]) = values.count\nCountListValue([1, 2, 3])",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "Top-level `*values` collects the call's ARGUMENTS: a grouped `(1, 2, 3)` is ONE argument (count 1), two arguments stay two (`CountValues((1, 2, 3), 4)` counts 2), and a list is one argument too. The sequence pattern `(*values)` is the explicit structural opener instead: it consumes exactly one argument, which must be a SEQUENCE value, and opens it during binding (`CountSequenceValue((1, 2, 3))` counts 3), so a second argument is an arity error and a list is its kind mismatch; the list pattern `[*values]` opens a list the same way."
+  },
+  {
+    "id": "singleton-sequence-pattern-is-invalid",
+    "category": "empty-and-singleton",
+    "source": "F((x)) = x\nF(7)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "SingletonSequencePattern",
+    "expectedParseDiagnosticFragment": "no one-item sequence value",
+    "probes": [
+      {
+        "source": "F((*xs)) = xs\nF((1, 2))",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "F([x]) = x\nF([7])",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "F(x) = (x)\nF((7))",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "KatLang has no one-item sequence value — `(7)` IS `7` — so a sequence pattern with exactly ONE non-collecting item describes a boundary no value has. The front end rejects it at every nesting level, in ordinary definitions and clause families alike, instead of silently reading `F((x))` as `F(x)`: bind the whole value with a plain name `x`, or use the list pattern `[x]` for a one-element list. The collector-only `(*xs)` stays valid — a collector stands for a sequence's elements, not for a sequence of one — and grouping in expressions is unaffected (`(x)` there IS `x`).",
+    "notes": "Source-level pattern diagnostic; no elaborated Lean program exists for a rejected parse. Lean enforces the same rule on hand-built trees: validateExplicitParamOutputInvariant rejects a singleton sequence pattern before evaluation (CoreTests singletonSequencePatternIsRejectedBeforeEvaluation).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "list-patterns-cover-every-cardinality",
+    "category": "lists",
+    "source": "L([*xs]) = xs\nOnly([x]) = x\nPair([x, y]) = x + y\nEnds([first, *middle, last]) = first, middle, last\n\nL([]), L([1]), L([1, 2])\nOnly([10])\nPair([10, 20])\nEnds([1, 2, 3, 4])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[]\n[1]\n[1, 2]\n10\n30\n(1, [2, 3], 4)"
+      }
+    ],
+    "expectedRaw": "S[L[], L[1], L[1, 2], 10, 30, S[1, L[2, 3], 4]]",
+    "expectedEmittedCount": 6,
+    "probes": [
+      {
+        "source": "Only([x]) = x\nOnly(7)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Only([x]) = x\nOnly((7, 8))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Only([x]) = x\nOnly([7, 8])",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Only([x]) = x\nOnly([[7]])",
+        "expectedNeutral": "ok raw=L[7] n=1"
+      },
+      {
+        "source": "E([]) = 0\nE([])",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "E([]) = 0\nE(())",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "E(()) = 0\nE([])",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "Lists keep every cardinality, so list patterns do too: `[]` matches the empty list, `[x]` exactly a one-element list (the one-element structural pattern), `[x, y]` a two-element list, and a collector — `[*xs]`, `[first, *rest]`, `[first, *middle, last]` — collects the remaining elements of a list of any length as an exact list. A list pattern opens LIST values only: a scalar or a sequence is its kind mismatch. The empty sequence `()` and the empty list `[]` are different values, and `()` and `[]` are different patterns.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "nested-structural-patterns-keep-their-kind",
+    "category": "variadic-calls",
+    "source": "F(([x, y], z)) = x + y + z\nG([(x, y), z]) = x + y + z\n\nF(([10, 20], 30))\nG([(1, 2), 3])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "60\n6"
+      }
+    ],
+    "expectedRaw": "S[60, 6]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(([x, y], z)) = x + y + z\nF(((10, 20), 30))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "F(([x, y], z)) = x + y + z\nF([[10, 20], 30])",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "G([(x, y), z]) = x + y + z\nG([[1, 2], 3])",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "F(x, y) = x + y\nF(1, 2)",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "F((x, y)) = x + y\nF(1, 2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F([x, y]) = x + y\nF((1, 2))",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "Structural patterns compose, keeping their kind at every level: `F(([x, y], z))` takes ONE argument that must be a two-element sequence whose first element is a two-element list, and `G([(x, y), z])` is the mirror image. Outer call arity is separate from structural shape: `F(x, y)` has two parameters, `F((x, y))` one parameter whose value must be a two-element sequence, and `F([x, y])` one parameter whose value must be a two-element list.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "structural-patterns-open-only-their-own-kind",
+    "category": "variadic-calls",
+    "source": "PairSum((x, y)) = x + y\nListSum([x, y]) = x + y\n\nPairSum((2, 3))\nListSum([2, 3])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n5"
+      }
+    ],
+    "expectedRaw": "S[5, 5]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "PairSum((x, y)) = x + y\nPairSum([2, 3])",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "PairSum((x, y)) = x + y\nPairSum(7)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "PairSum((x, y)) = x + y\nPairSum((1, 2, 3))",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "ListSum([x, y]) = x + y\nListSum((2, 3))",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Count((*v)) = v.count\nCount((1, 2, 3))",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "Count((*v)) = v.count\nCount([1, 2, 3])",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "LCount([*v]) = v.count\nLCount([7])",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "PairSum((x, y)) = x + y\n[(1, 2), (3, 4)].map(PairSum)",
+        "expectedNeutral": "ok raw=L[3, 7] n=1"
+      },
+      {
+        "source": "PairSum((x, y)) = x + y\n[[1, 2], (3, 4)].map(PairSum)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "F((x, y)) = x + y\nF(z) = 0\nF([2, 3])",
+        "expectedNeutral": "ok raw=0 n=1"
+      }
+    ],
+    "explanation": "Structural pattern delimiters select the value kind they destructure. A parenthesized sequence pattern consumes one argument slot and opens a SEQUENCE value only; a bracketed list pattern opens a LIST value only. A value of the other kind — or a scalar, which is never a one-item structure — is the pattern's kind mismatch, a type error in an ordinary definition; the right kind with the wrong number of elements is an arity error. Clause families follow the same law, where a mismatch only rejects that clause.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "binding-failure-outranks-repeated-name-conflict",
+    "category": "variadic-calls",
+    "source": "Bad = 1 / 0\nP(x, x, (a, b)) = a\n\nP(1, 2, Bad)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "badArity",
+      "names": [],
+      "counts": []
+    },
+    "probes": [
+      {
+        "source": "P(x, x, (a, b)) = a\nP(1, 2, 7)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P(x, x, (a, b)) = a\nP(1, 2, (7, 8, 9))",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = 5\nB = 2 + 3\nP(x, x, f, f) = 0\nP(1, 2, A, B)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = 5\nB = 2 + 3\nP(f, f, x, x) = 0\nP(A, B, 1, 2)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "Bad = 1 / 0\nP(x, x, y, y) = 0\nP(Bad, 7, 1, 2)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nP((x, x), (a, b)) = a\nP((1, 2), Bad)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P(x, x, (a, b)) = b\nP(1, 1, (2, 3))",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "Repeated names are checked occurrence by occurrence in written pattern order. The second unequal `x` is an arity conflict, so the later structural argument `Bad` is never demanded. A demanded failure still aborts binding, and two distinct callable identities conflict at the occurrence that reveals the difference, before either value is needed. Nested patterns follow the same order. Callbacks and loop state use this binder too."
+  },
+  {
+    "id": "repeated-name-binding-is-order-independent",
+    "category": "variadic-calls",
+    "source": "A = 5\nB = 2 + 3\nP(f, f, f) = f\n\nP(A, 5, B)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "A = 5\nB = 2 + 3\nP(f, f, f) = f\nP(B, 5, A)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "A = 5\nB = 2 + 3\nP(f, f, f) = f\nP(5, A, B)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "A = 5\nP(f, f, f) = f\nP(A, A, 5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "A = 5\nP(f, f, f) = f\nP(5, A, A)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "A = 5\nB = 6\nP(f, f, f) = f\nP(B, 5, A)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Bad = 1 / 0\nP(f, f, f) = f\nP(5, Bad, 5)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nP(f, f, f) = f\nP(5, 5, Bad)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Inc(y) = y + 1\nP(f, f) = f\nP(5, Inc)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "Each repeated occurrence is inspected when it is reached: a callable contribution's identity is compared with the group's at once, and values are compared as soon as a plain value takes part — the first plain value is checked against every earlier callable contribution's own value, in written order. Compatible values and callable identities succeed regardless of order; conflicts or demand failures stop at their first occurrence. Equal values from distinct named callables conflict, while a ready scalar has no callable channel. A failing value is never replaced by another occurrence's value or callable."
+  },
+  {
+    "id": "repeated-name-is-a-constraint-not-a-merge",
+    "category": "variadic-calls",
+    "source": "Inc(y) = y + 1\nP(x, x) = x, x(5)\n\nP(Inc, 1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "Inc(y) = y + 1\nP(x, x) = x, x(5)\nP(1, Inc)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Bad = 1 / 0\nQ(x, x) = x\nQ(Bad, 7)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nQ(x, x) = x\nQ(7, Bad)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Bad = 1 / 0\nMissing = [1][5]\nQ(x, x) = x\nQ(Missing, Bad)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "P(x, x) = x\nP(7, 7)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "A = 5\nP(f, f) = f, f()\nP(5, A)",
+        "expectedNeutral": "ok raw=S[5, 5] n=1"
+      },
+      {
+        "source": "Bad = 1 / 0\nE(x, x) = true\nE(x, y) = false\nE(Bad, 7)",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "A repeated parameter name is a constraint over arguments that are each supplied independently, never a way to combine them. Arguments that name an algorithm must name the same one; as soon as one occurrence is a plain value, every occurrence must supply its own value, and the values must be equal. `Inc` passed without arguments has no value (reading it as one is an arity error), so `P(Inc, 1)` and `P(1, Inc)` both fail with that error: the value 1 is never paired with Inc's callable. An argument whose evaluation fails reports its own error, and another occurrence's value never stands in for it. When equal values arrive together with a callable, the callable accompanies its own argument's value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "repeated-equal-values-require-one-callable-identity",
+    "category": "variadic-calls",
+    "source": "A(*xs) = 5\nB(*xs) = 5 + xs.count\nP(f, f) = f(1)\nP(A, B)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "probes": [
+      {
+        "source": "A(*xs) = 5\nB(*xs) = 5 + xs.count\nP(f, f) = f(1)\nP(B, A)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "A(*xs) = 5\nB(*xs) = 5 + xs.count\nP(f, *r, f) = f(1)\nP(A, 9, B)",
+        "expectedNeutral": "err type"
+      },
+      {
+        "source": "A = 5\nB = 5\nP(f, f) = f\nP(A, B)",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "Repeated callable contributions must have the same callable identity (declaration and captured lexical activations), and as soon as a plain value takes part, every contribution's own value must be equal to it. Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.",
+    "includeInGeneratorPrompt": true
+  }
+]

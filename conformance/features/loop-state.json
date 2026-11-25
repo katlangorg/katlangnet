@@ -1,0 +1,217 @@
+[
+  {
+    "id": "hunt-loop-while-false-round-forms-no-earlier-rows",
+    "category": "conditionals",
+    "source": "Step(t, n) = tick(), n + 1, n < 2\nStep(0, 0).while, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(2, 2)\n3"
+      }
+    ],
+    "expectedRaw": "S[S[2, 2], 3]",
+    "expectedEmittedCount": 2,
+    "explanation": "A `while` round reads its flag first: the two `true` rounds form `tick()` (ticks 1 and 2); the `false` round returns the state that entered it without forming the earlier rows, so the next `tick()` is 3."
+  },
+  {
+    "id": "hunt-loop-while-empty-trailing-spread-passed-over",
+    "category": "conditionals",
+    "source": "Step(t, n) = tick(), n + 1, n < 2, ()*\nStep(0, 0).while, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(2, 2)\n3"
+      }
+    ],
+    "expectedRaw": "S[S[2, 2], 3]",
+    "expectedEmittedCount": 2,
+    "explanation": "An empty trailing spread supplies no item, so the flag is the last row that supplies one (`n < 2`); otherwise the round is as without it."
+  },
+  {
+    "id": "hunt-loop-while-single-item-state-and-flag",
+    "category": "conditionals",
+    "source": "Step(b) = not b\nStep(true).while",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true"
+      }
+    ],
+    "expectedRaw": "true",
+    "expectedEmittedCount": 1,
+    "explanation": "The step's one item is both the next state and the flag; the first round's flag is `false`, so the entering state `true` is the result."
+  },
+  {
+    "id": "hunt-loop-repeat-prepares-supply-before-count",
+    "category": "conditionals",
+    "source": "S(*xs) = xs.sum * 10, 1\nrepeat(S((tick(), 10)*), tick())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1110, 1)"
+      }
+    ],
+    "expectedRaw": "S[1110, 1]",
+    "expectedEmittedCount": 1,
+    "explanation": "`repeat` prepares the captured supply (its spread runs: tick 1) before it demands the count (tick 2), so two iterations run from `(1, 10)`."
+  },
+  {
+    "id": "hunt-loop-repeat-zero-never-projects-step",
+    "category": "conditionals",
+    "source": "R(v) = repeat(v(1), 0)\nR(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "explanation": "With zero iterations the step is never projected, so a parameter holding a plain number is no error and the initial state is the result."
+  },
+  {
+    "id": "hunt-loop-repeat-step-without-callable",
+    "category": "errors",
+    "source": "R(v) = repeat(v(1), 1)\nR(5)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "explanation": "The first iteration needs the step's callable; a parameter holding the number `5` has none, so the loop reports `NotAnAlgorithm`."
+  },
+  {
+    "id": "hunt-loop-builtin-step-result-is-one-row",
+    "category": "conditionals",
+    "source": "count((1, 2, 3)).repeat(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "explanation": "A builtin step returns one value, one row: `count((1, 2, 3))` is 3, then `count(3)` is 1."
+  },
+  {
+    "id": "hunt-loop-carrier-step-forwards",
+    "category": "conditionals",
+    "source": "Inc(x) = x + 1\nB = { Inc }\nB(5).repeat(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "explanation": "A carrier `B = { Inc }` is an ordinary callable step: each iteration forwards the state to `Inc`."
+  },
+  {
+    "id": "hunt-loop-nested-loop-is-one-slot",
+    "category": "conditionals",
+    "source": "Inner(x) = x + 1\nOuter(s, k) = Inner(s).repeat(k), k + 1\nOuter(0, 1).repeat(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(6, 4)"
+      }
+    ],
+    "expectedRaw": "S[6, 4]",
+    "expectedEmittedCount": 1,
+    "explanation": "A completed inner loop is one value, so it fills one slot of the outer step's next state."
+  },
+  {
+    "id": "hunt-loop-meta-parameter-cannot-forward-step",
+    "category": "errors",
+    "source": "W(meta step) = while(step)\nStep(n) = n + 1, n < 3\nW(Step(0))",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "explanation": "`W(meta step)` binds a call reference, not a written invocation, so `while(step)` inside it is refused as `NotAnAlgorithm`; an ordinary parameter forwards the call."
+  },
+  {
+    "id": "hunt-loop-bare-member-path-is-no-step",
+    "category": "errors",
+    "source": "Box = { public S(n) = n + 1, n < 3 }\nBox.S.while",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "explanation": "`Box.S.while` passes the member path itself, not an invocation; only a written call such as `Box.S(0).while` is a step."
+  },
+  {
+    "id": "hunt-loop-local-step-temporary-per-round",
+    "category": "conditionals",
+    "source": "Step(n, acc) = {\n  K = tick() + n * 0\n  n + 1, acc + K, n < 3\n}\nStep(0, 0).while, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(3, 6)\n4"
+      }
+    ],
+    "expectedRaw": "S[S[3, 6], 4]",
+    "expectedEmittedCount": 2,
+    "explanation": "Each of the three continuing rounds reads its own `K` to form `acc + K`. The fourth round evaluates only `n < 3`, so the accumulator stays at 6 and the final `tick()` is 4."
+  },
+  {
+    "id": "hunt-loop-step-temporary-read-then-call",
+    "category": "conditionals",
+    "source": "Step(n, acc) = {\n  K = tick() + n * 0\n  n + 1, acc + K + K(), n < 3\n}\nStep(0, 0).while, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(3, 21)\n7"
+      }
+    ],
+    "expectedRaw": "S[S[3, 21], 7]",
+    "expectedEmittedCount": 2,
+    "explanation": "In each round `K` is read (and published for that round) and then `K()` runs fresh: two ticks per round."
+  },
+  {
+    "id": "hunt-loop-exported-temporary-call-is-fresh",
+    "category": "conditionals",
+    "source": "Step(n) = {\n  K = tick()\n  n + K()\n}\nStep(0).repeat(3), tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6\n4"
+      }
+    ],
+    "expectedRaw": "S[6, 4]",
+    "expectedEmittedCount": 2,
+    "explanation": "Every round of the loop is a call of `Step` with its own `K`, and `K()` is an explicit call, which runs afresh: `tick()` runs once in each of the three rounds, so the state is `0 + 1 + 2 + 3` and the final `tick()` is 4.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026). The value is the bug hunt's; its explanation named one `K` for the whole run, which the first `K()` established. Every round now has its own `K`."
+  },
+  {
+    "id": "hunt-loop-step-structural-head-binds-state",
+    "category": "conditionals",
+    "source": "Step((a, b), n) = (b, a + b), n + 1\nStep((0, 1), 0).repeat(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "((5, 8), 5)"
+      }
+    ],
+    "expectedRaw": "S[S[5, 8], 5]",
+    "expectedEmittedCount": 1,
+    "explanation": "The step's structural pattern binds the incoming state; the rows form the next state, a sequence slot and a number."
+  },
+  {
+    "id": "hunt-loop-step-collecting-head-collects-state",
+    "category": "conditionals",
+    "source": "Step(*xs) = xs.sum, xs.count\nStep(1, 2, 3).repeat(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(9, 2)"
+      }
+    ],
+    "expectedRaw": "S[9, 2]",
+    "expectedEmittedCount": 1,
+    "explanation": "A collecting head collects every incoming state slot; the next state is the rows `(6, 3)`, then `(9, 2)`."
+  },
+  {
+    "id": "hunt-loop-step-repeated-name-must-agree",
+    "category": "errors",
+    "source": "Step(x, x) = x + 1, x + 2\nStep(1, 1).repeat(2)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "The second iteration supplies `(2, 3)` to `Step(x, x)`, whose repeated name requires equal values: an arity error."
+  }
+]

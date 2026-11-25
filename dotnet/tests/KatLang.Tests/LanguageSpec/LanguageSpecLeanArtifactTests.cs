@@ -91,7 +91,7 @@ public class LanguageSpecArtifactsTests
             GENERATED FILE - DO NOT EDIT BY HAND.
 
             Canonical executable language specification, Lean half
-            (source corpus: dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs).
+            (source corpus: conformance/cases.json).
 
             Each `#guard` pins the CANONICAL expectation of one specification case —
             not an observed value. The C# runner (LanguageSpecRunnerTests) asserts the
@@ -103,9 +103,9 @@ public class LanguageSpecArtifactsTests
             Partition (machine-checked by the `specCaseIds.length` guard below):
             - specification surface cases: {cases.Count}
             - excluded parse-level cases (Lean has no surface parser): {parseLevel}
-            - excluded C#-only cases (each carries an explicit reason in the corpus): {csharpOnly}
+            - other shared cases outside the Lean model (each carries an explicit reason in the corpus): {csharpOnly}
             - Lean-guarded cases: {leanGuarded.Count}
-            - probe observations (C#-only by design): {cases.Sum(c => c.Probes.Count)}
+            - probe observations (checked by surface runners): {cases.Sum(c => c.Probes.Count)}
             - internal-node cases live in the semantic-explorer corpus, not here: see
               lean/SemanticExplorerCases.lean
             - {CachePilotCase.PartitionLine(cachePilot, leanGuarded.Count)};

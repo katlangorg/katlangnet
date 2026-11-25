@@ -1,0 +1,44 @@
+[
+  {
+    "id": "selective-collector-take-zero-demands-no-element",
+    "category": "variadic-calls",
+    "source": "Prefix(*xs) = xs.take(0)\nPrefix(1 / 0)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[]"
+      }
+    ],
+    "expectedRaw": "L[]",
+    "expectedEmittedCount": 1,
+    "explanation": "Over a collecting parameter, `take` demands and validates its count before it reads any position. A count of 0 keeps no position, so no argument is demanded: the failing `1 / 0` never runs and the result is the empty list."
+  },
+  {
+    "id": "selective-collector-take-count-error-precedes-elements",
+    "category": "errors",
+    "source": "Prefix(*xs) = xs.take('a' + 1)\nPrefix(1 / 0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "explanation": "Over a collecting parameter, `take` demands its count before any element, so the type mismatch of `'a' + 1` is the error of `take` and the first argument's division by zero is never demanded. A written collection is the other way round: `take(1 / 0, 'a' + 1)` demands the collection first."
+  },
+  {
+    "id": "decon-target-calls-reuse-the-shared-source",
+    "category": "deconstruction",
+    "source": "a, b = tick(), 20\na(), a(), b",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1\n20"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 20]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "a, b = tick(), 20\na(), a(), b, tick()",
+        "expectedNeutral": "ok raw=S[1, 1, 20, 2] n=4"
+      }
+    ],
+    "explanation": "Calling a deconstruction target selects from the one shared calculation of the right-hand side instead of running it again: both calls `a()` read the same `tick()` result, 1, and `b` reads 20 from it. The right-hand side runs once, so a `tick()` written after these rows gives 2."
+  }
+]

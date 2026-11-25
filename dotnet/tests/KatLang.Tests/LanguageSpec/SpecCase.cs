@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace KatLang.Tests.LanguageSpec;
 
 /// <summary>Expected top-level outcome of a specification case.</summary>
@@ -9,7 +11,7 @@ public enum SpecOutcome
     /// <summary>The program parses but evaluation fails with a stable error category.</summary>
     EvalError,
 
-    /// <summary>The program is rejected by the parser (C#-only; Lean has no surface parser).</summary>
+    /// <summary>The program is rejected by the front end (Lean has no surface parser).</summary>
     ParseError,
 }
 
@@ -17,15 +19,20 @@ public enum SpecOutcome
 /// An auxiliary observation attached to a case: a complete standalone KatLang
 /// program (typically deriving an equality, count, <c>.count</c>, or indexing
 /// view of the case's value) pinned to a canonical neutral observation.
-/// Probes execute on the C# side only; they are not part of the Lean-guarded
-/// partition.
+/// Each surface implementation runs the probes independently of the main program.
 /// </summary>
 /// <param name="Probe">Complete standalone KatLang program.</param>
 /// <param name="ExpectedNeutral">
 /// Canonical neutral observation, in the harness encoding:
 /// <c>ok raw=... n=...</c> or <c>err CATEGORY</c>.
 /// </param>
-public sealed record SpecProbe(string Probe, string ExpectedNeutral);
+public sealed record SpecProbe([property: JsonPropertyName("source")] string Probe, string ExpectedNeutral);
+
+/// <summary>Expected LF-separated output for one rendering of the completed result.</summary>
+public sealed record SpecDisplayCheck(string Text, int? MinDecimalPlaces = null, int? MaxDecimalPlaces = null)
+{
+    public bool UsesDefaultHostSettings() => MinDecimalPlaces is null && MaxDecimalPlaces is null;
+}
 
 /// <summary>
 /// One canonical language-specification case. Unlike the semantic-explorer
@@ -52,11 +59,12 @@ public sealed record SpecCase
     /// <summary>Reader-facing explanation, phrased in tutorial vocabulary.</summary>
     public required string Explanation { get; init; }
 
-    /// <summary>
-    /// Canonical engine display text ("\n" row separators; "" for zero-row
-    /// output). Required when <see cref="Outcome"/> is Evaluates.
-    /// </summary>
-    public string? ExpectedDisplay { get; init; }
+    /// <summary>Optional renderings to check after a successful evaluation.</summary>
+    public IReadOnlyList<SpecDisplayCheck> DisplayChecks { get; init; } = [];
+
+    public string RequireDefaultDisplay()
+        => DisplayChecks.SingleOrDefault(check => check.UsesDefaultHostSettings())?.Text
+            ?? throw new InvalidDataException($"{Id}: a published output example requires a display check with default host settings.");
 
     /// <summary>
     /// Canonical raw result structure in the neutral encoding shared with the
@@ -142,7 +150,7 @@ public sealed record SpecCase
 
     /// <summary>
     /// Required when a non-parse-error case has no
-    /// <see cref="LeanProgram"/>: why the case is C#-only (an intentional
+    /// <see cref="LeanProgram"/>: why the case has no Lean guard (an intentional
     /// model divergence such as decimal semantics outside the Lean Int core,
     /// or a shape the encoder deliberately does not cover). The derivation
     /// step skips excluded cases, so this is also the explicit unsupported
@@ -152,7 +160,7 @@ public sealed record SpecCase
     /// </summary>
     public string? LeanExclusionReason { get; init; }
 
-    /// <summary>Auxiliary canonical observations (C#-only partition).</summary>
+    /// <summary>Auxiliary canonical observations for surface runners.</summary>
     public IReadOnlyList<SpecProbe> Probes { get; init; } = [];
 
     /// <summary>

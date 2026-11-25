@@ -1,0 +1,282 @@
+[
+  {
+    "id": "hunt-lifting-cycle-settles-as-one-signature",
+    "category": "name-resolution",
+    "source": "C = B + z\nA = {\n  H = B + 0\n  x + 1\n}\nB = y + A\nC(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "The nested helper `H` lifts `B` and captures `A`'s `x`. The output of `A(x)` is `x + 1`, so `B(y, x)` computes `y + (x + 1)` and `C(z, y, x)` adds `z`. The call gives `2 + (3 + 1) + 1`."
+  },
+  {
+    "id": "hunt-lifting-cycle-declaration-order-unobservable",
+    "category": "name-resolution",
+    "source": "B = y + A\nA = {\n  H = B + 0\n  x + 1\n}\nC = B + z\nC(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "The same program with the declarations reordered: signature selection does not depend on declaration order."
+  },
+  {
+    "id": "hunt-lifting-mutual-recursion-settles",
+    "category": "name-resolution",
+    "source": "A = if(tick() > 3, x + y, B + 1)\nB = A + z\nA(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "15"
+      }
+    ],
+    "expectedRaw": "15",
+    "expectedEmittedCount": 1,
+    "explanation": "`A` and `B` lift each other; the cycle settles as `A(x, y, z)`, and the recursion runs until `tick() > 3`."
+  },
+  {
+    "id": "hunt-lifting-recursive-formula-settles",
+    "category": "name-resolution",
+    "source": "F = if(tick() > 3, x, F + 1)\nF(10)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "13"
+      }
+    ],
+    "expectedRaw": "13",
+    "expectedEmittedCount": 1,
+    "explanation": "`F` lifts itself; the recursive inference settles as `F(x)`, and the recursion ends when `tick() > 3`."
+  },
+  {
+    "id": "hunt-grace-postfix-moves-ysx",
+    "category": "name-resolution",
+    "source": "Z = s~ * 100 + x~ * 10 + y\nZ(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "231"
+      }
+    ],
+    "expectedRaw": "231",
+    "expectedEmittedCount": 1,
+    "explanation": "Postfix Grace on `s` and `x`: the turn order gives `Z(y, s, x)`, so `Z(1, 2, 3)` is `231`."
+  },
+  {
+    "id": "hunt-grace-three-postfix-markers",
+    "category": "name-resolution",
+    "source": "K = a~ * 1000 + b~ * 100 + c~ * 10 + d\nK(1, 2, 3, 4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2341"
+      }
+    ],
+    "expectedRaw": "2341",
+    "expectedEmittedCount": 1,
+    "explanation": "Three postfix markers move `a`, `b`, `c` after `d`: `K(d, a, b, c)`."
+  },
+  {
+    "id": "hunt-grace-three-prefix-markers",
+    "category": "name-resolution",
+    "source": "K = a * 1000 + ~b * 100 + ~c * 10 + ~d\nK(1, 2, 3, 4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "4123"
+      }
+    ],
+    "expectedRaw": "4123",
+    "expectedEmittedCount": 1,
+    "explanation": "Three prefix markers move `b`, `c`, `d` before `a`: `K(b, c, d, a)`."
+  },
+  {
+    "id": "hunt-grace-mixed-markers",
+    "category": "name-resolution",
+    "source": "K = a * 10000 + b~ * 1000 + c~ * 100 + d~ * 10 + ~e\nK(1, 2, 3, 4, 5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "23451"
+      }
+    ],
+    "expectedRaw": "23451",
+    "expectedEmittedCount": 1,
+    "explanation": "Postfix markers on `b`, `c`, `d` and a prefix marker on `e` give `K(e, a, b, c, d)`."
+  },
+  {
+    "id": "hunt-lifting-group-pattern-first-occurrence",
+    "category": "name-resolution",
+    "source": "P((x, a), x) = x * 10 + a\nD = P + 0\nD((1, 2))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "12"
+      }
+    ],
+    "expectedRaw": "12",
+    "expectedEmittedCount": 1,
+    "explanation": "`P((x, a), x)` lifts the group `(x, a)` (one binding per name), so `D((1, 2))` supplies `x` to both occurrences."
+  },
+  {
+    "id": "hunt-lifting-group-pattern-second-occurrence",
+    "category": "name-resolution",
+    "source": "P(x, (x, a)) = x * 10 + a\nD = P + 0\nD(1, 2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "12"
+      }
+    ],
+    "expectedRaw": "12",
+    "expectedEmittedCount": 1,
+    "explanation": "`P(x, (x, a))` lifts `x, a`: `D(1, 2)` builds the group from the two bindings."
+  },
+  {
+    "id": "hunt-lifting-group-of-one-binder-is-the-binder",
+    "category": "name-resolution",
+    "source": "P((x, x)) = x\nD = P + 0\nD(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "explanation": "`P((x, x))` lifts the single binding `x`, never the invalid singleton group `(x)`."
+  },
+  {
+    "id": "hunt-lifting-list-group-keeps-kind",
+    "category": "name-resolution",
+    "source": "P(x, [x, a]) = x * 10 + a\nD = P + 0\nD(1, [2])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "12"
+      }
+    ],
+    "expectedRaw": "12",
+    "expectedEmittedCount": 1,
+    "explanation": "`P(x, [x, a])` lifts `x, [a]`: the list group keeps its kind."
+  },
+  {
+    "id": "hunt-lifting-shared-collector-name-is-one-binding",
+    "category": "name-resolution",
+    "source": "C(n, *xs) = n + xs.count\nK = C + C\nK(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "explanation": "Both uses of `C(n, *xs)` share one binding per name, so `K = C + C` is `K(n, *xs)`."
+  },
+  {
+    "id": "hunt-forwarding-new-parameter-beside-property-read",
+    "category": "name-resolution",
+    "source": "v = 99\nNeed(v) = v\nOuter = {\n  Inner = v\n  Inner + Need\n}\nOuter(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "106"
+      }
+    ],
+    "expectedRaw": "106",
+    "expectedEmittedCount": 1,
+    "explanation": "`Inner = v` reads the root property `v`; `Need` lifts and gains a NEW forwarded parameter `v` for `Outer` (no parameter binding supplies it), so `Outer(7)` is `99 + 7`."
+  },
+  {
+    "id": "hunt-lifting-dot-call-order-receiver-member-arguments",
+    "category": "name-resolution",
+    "source": "K = a.t(b)\nT(p, q) = p * 10 + q\nK(5, T, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "53"
+      }
+    ],
+    "expectedRaw": "53",
+    "expectedEmittedCount": 1,
+    "explanation": "`a.t(b)` contributes its receiver, its fallback member and its argument in that order: `K(a, t, b)`."
+  },
+  {
+    "id": "hunt-grace-on-dot-receiver",
+    "category": "name-resolution",
+    "source": "K = a~.t(b)\nT(p, q) = p * 10 + q\nK(T, 5, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "53"
+      }
+    ],
+    "expectedRaw": "53",
+    "expectedEmittedCount": 1,
+    "explanation": "Postfix Grace on the receiver moves `a` after the member: `K(t, a, b)`."
+  },
+  {
+    "id": "hunt-lifting-clause-family-plain-binder-slot",
+    "category": "name-resolution",
+    "source": "Fam(0) = 100\nFam(n) = n * 2\nD = Fam + 1\nD(0), D(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "101\n11"
+      }
+    ],
+    "expectedRaw": "S[101, 11]",
+    "expectedEmittedCount": 2,
+    "explanation": "The family's plain-binder clause names its position `n`, so `D = Fam + 1` is `D(n)`."
+  },
+  {
+    "id": "hunt-lifting-through-alias-chain",
+    "category": "name-resolution",
+    "source": "Mul(p, q) = p * q\nA = Mul\nB = A\nD = B + 1\nD(3, 4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "13"
+      }
+    ],
+    "expectedRaw": "13",
+    "expectedEmittedCount": 1,
+    "explanation": "Lifting reads the normalized target's signature through two aliases: `D = B + 1` is `D(p, q)`."
+  },
+  {
+    "id": "hunt-lifting-if-branch-lifts-whether-selected",
+    "category": "name-resolution",
+    "source": "Need(v) = v * 10\nF = if(c, 1, Need)\nF(true, 5), F(false, 5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n50"
+      }
+    ],
+    "expectedRaw": "S[1, 50]",
+    "expectedEmittedCount": 2,
+    "explanation": "Every `if` slot is a value role, so `Need` lifts in the third slot whether or not it is selected: `F(c, v)`."
+  },
+  {
+    "id": "hunt-lifting-list-element-value-role",
+    "category": "name-resolution",
+    "source": "Sq(v) = v * v\nL = [Sq, 1]\nL(3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[9, 1]"
+      }
+    ],
+    "expectedRaw": "L[9, 1]",
+    "expectedEmittedCount": 1,
+    "explanation": "A list element is a value role, so `Sq` lifts: `L(v) = [Sq(v), 1]`."
+  }
+]

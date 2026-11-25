@@ -24,7 +24,7 @@ Shared instructions for AI coding agents (Codex, Claude Code and others) working
 - `dotnet/src/KatLang/` — C# AST, lexer, parser, front-end elaboration, evaluator, diagnostics, public API; `dotnet/src/KatLang/Semantics/` — editor tooling only, not the evaluator and not normative; `dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md` — the Lean/C# alignment manifest; `dotnet/src/KatLang.CLI/` — the `katlang` tool.
 - `dotnet/tests/KatLang.Tests/`, `dotnet/tests/KatLang.CLI.Tests/`, `dotnet/tests/KatLang.Formatting.PublicApi.Tests/` (the deliberately non-friend public-API project).
 - `docs/design/language-rules/` — the full rules; its `README.md` maps each subsystem to the file to read first.
-- The [KatLang Semantic Constitution](docs/constitution/constitution.md), its [summary](docs/constitution/constitution-summary.md), and its companion records live in `docs/constitution/`. Whenever the language changes, update the affected records in the same change. Historical entries use the old filename `constitution-draft.md` and cite `../` evidence paths relative to `artifacts/validation/katlang-constitution/`.
+- The [KatLang Semantic Constitution](docs/constitution/constitution.md), its [summary](docs/constitution/constitution-summary.md), and its companion records live in `docs/constitution/`. Whenever the language changes, update the affected records in the same change. Link review findings supporting a current rule to tracked tests or Lean declarations. Historical entries use the old filename `constitution-draft.md` and cite `../` evidence paths relative to `artifacts/validation/katlang-constitution/`.
 - `tutorial.md`, `KatLang.ebnf`, `.github/agents/katlang-generator.agent.md`, `docs/prompts/katlang-generator.txt` — user and generator guidance that must match real behavior.
 - `README.md` (front page and NuGet readme), `docs/dotnet.md` (host API), `docs/cli.md` (the `katlang` tool), `docs/testing-and-validation.md`, `docs/ci-and-releases.md`, `docs/design/executable-language-spec.md`.
 
@@ -132,7 +132,7 @@ Never reintroduce:
 
 ## Executable language specification
 
-- `dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs` is the canonical executable specification, with HAND-WRITTEN expectations: never regenerate them from observed behavior. A failing `LanguageSpec*` test means fixing the implementation or editing the canonical case in a reviewed diff; an intentional behavior change updates its cases in the same task.
+- The [shared feature files](conformance/README.md) in `conformance/features/` are the canonical executable specification, with HAND-WRITTEN expectations: never regenerate them from observed behavior. A failing `LanguageSpec*` test means fixing the implementation or editing the canonical case in a reviewed diff; an intentional behavior change updates its cases in the same task.
 - The Lean program of every Lean-comparable case of the differential corpora is DERIVED from the real elaborated AST by `dotnet/tests/KatLang.Tests/LeanAstEncoder.cs`, which is fail-loud: extend it deliberately, never approximate. A C#-only case carries a non-blank `LeanExclusionReason`.
 - Tutorial examples marked `<!-- spec:case-id -->` are checked against the corpus, every `**Result(s):**` claim is executed by `TutorialResultSweepTests`, and the high-risk explanations are also pinned semantically by `TutorialSemanticContractTests`: output alone is not a semantic pin (SYN-12).
 - Full rules: [`docs/design/executable-language-spec.md`](docs/design/executable-language-spec.md) § 0.

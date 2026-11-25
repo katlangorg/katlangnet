@@ -1,0 +1,62 @@
+[
+  {
+    "id": "hunt-selection-invalid-position-stops-before-later-selector",
+    "category": "equality-and-indexing",
+    "source": "[10, 20][99, 1 / 0]",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "index",
+    "explanation": "Selectors are demanded and validated left to right: `99` names no position, so selection stops with `BadIndex` before `1 / 0` is demanded (a stated example of the selection rules)."
+  },
+  {
+    "id": "hunt-selection-selectors-demanded-left-to-right",
+    "category": "equality-and-indexing",
+    "source": "[10, 20, 30][tick(), tick()]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(20, 30)"
+      }
+    ],
+    "expectedRaw": "S[20, 30]",
+    "expectedEmittedCount": 1,
+    "explanation": "The two selectors are demanded left to right (ticks 1 and 2) and select positions 1 and 2."
+  },
+  {
+    "id": "hunt-selection-negative-index-is-bad-index",
+    "category": "equality-and-indexing",
+    "source": "[10, 20][-1]",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "index",
+    "explanation": "A negative selector names no position: `BadIndex`."
+  },
+  {
+    "id": "hunt-selection-boolean-selector-is-type",
+    "category": "errors",
+    "source": "[10, 20][true]",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "type",
+    "explanation": "A selector must be a number; `true` is a value of the wrong kind: `TypeMismatch`."
+  },
+  {
+    "id": "hunt-selection-first-selector-failure-wins",
+    "category": "equality-and-indexing",
+    "source": "[10, 20][1 / 0, 99]",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "explanation": "The first selector fails (`1 / 0`) before the second is demanded."
+  },
+  {
+    "id": "hunt-selection-scalar-boolean-selects-itself",
+    "category": "equality-and-indexing",
+    "source": "true[0]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "true"
+      }
+    ],
+    "expectedRaw": "true",
+    "expectedEmittedCount": 1,
+    "explanation": "A scalar has one position: `true[0]` is `true`."
+  }
+]

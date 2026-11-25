@@ -1,0 +1,86 @@
+[
+  {
+    "id": "hunt-need-spread-formed-before-ordinary-cells",
+    "category": "variadic-calls",
+    "source": "F(*xs) = xs\nF(tick(), (tick(), tick())*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[3, 1, 2]"
+      }
+    ],
+    "expectedRaw": "L[3, 1, 2]",
+    "expectedEmittedCount": 1,
+    "explanation": "Supply formation evaluates explicit spreads at once (ticks 1 and 2) and leaves the ordinary first argument suspended until the collector's value demand (tick 3)."
+  },
+  {
+    "id": "hunt-need-collector-selection-demands-one-cell-once",
+    "category": "variadic-calls",
+    "source": "F(*xs) = xs[1], xs[1]\nF(tick(), tick())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 1)"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 1,
+    "explanation": "`xs[1]` on a retained collector demands only the second argument, once; the first argument never runs."
+  },
+  {
+    "id": "hunt-need-repeated-name-value-contribution-anchors",
+    "category": "variadic-calls",
+    "source": "Same(x, x) = x\nP = tick() * 0 + 5\nSame(P, tick() + 4)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "explanation": "`P` is callable-bearing and waits; the value-only `tick() + 4` anchors the group (tick 1), then `P`'s value is checked against it; the binding is `P`."
+  },
+  {
+    "id": "hunt-need-family-shares-one-supply-across-clauses",
+    "category": "variadic-calls",
+    "source": "K(0, y) = 100\nK(x, y) = x + y\nK(tick() - 1, tick())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "100"
+      }
+    ],
+    "expectedRaw": "100",
+    "expectedEmittedCount": 1,
+    "explanation": "A clause family tries its clauses over ONE supply: the first argument is demanded once for the literal test, and the second is never demanded."
+  },
+  {
+    "id": "hunt-need-unused-fixed-argument-never-runs",
+    "category": "variadic-calls",
+    "source": "F(x, *rest) = rest\nF(1 / 0, tick(), tick())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2]"
+      }
+    ],
+    "expectedRaw": "L[1, 2]",
+    "expectedEmittedCount": 1,
+    "explanation": "`x` is never read, so `1 / 0` never runs; the collector's value materializes its cells in order."
+  },
+  {
+    "id": "hunt-need-callback-argument-evaluated-once",
+    "category": "variadic-calls",
+    "source": "Apply(f, x) = f(x) + f(x)\nInc(v) = v + 1\nApply(Inc, tick())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "4"
+      }
+    ],
+    "expectedRaw": "4",
+    "expectedEmittedCount": 1,
+    "explanation": "`Apply` reads `x` twice through `f(x)`, but the argument cell is evaluated once (tick 1)."
+  }
+]

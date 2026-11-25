@@ -1,0 +1,109 @@
+[
+  {
+    "id": "capture-supply",
+    "category": "item-supply-vs-value",
+    "source": "A = 1, 2, 3\nA",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2, 3)"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = 1, 2, 3\ncount(A)",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "A = 1, 2, 3\nA.count",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "A = 1, 2, 3\nA == (1, 2, 3)",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "A = 1, 2, 3\nA[0]",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "Property access is a value boundary: a multi-item body is observed by the caller as one canonical sequence value.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "capture-supply-spread",
+    "category": "item-supply-vs-value",
+    "source": "A = 1, 2, 3\nA*, 997",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n3\n997"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3, 997]",
+    "expectedEmittedCount": 4,
+    "explanation": "A spread expression spreads one sequence-value layer back into the surrounding item supply — here back into three root output rows.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "call-reentry-identity",
+    "category": "item-supply-vs-value",
+    "source": "I(a) = a\nA = 1, 2, 3\nI(I(A))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2, 3)"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "explanation": "Re-entry through another receiver preserves the canonical value: passing a sequence value through identity functions changes nothing."
+  },
+  {
+    "id": "call-value-boundary",
+    "category": "item-supply-vs-value",
+    "source": "F(*a) = a\nF(5, 9)\nF(5, 9)*, 997",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[5, 9]\n5\n9\n997"
+      }
+    ],
+    "expectedRaw": "S[L[5, 9], 5, 9, 997]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "F = 1, 2\nG(x) = x.count\nG(F())",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Empty = ()\nEmpty()",
+        "expectedNeutral": "ok raw=S[] n=1"
+      },
+      {
+        "source": "Nothing = {}\nNothing()",
+        "expectedNeutral": "err missingOutput"
+      },
+      {
+        "source": "D(x) = x, x\n[1].map(D)",
+        "expectedNeutral": "ok raw=L[S[1, 1]] n=1"
+      },
+      {
+        "source": "Step = a + 1, b + 1\nStep(0, 0).repeat(1)",
+        "expectedNeutral": "ok raw=S[1, 1] n=1"
+      },
+      {
+        "source": "Step = a + 1, b + 1\nR = Step(0, 0).repeat(1)\nR",
+        "expectedNeutral": "ok raw=S[1, 1] n=1"
+      },
+      {
+        "source": "Step = a + 1, b + 1\nStep(0, 0).repeat(1)*, 997",
+        "expectedNeutral": "ok raw=S[1, 1, 997] n=3"
+      }
+    ],
+    "explanation": "A call returns exactly one value — here the collected list `[5, 9]` — and only the explicit caller-site spread `value*` opens it back into the surrounding item supply.",
+    "includeInGeneratorPrompt": true
+  }
+]

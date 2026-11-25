@@ -1,0 +1,1108 @@
+[
+  {
+    "id": "open-parameterized-provider-rejected",
+    "category": "name-resolution",
+    "source": "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "IllegalInOpen",
+    "expectedParseDiagnosticFragment": "'Lib' cannot be opened because open providers must have an empty effective parameter list",
+    "explanation": "An `open` provider must need no call: `open` imports a namespace and never creates an activation, so an algorithm with parameters — explicit or inferred — has no members its inputs could be read from, and `open Lib` is refused at the open target rather than given an invented meaning (`X` is neither read through a phantom `p` nor turned into an implicit parameter). A parameterized head of a dotted target is different: `open Lib.Sub` with `Lib(p)` opens a self-contained `Sub` by identity navigation.",
+    "notes": "Front-end rejection decided after signature completion (K1-08, September 2026); no elaborated Lean program exists for a rejected parse. Both evaluators refuse the same target at open resolution with `illegalInOpen` (Lean `resolveOpen`, C# `Evaluator.ResolveOpen`), and a clause family or an implicitly parameterized provider (`Lib = { public X = 1  p + 1 }`) is refused identically.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "open-local-only-member-inside-owner",
+    "category": "access-boundaries",
+    "source": "Outer(n) = {\n    open Inner\n    Inner = {\n        public X = n\n    }\n    X + 0\n}\nOuter(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    Inner.X\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Outer(n) = {\n    Left = {\n        public X = n\n    }\n    Right = {\n        open Left\n        X\n    }\n    Right\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Outer(n) = {\n    Left = {\n        public X = n\n    }\n    Right = {\n        Left.X\n    }\n    Right\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Outer(n) = {\n    Helper = n + 1\n    Inner = {\n        public X = Helper\n    }\n    Inner.X\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "F(0) = 0\nF(n) = {\n    Lib = { public X = n }\n    G = {\n        open Lib\n        X\n    }\n    G + Lib.X\n}\nF(5)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    P = Inner.X\n    P\n}\nOuter(1), Outer(2)",
+        "expectedNeutral": "ok raw=S[1, 2] n=2"
+      },
+      {
+        "source": "Outer(n) = {\n Lib = { public X = 10\n n }\n P = { open Lib\n X }\n Q = Lib.X\n 0\n}\nOuter.P, Outer.Q",
+        "expectedNeutral": "ok raw=S[10, 10] n=2"
+      },
+      {
+        "source": "Outer(n) = {\n Inner = { public X = n }\n Read(n) = Inner.X\n Read(7)\n}\nOuter(5), Outer(9)",
+        "expectedNeutral": "ok raw=S[5, 9] n=2"
+      },
+      {
+        "source": "Outer(n) = {\n Inner = { public X = n }\n Read(n) = { open Inner\n X }\n Read(7)\n}\nOuter(5), Outer(9)",
+        "expectedNeutral": "ok raw=S[5, 9] n=2"
+      },
+      {
+        "source": "Outer(n) = {\n Q = n\n Mid(n) = { public X = Q\n X }\n Mid.X\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Outer(n) = {\n Q = n\n Mid(n) = { public X = Q + n\n X }\n Mid(7)\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=12 n=1"
+      },
+      {
+        "source": "Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step(0), 2)\n}\nOuter(5), Outer(7)",
+        "expectedNeutral": "ok raw=S[10, 14] n=2"
+      }
+    ],
+    "explanation": "A `public` member that captures an enclosing parameter is local-only, and local-only means local-context-dependent, not universally hidden: `Inner` is a zero-parameter provider whose `X` reads the active `Outer.n`, so inside `Outer` — the owner of that parameter — `open Inner` provides `X` and `Inner.X` reaches it, from Outer's own body and from any sibling or nested scope under the same activation. Both channels apply the ONE accessibility rule: a local-only member may be used from every lexical context inside the owner of each parameter it captures.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "open-local-only-member-read-by-inferring-sibling",
+    "category": "access-boundaries",
+    "source": "Outer(p) = {\n    open Lib\n    Lib = {\n        public X = p\n    }\n    Y = X + 0\n    Y\n}\nOuter(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "explanation": "A name an open provides is SELECTED by visibility and checked for accessibility where it is read: the formula `Y` infers no parameter from `X`, because `open Lib` provides it, and `Y` reads the local-only `X` inside the call `Outer(1)`, where the captured `p` is bound — exactly as `Outer`'s own body does (`open-local-only-member-inside-owner`)."
+  },
+  {
+    "id": "dot-local-only-member-outside-owner",
+    "category": "access-boundaries",
+    "source": "Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    Inner.X\n}\nOuter.Inner.X",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "open Outer.Inner\nOuter(n) = {\n    public Inner = {\n        public X = n\n    }\n    Inner.X\n}\nX",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    G(7)\n}\nG(n) = Outer.Inner.X\nOuter(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Apply(f) = f.X\nOuter(n) = {\n    Inner = { public X = n }\n    Apply(Inner)\n}\nOuter(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(n) = {\n    Mid(n) = {\n        Inner = {\n            public X = n\n        }\n        Inner.X\n    }\n    Mid.Inner.X\n}\nOuter(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(n) = {\n    Inner = { public X = n }\n    Apply(f) = f.X\n    Apply(Inner)\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Outer(n) = {\n Mid(n) = { public X = n\n 0 }\n P = if(true, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(m) = {\n Mid(n) = { public X = n\n 0 }\n P = if(true, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(n) = {\n Mid(n) = { public X = n\n 0 }\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Outer(m) = {\n Mid(n) = { public X = n\n 0 }\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Outer(n) = {\n Mid(n) = { public X = n\n Read = Outer.Mid.X\n Read }\n Mid(7)\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Outer(m) = {\n public Mid(n) = { public Lib = { public X = n }\n Read = { open Outer.Mid.Lib\n X }\n Read }\n Mid(7)\n}\nOuter(5)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "H(f, n) = if(n != 0, H({ public X = n }, 0), f.X)\nH({ public X = 0 }, 5)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(f, k) = {\n Lib(n) = { public X = n\n f.X }\n if(k != 0, Outer(Lib, 0), Lib(7))\n}\nOuter({ public X = 0 }, 1)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "H(f, k) = {\n F(0) = 0\n F(n) = H({ public X = n }, 0)\n G(0) = 0\n G(n) = f.X\n if(k != 0, F(k), G(7))\n}\nH({ public X = 0 }, 5)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(n) = {\n Q = n\n Mid(n) = { public X = Q + n\n X }\n Mid.X\n}\nOuter(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Outside the owner of the captured parameter the same local-only member is selected and then refused: the root, an unrelated algorithm, and a callee written outside `Outer` are not inside `Outer`, so no activation of it is lexically available there — even when some same-named binding happens to be live (the rule is lexical ownership, never a dynamic lookup). Selection never depends on exposure, so the refusal is an accessibility error at the access, not a fallback or an invented meaning.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-local-only-reference-target-walk",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  A = L.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public T = {\n        public Q = 1\n      }\n      y\n    }\n    0\n  }\n  L0 = Lib.Sub\n  M = L0.T\n  A = M.Q + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L0 = Lib.Sub\n  L1 = L0\n  L2 = L1\n  A = L2.Q + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public G(x) = x\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  A = L.G(1) + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Reading through a transparent reference charges what its TARGET WALK selects: `L = Lib.Sub` selects `Sub` in `L`'s own scope, checking its accessibility, so `A = L.Q + 0` requires `F`'s `y` exactly like `A = Lib.Sub.Q + 0`. `A` is local-only, so the escaped `F.A` is refused naming `A`, and `F(5)` leaves no exported cache entry for it to reuse (formerly `1, 1`). The reference's own VALUE is never charged (`dot-exported-value-only-reference`).",
+    "notes": "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections."
+  },
+  {
+    "id": "dot-local-only-inline-block-head",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n  }.Sub.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      public G(x) = x\n      y\n    }\n    0\n  }\n  A = { public Sub = { public G(x) = x\n y } }.Sub.G(1) + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "A path whose head is an inline block selects its members like a name-headed path: the evaluator checks `Sub`'s accessibility, so `A = { public Sub = { public Q = 1 ⏎ y } }.Sub.Q + 0` requires `F`'s `y` and is local-only; `F(5), F.A` is refused naming `A` (formerly `1, 1`). The block's own VALUE is not read when a member is selected (`dot-exported-inline-block-head-member`).",
+    "notes": "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections."
+  },
+  {
+    "id": "open-local-only-through-reference",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  Other = {\n    public Z = 3\n  }\n  A = {\n    open L, Other\n    Z + 0\n  }\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Opening a transparent reference resolves its target walk, and the evaluator checks every member it selects: `open L` with `L = Lib.Sub` charges `Sub`, so `A = { open L ⏎ Q + 0 }` requires `F`'s `y`. The walk is charged even when that target does not provide the name: every open of a level the lookup reaches is resolved first.",
+    "notes": "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections."
+  },
+  {
+    "id": "open-local-only-enclosing-level",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "F(y) = {\n  open Lib.Sub, Other\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Other = {\n    public X = 2\n  }\n  A = X + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      public G(x) = x\n      public T = {\n        public Q = 1\n      }\n      y\n    }\n    0\n  }\n  X = 2\n  A = X + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "ok raw=S[2, 2] n=2"
+      }
+    ],
+    "explanation": "A name looked up through an ENCLOSING level's opens charges the walk of every open target of every level the lookup consulted: `F(y) = { open Lib.Sub ⏎ … ⏎ A = Q + 0 }` checks `Sub`'s accessibility while resolving the open, so `A` requires `y` and `F(5), F.A` is refused naming `A` (formerly `1, 1`), also when the open target does not provide the name.",
+    "notes": "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections."
+  },
+  {
+    "id": "open-block-headed-reference-keeps-requirement",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open L\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n7"
+      }
+    ],
+    "expectedRaw": "S[5, 7]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(y) = {\n  open L\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\nF.A",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(y) = {\n  open L\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }\n  L = Lib.Sub\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+        "expectedNeutral": "ok raw=S[5, 7] n=2"
+      },
+      {
+        "source": "F(y) = {\n  open L\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }\n  L = Lib.Sub\n  A = Q + 0\n  A\n}\nF.A",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "A reference whose target starts at a brace block, `L = { public Sub = { public Q = y ⏎ 0 } }.Sub`, is opened exactly like the named spelling `Lib = { … }` / `L = Lib.Sub`: `open L` provides `Q`, and `Q` reads `F`'s `y`, so `A = Q + 0` is local-only. Each call of `F` therefore reads its own `y` (`5`, then `7`), and the escaped `F.A` is refused naming `A`.",
+    "notes": "E-18 owner decisions of 2026-11-14 (Q1: a check that can never pass where the evaluator makes it charges nothing; Q2: every check is charged at the evaluator's own site; Q3: a block-headed reference resolves like a named one). Formerly the block-headed spelling gave `5, 5`: the block was resolved apart from the reference, so `A` was exported and its first value was reused."
+  },
+  {
+    "id": "impossible-read-in-untaken-branch-charges-nothing",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = y + 1\n  A\n}\nBox = {\n  public R = if(false, F.A, 0)\n}\nBox.R",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F(y) = {\n  A = y + 1\n  A\n}\nif(false, F.A, 0)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "F(y) = {\n  A = y + 1\n  A\n}\nR = if(false, F.A, 0)\nR",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  Box = {\n    public R = if(x > 100, F.A, x)\n  }\n  Box.R\n}\nG(1)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  Box = {\n    public R = if(x > 100, F.A, x)\n  }\n  Box.R\n}\nG(200)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  R = if(false, F.A, tick())\n  R\n}\nG(1), G(2)",
+        "expectedNeutral": "ok raw=S[1, 2] n=2"
+      },
+      {
+        "source": "G(x) = {\n  R = if(false, 1 / 0, tick())\n  R\n}\nG(1), G(2)",
+        "expectedNeutral": "ok raw=S[1, 2] n=2"
+      }
+    ],
+    "explanation": "`F.A` outside `F` can never be read: `A` needs `F`'s `y`, and no activation of `F` exists where `Box.R` is written. A read that can never succeed where it is written is an ordinary error of the branch that makes it, never a requirement of the algorithm around it: `R = if(false, F.A, 0)` requires nothing, `Box.R` is `0`, and the refusal appears only when that branch runs (`G(200)`), naming `A`.",
+    "notes": "E-18 owner decisions of 2026-11-14 (Q1: a check that can never pass where the evaluator makes it charges nothing; Q2: every check is charged at the evaluator's own site; Q3: a block-headed reference resolves like a named one). Formerly `R` carried a requirement no call could supply, so selecting it was refused although the branch never ran."
+  },
+  {
+    "id": "open-reference-checked-where-it-is-opened",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      B(z) = {\n        open L\n        Q + 0\n      }\n      B(0)\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = L.Q + 0\n      B(z) = {\n        open L\n        Q + 0\n      }\n      C(z) = Lib.Mid.Sub.Q + 0\n      D(z) = Sub.Q + 0\n      if(p == 1, A(0), if(p == 2, B(0), if(p == 3, C(0), D(0))))\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(1)",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = L.Q + 0\n      B(z) = {\n        open L\n        Q + 0\n      }\n      C(z) = Lib.Mid.Sub.Q + 0\n      D(z) = Sub.Q + 0\n      if(p == 1, A(0), if(p == 2, B(0), if(p == 3, C(0), D(0))))\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(2)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = L.Q + 0\n      B(z) = {\n        open L\n        Q + 0\n      }\n      C(z) = Lib.Mid.Sub.Q + 0\n      D(z) = Sub.Q + 0\n      if(p == 1, A(0), if(p == 2, B(0), if(p == 3, C(0), D(0))))\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(3)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = L.Q + 0\n      B(z) = {\n        open L\n        Q + 0\n      }\n      C(z) = Lib.Mid.Sub.Q + 0\n      D(z) = Sub.Q + 0\n      if(p == 1, A(0), if(p == 2, B(0), if(p == 3, C(0), D(0))))\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(4)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "F(y) = {\n  open Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = Q + 0\n      A(0)\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(5)",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "`Sub` needs `Mid`'s `p`, so it can be selected only where an activation of `Mid` is in scope. An `open` is resolved where it is WRITTEN: `B`'s `open L` is inside `Mid`, so the walk of `L = Lib.Mid.Sub` selects `Sub` there and `B(0)` is `1`. A VALUE read through the reference, `L.Q`, walks the target in `L`'s own scope, outside `Mid`, and is refused naming `Sub` (`F(1)`); and an `open Lib.Mid.Sub` written on `F` is checked on `F`, so even a reader inside `Mid` cannot use it.",
+    "notes": "E-18 owner decisions of 2026-11-14 (Q1: a check that can never pass where the evaluator makes it charges nothing; Q2: every check is charged at the evaluator's own site; Q3: a block-headed reference resolves like a named one). Formerly the open through `L` was charged in `L`'s own scope, where `Mid` is never active, and `Lib.Mid(y)` was refused at `Mid`."
+  },
+  {
+    "id": "open-block-headed-reference-target-must-resolve",
+    "category": "name-resolution",
+    "source": "F(y) = {\n  open L.Missing\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  1\n}\nF(5)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnresolvedOpenTarget",
+    "expectedParseDiagnosticFragment": "'L.Missing' cannot be opened because 'L' has no property named 'Missing'.",
+    "probes": [
+      {
+        "source": "F(y) = {\n  open L.Sub2\n  L = {\n    public Sub = {\n      public Sub2 = { public Q = 1 }\n      0\n    }\n  }.Sub\n  Q\n}\nF(5)",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "An `open` target must name something: `open L.Missing` through a reference whose target starts at a brace block is resolved like the named spelling, so a member the block's `Sub` does not declare is reported at the open target before anything runs. A member it does declare is opened (`open L.Sub2`).",
+    "notes": "E-18 owner decisions of 2026-11-14 (Q1: a check that can never pass where the evaluator makes it charges nothing; Q2: every check is charged at the evaluator's own site; Q3: a block-headed reference resolves like a named one). Front-end rejection; no elaborated Lean program exists for a rejected parse. The named spelling (`Lib = { … }`, `L = Lib.Sub`, `open L.Missing`) is the same error at the same position; formerly the block-headed one was accepted and failed only when it ran."
+  },
+  {
+    "id": "dot-exported-inline-block-head-member",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  A = {\n    public Q = 1\n    y + 0\n  }.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(y) = {\n  B = {\n    public Q = 1\n    y + 0\n  }\n  A = B.Q + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "ok raw=S[1, 1] n=2"
+      },
+      {
+        "source": "F(y) = {\n  A = {\n    public Q = 1\n    y + 0\n  }.Missing + 0\n  Missing(r) = 2\n  Lib = {\n    public Sub = {\n      public Q = 1\n      public G(x) = x\n      public T = {\n        public Q = 1\n      }\n      y\n    }\n    0\n  }\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "An inline block head whose member is selected is not READ: `A = { public Q = 1 ⏎ y + 0 }.Q + 0` requires nothing of `F`, exactly like the named spelling `B = { … }` / `A = B.Q + 0`, so `F.A` is `1` outside the call (formerly refused naming `A`). A path whose first step selects nothing reads the block's value and charges it.",
+    "notes": "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections."
+  },
+  {
+    "id": "dot-exported-value-only-reference",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  Lib = {\n    public Q = 1\n    y\n  }\n  L = Lib\n  A = L.Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "A member-less reference to a lexically found name selects nothing itself: with `Lib = { public Q = 1 ⏎ y }` and `L = Lib`, `A = L.Q + 0` reads the selected `Q` only, never `Lib`'s or `L`'s value, so `A` stays exported and `F.A` is `1`.",
+    "notes": "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections."
+  },
+  {
+    "id": "open-exported-runtime-reference",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  open L, Other\n  L = y\n  Other = { public Q = 1 }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(y) = {\n  open L1, Other\n  L0 = y\n  L1 = L0\n  Other = { public Q = 1 }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "ok raw=S[1, 1] n=2"
+      },
+      {
+        "source": "F(y) = {\n  open L, Other\n  L = y.C\n  Other = { public Q = 1 }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "ok raw=S[1, 1] n=2"
+      },
+      {
+        "source": "F(y) = {\n  L = y\n  Q(r) = 1\n  A = L.Q + 0\n  A\n}\nF(5), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "A RUNTIME reference — a parameter row such as `L = y`, a parameter-rooted path, an `.Algorithm` link, or a static chain naming one — is its own namespace when opened (`openStructure`): the open neither establishes its target nor reads its row, so `A = Q + 0`, which `Other` provides, requires nothing; `A` stays exported and `F.A` is `1`. A dot path THROUGH the reference (`A = L.Q + 0` falling back to `Q(L)`) reads the receiver at run time, so that reader requires `y` and its escaped read is refused.",
+    "notes": "E-18 exposure access checks, owner decision 3 (2026-11-13): opening a runtime reference charges nothing; a dot path through one does."
+  },
+  {
+    "id": "dot-path-fallback-edges-charge-their-callee",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  T(v) = v + y\n  U(v) = v\n  Box = { public S = 5 }\n  A = Box.S.T.U + 0\n  A\n}\nF(1), F(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6\n7"
+      }
+    ],
+    "expectedRaw": "S[6, 7]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(y) = {\n  T(v) = v + y\n  U(v) = v\n  Box = { public S = 5 }\n  A = Box.S.T.U + 0\n  A\n}\nF(1), F(2), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(y) = {\n  T(v) = v + y\n  U(v) = v\n  Box = { public S = 1\n    5 }\n  A = Box.T.U + 0\n  A\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[6, 7] n=2"
+      },
+      {
+        "source": "F(y) = {\n  T(v) = v + y\n  Box = { public S = 5 }\n  A = Box.S.T + 0\n  A\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[6, 7] n=2"
+      },
+      {
+        "source": "F(y) = {\n  Lib = { public Sub = { public Q = 4 } }\n  Sub(v) = v + y\n  Q(v) = v + y\n  A = Lib.Sub.Q + 0\n  A\n}\nF(1), F(2), F.A",
+        "expectedNeutral": "ok raw=S[4, 4, 4] n=3"
+      }
+    ],
+    "explanation": "A dot path is read step by step. `Box.S` selects the declared member `S`, but `S` declares no `T`, so `.T` falls back to the call `T(Box.S)`, and `.U` then to `U(…)`. Every step that may fall back needs whatever its callee needs: `T` reads `F`'s `y`, so `A = Box.S.T.U + 0` depends on the call of `F` it is read in, and `F(1), F(2)` is `6, 7`. Outside a call of `F` there is no `y` to read, so `F.A` is refused. A step that selects a declared member calls nothing: beside same-named callables that read `y`, `Lib.Sub.Q` is still a plain constant readable as `F.A`.",
+    "notes": "Independent audit 2026-11-14 (inline-block-head-exposure.sibling-intermediate-fallback): a recognized static member path charged only its FINAL edge's lexical fallback. Formerly `6, 6`, and `F(1), F(2), F.A` gave `6, 6, 6`."
+  },
+  {
+    "id": "dot-path-fallback-edges-inline-block-head",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  T(v) = v + y\n  U(v) = v\n  A = { public S = 5 }.S.T.U + 0\n  A\n}\nF(1), F(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6\n7"
+      }
+    ],
+    "expectedRaw": "S[6, 7]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(y) = {\n  T(v) = v + y\n  U(v) = v\n  A = { public S = 5 }.S.T.U + 0\n  A\n}\nF(1), F(2), F.A",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "F(y) = {\n  Twice(v) = v * 2\n  A = { public Q = 1\n    y }.Twice + 0\n  A\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[2, 4] n=2"
+      },
+      {
+        "source": "F(y) = {\n  Twice(v) = v * 2\n  A = { public S = { public Q = 1\n    y } }.S.Twice + 0\n  A\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[2, 4] n=2"
+      },
+      {
+        "source": "F(y) = {\n  A = { public Q = 5\n    y }.Q + 0\n  A\n}\nF(1), F.A",
+        "expectedNeutral": "ok raw=S[5, 5] n=2"
+      }
+    ],
+    "explanation": "The head of a dot path may be a block written in place. Its steps are read exactly like those of a named head: `{ public S = 5 }.S` selects `S`, `.T` falls back to `T(…)`, which reads `F`'s `y`, and `.U` falls back to `U(…)`. So `A` depends on the call of `F` it is read in: `F(1), F(2)` is `6, 7`, and `F.A` outside a call is refused.",
+    "notes": "Independent audit 2026-11-14: the same law for an inline-block head. `6, 7` before block heads became navigated paths (46bfea4e), `6, 6` after it; the probes pin the block-head values that commit fixed."
+  },
+  {
+    "id": "deconstruction-source-inline-block-member",
+    "category": "deconstruction",
+    "source": "F(y) = {\n  a, b = { public Q = (y, y + 1) }.Q\n  a, b\n}\nF(1), F(2)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2)\n(2, 3)"
+      }
+    ],
+    "expectedRaw": "S[S[1, 2], S[2, 3]]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "F(y) = {\n  Box = { public Q = (y, y + 1) }\n  a, b = Box.Q\n  a, b\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[S[1, 2], S[2, 3]] n=2"
+      },
+      {
+        "source": "F(y) = {\n  a, b = { public S = { public Q = (y, y + 1) } }.S.Q\n  a, b\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[S[1, 2], S[2, 3]] n=2"
+      },
+      {
+        "source": "F(y) = {\n  a, b = { public G(z) = (z + y, z) }.G(1)\n  a, b\n}\nF(1), F(2)",
+        "expectedNeutral": "ok raw=S[S[2, 1], S[3, 1]] n=2"
+      },
+      {
+        "source": "F(y) = {\n  a, b = { public Q = (y, y + 1) }.Q\n  a, b\n}\nF.a",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "The right-hand side of a deconstruction is read where it is written. A block written there may select one of its own members, and that member may read the enclosing algorithm's parameter: `a, b = { public Q = (y, y + 1) }.Q` binds `a` and `b` from `F`'s `y`, exactly like the spelling that names the block first (`Box = { … }`, then `a, b = Box.Q`). Each call reads its own `y`, so `F(1), F(2)` is `(1, 2)` then `(2, 3)`. The targets still belong to the call: `F.a` outside one is refused.",
+    "notes": "Independent audit 2026-11-14 (d02). Formerly refused inside the call with `localOnlyProperty` naming `Q`: the member's capture position did not count the scope level of the synthetic deconstruction source the evaluators wire the block under."
+  },
+  {
+    "id": "open-distinct-declarations-stay-distinct-providers",
+    "category": "name-resolution",
+    "source": "open NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA, NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNB\nNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA = { public X = 1 }\nNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNB = { public X = 1 }\nX",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "AmbiguousOpen",
+    "expectedParseDiagnosticFragment": "is ambiguous: 2 different opened algorithms provide it at the same open level",
+    "probes": [
+      {
+        "source": "open NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA, NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA\nNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA = { public X = 1 }\nX",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "An `open` list counts the PROVIDERS its targets resolve to — each declaration once, in its declaring scope — never their spellings or their contents. Two declarations stay two providers even when their bodies are identical and their names abbreviate to the same diagnostic text, so a written `X` that both provide is ambiguous; one declaration written twice is one provider.",
+    "notes": "Q-19 D-I (decided 2026-10-06) replaced the former `open-full-spelling-decides-provider-identity`, which taught that the written spelling identified a provider."
+  },
+  {
+    "id": "open-local-only-member-is-a-second-provider",
+    "category": "name-resolution",
+    "source": "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    X\n}\nA",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "AmbiguousOpen",
+    "expectedParseDiagnosticFragment": "is ambiguous: 2 different opened algorithms provide it at the same open level",
+    "probes": [
+      {
+        "source": "Pub = {\n    public X = 101\n}\nLib = {\n    X = 202\n}\nA = {\n    open Pub, Lib\n    X\n}\nA",
+        "expectedNeutral": "ok raw=101 n=1"
+      },
+      {
+        "source": "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    5\n}\nA",
+        "expectedNeutral": "ok raw=5 n=1"
+      }
+    ],
+    "explanation": "`open` selects members by visibility alone: a public local-only member is provided by its open whatever its exposure and takes part in precedence and ambiguity like any provided name, so beside another provider of `X` it is a genuine second provider and a written `X` is ambiguous. Only a PRIVATE member is never provided. Whether the selected member may be used at the site is checked afterwards, which is what lets the front end select exactly what the evaluator selects before exposure is classified."
+  },
+  {
+    "id": "open-two-spellings-one-provider",
+    "category": "name-resolution",
+    "source": "Lib = {\n    public Sub = {\n        public X = 1\n    }\n    public R = {\n        open Sub, Lib.Sub\n        X\n    }\n}\nLib.R",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Lib = {\n    public Sub = {\n        public X = 1\n    }\n    public R = {\n        open Lib.Sub, Sub\n        X\n    }\n}\nLib.R",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "open M, M\nM = {\n    public X = 1\n}\nX",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "open M, (M)\nM = {\n    public X = 1\n}\nX",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "open Lib.Sub, Lib.Sub\nLib = {\n    public Sub = {\n        public X = 1\n    }\n}\nX",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "Opening the same provider twice still opens it once, however the paths are spelled: inside `Lib.R`, `Sub` and `Lib.Sub` name the one declaration `Sub`, so `X` has one provider in either order, exactly like `open M, M` and `open M, (M)`. Provider identity is the declaration in its declaring scope, never the written text or its position in the list.",
+    "notes": "Q-19 D-I (decided 2026-10-06).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "open-identical-inline-blocks-two-providers",
+    "category": "name-resolution",
+    "source": "open { public X = 1 }, { public X = 1 }\nX",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "AmbiguousOpen",
+    "expectedParseDiagnosticFragment": "is ambiguous: 2 different opened algorithms provide it at the same open level",
+    "probes": [
+      {
+        "source": "open { public X = 1 }, { public X = 1 }\n5",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "open { public X = 1 }, { public Y = 1 }\nX",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "Two written blocks are two declarations, so they are two providers even when their text and members are identical: providers are never merged by their contents or their values. A written `X` that both provide is ambiguous, while the overlap alone, with no written `X`, is valid.",
+    "notes": "Q-19 D-I with Q-29 A-U (decided 2026-10-06).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "ambiguous-open-written-use-is-static",
+    "category": "name-resolution",
+    "source": "open A, B\nA = {\n    public X = 1\n}\nB = {\n    public X = 2\n}\nY = X\n5",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "AmbiguousOpen",
+    "expectedParseDiagnosticFragment": "'X' is ambiguous: 2 different opened algorithms provide it at the same open level (A, B)",
+    "probes": [
+      {
+        "source": "open A, B\nA = {\n    public X = 1\n}\nB = {\n    public X = 2\n}\nA.X + B.X",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "A written name is resolved statically, whether or not evaluation ever demands it: `Y` is never read, yet its `X` reaches an open level where two different providers supply `X`, so it names no declaration and the program is rejected at that `X`. Demand decides what is computed, never what a written name means. Qualify the name (`A.X`) or open only one of the providers.",
+    "notes": "Q-29 A-U (decided 2026-10-06): before, a written ambiguous name was accepted until evaluation demanded it.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "ambiguous-open-unused-overlap-is-valid",
+    "category": "name-resolution",
+    "source": "open A, B\nA = {\n    public X = 1\n    public P = 10\n}\nB = {\n    public X = 2\n    public Q = 20\n}\nP + Q",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "30"
+      }
+    ],
+    "expectedRaw": "30",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "open A, B\nA = {\n    public X = 1\n}\nB = {\n    public X = 2\n}\nX = 9\nX",
+        "expectedNeutral": "ok raw=9 n=1"
+      },
+      {
+        "source": "open A, B\nA = {\n    public X = 1\n}\nB = {\n    public X = 2\n}\nC = {\n    open D\n    D = {\n        public X = 3\n    }\n    X\n}\nC",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "Different opened algorithms may contain the same name: the overlap itself is valid, so adding an unused member to one library never breaks a program that opens it beside another. Only a written reference that resolves to two providers at the same open level is rejected, and lexical precedence decides first — an owned `X`, or a nearer open level that provides `X` once, is selected without ambiguity.",
+    "notes": "Q-29 A-U (decided 2026-10-06).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-chain-structural-member-beats-extension",
+    "category": "access-boundaries",
+    "source": "Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\n\nQ(x) = 99\n\nLib.Sub.Q",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Lib = {\n    Sub = {\n        public Q = 1\n    }\n}\nQ(x) = 99\nLib.Sub.Q",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\nK(Q) = Lib.Sub.Q\nK({x + 1})",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Lib = {\n    public Sub = {\n        public Q(y) = y + 1\n    }\n}\nQ(x) = 99\nLib.Sub.Q(5)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\nOuter = {\n    Q(x) = 99\n    Lib.Sub.Q\n}\nOuter",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Lib(p) = {\n public Mid(q) = {\n public Sub = { public X = 10 }\n q\n }\n p\n}\nLib.Mid.Sub.X",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "open Lib.Mid.Sub\nLib(p) = {\n public Mid = {\n public Sub = { public X = 10 }\n q\n }\n p\n}\nX",
+        "expectedNeutral": "ok raw=10 n=1"
+      }
+    ],
+    "explanation": "Dot syntax is property-first at EVERY level of a chain: the receiver `Lib.Sub` is navigated to `Sub`'s algorithm, and because `Sub` exposes an accessible `Q`, that member is read before the visible extension `Q(x)` is ever considered — exactly as `Lib.Q` reads `Lib`'s own `Q`. Only a receiver without the member falls back to the extension call `Q(receiver)`; a same-named extension, whether declared at the root, in the enclosing algorithm, or as a parameter of it, never pre-empts a structural member.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-chain-extension-fallback-composes",
+    "category": "access-boundaries",
+    "source": "A = x + 7\nB = x * 5\n\n3.A.B\nB(A(3))\nB(3.A)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "50\n50\n50"
+      }
+    ],
+    "expectedRaw": "S[50, 50, 50]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Q(x) = x * 10\n[1, 2, 3].count.Q",
+        "expectedNeutral": "ok raw=30 n=1"
+      },
+      {
+        "source": "Q(x) = x + 1\n3.Q",
+        "expectedNeutral": "ok raw=4 n=1"
+      },
+      {
+        "source": "Lib = {\n    public Sub = {\n        5\n    }\n}\nF(a, b) = a * 100 + b\nLib.Sub.F(2)",
+        "expectedNeutral": "ok raw=502 n=1"
+      }
+    ],
+    "explanation": "When a receiver has no such member, the dot edge falls back to the extension call with the receiver as the leading argument, and the fallbacks compose along a chain: the number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`, the same as `B(3.A)`. The free-call/dot-call law `receiver.F(a, b) = F(receiver, a, b)` is untouched wherever structural lookup does not apply.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-chain-nested-structural-members",
+    "category": "access-boundaries",
+    "source": "A = {\n    public B = {\n        public C = {\n            public D = 7\n        }\n    }\n}\nD(x) = 93\n\nA.B.C.D",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "G(x) = {\n    public Sub = {\n        public Q = 1\n    }\n    x\n}\nQ(v) = 99\nG.Sub.Q",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Lib = {\n    public Sub = {\n        public Q = 1\n        5\n    }\n}\nQ(x) = x * 10\nLib.Sub().Q",
+        "expectedNeutral": "ok raw=50 n=1"
+      },
+      {
+        "source": "Lib = {\n    public Sub = {\n        public Q = 1\n        5\n    }\n}\nQ(x) = x * 10\n(Lib.Sub).Q",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Lib = {\n    public Sub = {\n        7\n    }\n}\nLib.Sub.string",
+        "expectedNeutral": "ok raw='7' n=1"
+      }
+    ],
+    "explanation": "A chain of argumentless dot edges navigates accessible structural members at every level without evaluating the intermediate containers, so a container that has no output, or declares parameters, still exposes its members through the chain. A written call such as `Lib.Sub()` is a VALUE, so a member after it is resolved by extension fallback on that value; parentheses around a single dot expression are ordinary redundant grouping, so `(Lib.Sub).Q` is `Lib.Sub.Q`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-chain-local-only-member-is-not-a-fallback",
+    "category": "access-boundaries",
+    "source": "G(x) = {\n    public Sub = {\n        public Q = 1\n        x\n    }\n    0\n}\nQ(v) = 99\n\nG.Sub.Q",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "probes": [
+      {
+        "source": "G(x) = {\n    public Sub = {\n        public Q = 1\n        x\n    }\n    0\n}\nG.Sub",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "C(0) = {\n    public Q = {\n        public R = 1\n    }\n    0\n}\nC(1) = 2\nR(v) = 99\nC.Q.R",
+        "expectedNeutral": "err localOnlyProperty"
+      }
+    ],
+    "explanation": "Accessibility is the established one-level rule applied at every level: `Sub` is declared but local-only (its value reads the enclosing parameter `x`), so `G.Sub.Q` reports that structural error at `Sub` — never a fallback to the visible extension `Q(v)` — exactly as `G.Sub` itself reports it, and a member defined only inside conditional branches fails the same way. Private members remain reachable: structural access ignores `public`, not exposure."
+  },
+  {
+    "id": "open-capture-target-rejected",
+    "category": "access-boundaries",
+    "source": "M = {\n    public C = 5\n}\nR = {\n    open (M, M)\n    C\n}\nR",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "BadOpenForm",
+    "expectedParseDiagnosticFragment": "a parenthesized group is a captured value, not an algorithm",
+    "probes": [
+      {
+        "source": "M = {\n    public C = 5\n}\nR = {\n    open M\n    C\n}\nR",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "M = {\n    public C = 5\n}\nR = {\n    open (M)\n    C\n}\nR",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "M = {\n    public C = 5\n}\nR = {\n    open ((M))\n    C\n}\nR",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "R = {\n    open ({public C = 6})\n    C\n}\nR",
+        "expectedNeutral": "ok raw=6 n=1"
+      }
+    ],
+    "explanation": "`open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M, M)` — a group of several slots — is rejected at parse time, as is `open (M*)`. Redundant parentheses are not a capture: parentheses group syntax, so `open (M)` and `open ((M))` are exactly `open M`, and parentheses around a brace block normalize away too, so `open ({ ... })` still opens the block.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "open-target-head-must-name-an-algorithm",
+    "category": "access-boundaries",
+    "source": "open F(1).Y\nF(x) = {\n    public Y = x\n}\nY",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "BadOpenForm",
+    "expectedParseDiagnosticFragment": "Invalid open form: 'call' is not allowed in open declarations.",
+    "probes": [
+      {
+        "source": "open Lib.S\nLib = {\n    public S = {\n        public Q = 3\n    }\n}\nQ",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "open { public S = { public Q = 3 } }.S\nQ",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "open { public S = { public T = { public Q = 4 } } }.S.T\nQ",
+        "expectedNeutral": "ok raw=4 n=1"
+      }
+    ],
+    "explanation": "An open target names an algorithm all the way down: the first part of a dotted path must itself be a name, a `{ ... }` block, or a `load` module, exactly like a bare target. `open F(1).Y`, `open 5.N`, `open (A, B).N` and `open [A].N` are rejected at that first part like `open F(1)`, `open 5`, `open (A, B)` and `open [A]`, whether or not any name is ever looked up through them. `open` never calls or evaluates anything, so open a path that starts at a declared algorithm (`open Lib.S`) or at an inline block.",
+    "notes": "Constitution PV-11 (September 2026): the parser checked only the OUTER node of a target, so `open 5.N` or `open F(1).N` passed the front end; the evaluators refuse such a head only when some lookup consults the level (Lean `resolveAlgForOpen` recurses through the receiver), so a program failed after its effects had run, or not at all. Every static consumer now reads the one decomposition `AstHelpers.OpenTargetHead`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "inline-headed-open-paths-keep-distinct-providers",
+    "category": "name-resolution",
+    "source": "open { public S = { public X = 5 } }.S, { public S = { public X = 7 } }.S\nX",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "AmbiguousOpen",
+    "expectedParseDiagnosticFragment": "is ambiguous: 2 different opened algorithms provide it at the same open level",
+    "probes": [
+      {
+        "source": "open { public S = { public X = 7 } }.S, { public S = { public X = 5 } }.S\n5",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "open { public S = { public Y = 5 } }.S, { public S = { public X = 7 } }.S\nX",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "open { public S = { X = 5 } }.S, { public S = { public X = 7 } }.S\nX",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "open Lib.S, (Lib).S\nLib = { public S = { public X = 7 } }\nX",
+        "expectedNeutral": "ok raw=7 n=1"
+      }
+    ],
+    "explanation": "Each written block is its own declaration, so a dotted path starting at a brace block is a separate provider from a path starting at another block, even when both paths have the same member names: a written `X` that both provide is ambiguous, while the overlap alone is valid. A diagnostic abbreviation such as `{...}.S` never identifies a provider, and two spellings of one name-headed path such as `open Lib.S, (Lib).S` are one provider.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "open-inline-headed-path-must-resolve",
+    "category": "name-resolution",
+    "source": "A = {\n    open { public X = 1 }.Nope\n    X\n}\nA(5)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnresolvedOpenTarget",
+    "expectedParseDiagnosticFragment": "'{...}.Nope' cannot be opened because '{...}' has no property named 'Nope'.",
+    "probes": [
+      {
+        "source": "A = {\n    open { public S = { public X = 1 } }.S\n    X\n}\nA",
+        "expectedNeutral": "ok raw=1 n=1"
+      }
+    ],
+    "explanation": "Every written open target must resolve, whatever its first part: the dotted steps of a path that starts at a `{ ... }` block or a loaded module select public members exactly as they do after a name, so a missing, private, or branch-only step is an unresolved open target. It is never dropped, and the names it would have provided are never turned into implicit parameters.",
+    "notes": "Constitution PV-11 (September 2026): the static resolution described failures of name-headed paths only, so a path starting at a `{ ... }` block or a loaded module with a missing, private, or branch-only step was dropped silently and the names only it could provide were promoted to implicit parameters — here `X` became `A`'s parameter and `A(5)` ran as 5, and `open load('url').Shwn` did the same while `Lib = load('url')` / `open Lib.Shwn` was refused."
+  },
+  {
+    "id": "open-after-clause-definition-rejected",
+    "category": "parser-layout",
+    "source": "P(a) = a\nopen Lib\nLib = {\n    public X = 4\n}\nP(X)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidOpenDeclaration",
+    "expectedParseDiagnosticFragment": "'open' declaration must appear before any properties or output expressions.",
+    "probes": [
+      {
+        "source": "open Lib\nP(a) = a\nLib = {\n    public X = 4\n}\nP(X)",
+        "expectedNeutral": "ok raw=4 n=1"
+      },
+      {
+        "source": "open Lib\nP(0) = 0\nP(n) = n + X\nLib = {\n    public X = 4\n}\nP(1)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "P(0) = {\n    open Lib\n    X\n}\nP(n) = n\nLib = {\n    public X = 4\n}\nP(0)",
+        "expectedNeutral": "ok raw=4 n=1"
+      }
+    ],
+    "explanation": "A body's one `open` declaration is its import preamble: it comes before every declaration and output row of that body, clause definitions included — `P(a) = a` declares a property exactly as `P = a` does. Move the `open` to the top of the body; each nested `{ ... }` body, a clause body included, has its own preamble.",
+    "notes": "Constitution PV-25 (September 2026): clause definitions are buffered in their families until the body ends, and the placement check counted only properties and output rows, so an `open` after `P(a) = a` — or between two clauses of one family — was accepted while an `open` after `P = a` was refused.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "capture-suppresses-higher-order-identity",
+    "category": "access-boundaries",
+    "source": "Apply = f(9)\nIncrement(x) = x + 1\nProbe(u) = Apply((Increment, Increment))\nProbe(0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "probes": [
+      {
+        "source": "Apply = f(9)\nIncrement(x) = x + 1\nApply(Increment)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment))",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Apply = f(9)\nIncrement(x) = x + 1\nApply(((Increment)))",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Apply = f(9)\nIncrement(x) = x + 1\nProbe(u) = Apply((Increment*))\nProbe(0)",
+        "expectedNeutral": "err notAnAlgorithm"
+      },
+      {
+        "source": "Id(v) = v\nIncrement(x) = x + 1\nG = Id((Increment, Increment))\nG(4)",
+        "expectedNeutral": "ok raw=S[5, 5] n=1"
+      }
+    ],
+    "explanation": "A capture such as `(Increment, Increment)` or `(Increment*)` supplies a suspended value cell with no callable identity. Calling the parameter fails as not an algorithm without evaluating the capture's contents. A value consumer instead demands the capture; its elements are formula value positions and may lift in an inferring body. Redundant parentheses disappear, so `(Increment)` and `((Increment))` retain Increment's callable identity."
+  },
+  {
+    "id": "capture-suppresses-structural-members",
+    "category": "access-boundaries",
+    "source": "V(x) = 99\nObj = {\n    public V = 7\n    0\n}\n\nObj.V\n(Obj).V\n(Obj*).V",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7\n7\n99"
+      }
+    ],
+    "expectedRaw": "S[7, 7, 99]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "F2(x, y) = x + y\nX = 3\n(X).F2(4)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Obj = {public V = 7}\nQ(z) = (Obj).V\nQ(0)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Obj = {public V = 7\n0}\nV(x) = 99\nQ(z) = (Obj*).V\nQ(0)",
+        "expectedNeutral": "ok raw=99 n=1"
+      }
+    ],
+    "explanation": "Parentheses group syntax: `(Obj).V` IS `Obj.V`, so both read Obj's own property. A genuine capture receiver — a lone spread `(Obj*)` or a group of several slots — has no structural members, so `(Obj*).V` falls back lexically and injects the captured value as the leading argument. That fallback is statically certain, so its name must be visible: inside a closed parameter list an undeclared one is the front-end UndeclaredIdentifier (`closed-list-must-fallback-name-is-checked`), and in an implicitly parameterized body the member becomes an inferred parameter instead."
+  },
+  {
+    "id": "output-dotted-access-ordinary",
+    "category": "access-boundaries",
+    "source": "A = {\n    Output = 9\n}\n\nA.Output",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "9"
+      }
+    ],
+    "expectedRaw": "9",
+    "expectedEmittedCount": 1,
+    "explanation": "A property named `Output` follows ordinary dotted property access rules — there is no reserved output member."
+  },
+  {
+    "id": "dot-call-structural-member-is-not-a-lexical-rewrite",
+    "category": "access-boundaries",
+    "source": "B(a, c) = a * 100 + c\nObj = {\n    public B(c) = c + 1\n}\n\nObj.B(5)\n3.B(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6\n305"
+      }
+    ],
+    "expectedRaw": "S[6, 305]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "B(a, c) = a * 100 + c\nObj = {\n    B(c) = c + 1\n}\nObj.B(5)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "B(a, c) = a * 100 + c\nObj = {\n    public Q = 1\n    3\n}\nObj.B(5)",
+        "expectedNeutral": "ok raw=305 n=1"
+      },
+      {
+        "source": "B(a, c) = a * 100 + c\n(3, 4).B(5)",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "Dot syntax is property-first. `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5` and injects no receiver; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. Only a receiver WITHOUT the member takes the lexical fallback, where `A.B(C)` allocates arguments like `B(A, C)` with the receiver as one ordinary leading argument — `3.B(5)` is `B(3, 5)`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "visibility-private-member-is-structural-not-exported",
+    "category": "access-boundaries",
+    "source": "Lib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nLib.Area\nLib.Helper",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "4\n2"
+      }
+    ],
+    "expectedRaw": "S[4, 2]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nArea",
+        "expectedNeutral": "ok raw=4 n=1"
+      },
+      {
+        "source": "open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nHelper",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nLib.Helper",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Lib(r) = {\n    public Area = r * r\n    Area\n}\n\nLib.Area",
+        "expectedNeutral": "err localOnlyProperty"
+      },
+      {
+        "source": "Outer(r) = {\n    open Lib\n    Lib = {\n        public Area = r * r\n    }\n    Area\n}\n\nOuter(3)",
+        "expectedNeutral": "ok raw=9 n=1"
+      }
+    ],
+    "explanation": "Private means not provided by `open`, not unreachable: `open` (an opened module included) brings only `public` members into scope, while structural dot access ignores `public`, so `Lib.Helper` reaches the private, self-contained `Helper`. Exposure never removes a member from selection: a `public` member that depends on an enclosing parameter is selected as usual and then refused at any access written outside the owner of that parameter. A parameterized algorithm is refused as an `open` target outright, because `open` imports a namespace and never creates the activation its members would read.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "property-call-boundary",
+    "category": "access-boundaries",
+    "source": "P = 1, 2, 3\nP()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 2, 3)"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 3]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "P = 1, 2, 3\nP.count",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "Explicit zero-parameter call `P()` observes the same value as property-style access `P`; the difference is only cache usage."
+  },
+  {
+    "id": "builtin-result-reentry",
+    "category": "access-boundaries",
+    "source": "x = take((1, 2, 3), 2)\nx",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[1, 2]"
+      }
+    ],
+    "expectedRaw": "L[1, 2]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "I(a) = a\nI(take((1, 2, 3), 2))",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "G(*a) = a\nG(take((1, 2, 3), 2))",
+        "expectedNeutral": "ok raw=L[L[1, 2]] n=1"
+      },
+      {
+        "source": "G(*a) = a\nG(take((1, 2, 3), 2)*)",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "take((1, 2, 3), 2) == (1, 2)",
+        "expectedNeutral": "ok raw=false n=1"
+      },
+      {
+        "source": "take((1, 2, 3), 2) == [1, 2]",
+        "expectedNeutral": "ok raw=true n=1"
+      },
+      {
+        "source": "count(take((1, 2, 3), 2))",
+        "expectedNeutral": "ok raw=2 n=1"
+      }
+    ],
+    "explanation": "A collection builtin's exact list result re-enters receivers by the ordinary rules: capture and fixed parameters observe the same list value, a collecting binding collects it as one element (`[[1, 2]]`) unless the caller spreads it, count opens its one list boundary, and the list never equals a sequence value."
+  },
+  {
+    "id": "zero-arg-access-of-parametrized",
+    "category": "access-boundaries",
+    "source": "Add(a, b) = a + b\n\nAdd\n(1, 2)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "explanation": "A physical newline never continues a closed expression into a call: `Add` alone is a zero-argument access of a two-parameter callable (an arity error), and `(1, 2)` is a separate row."
+  }
+]

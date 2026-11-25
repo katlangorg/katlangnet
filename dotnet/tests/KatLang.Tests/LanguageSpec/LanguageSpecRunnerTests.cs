@@ -59,7 +59,13 @@ public class LanguageSpecRunnerTests
             return;
         }
 
-        var observation = SemanticExplorerHarness.Observe(specCase.Id, specCase.Source);
+        VerifyEvaluation(specCase, static source => KatLangEngine.Run(source));
+    }
+
+    private static void VerifyEvaluation(SpecCase specCase, Func<string, RunResult> runEngine)
+    {
+        var caseId = specCase.Id;
+        var observation = SemanticExplorerHarness.ObserveEvaluation(caseId, specCase.Source, runEngine, out var completedRun);
 
         if (specCase.Outcome == SpecOutcome.EvalError)
         {
@@ -74,7 +80,34 @@ public class LanguageSpecRunnerTests
         Assert.True(observation.Outcome == "ok",
             $"{caseId}: expected successful evaluation, observed {observation.Neutral}.");
         Assert.Equal(specCase.CanonicalNeutral, observation.Neutral);
-        Assert.Equal(specCase.ExpectedDisplay, observation.Display!.ReplaceLineEndings("\n"));
+        Assert.NotNull(completedRun);
+        foreach (var check in specCase.DisplayChecks)
+        {
+            var rendering = check.UsesDefaultHostSettings()
+                ? completedRun
+                : Assert.IsType<RunResult.Success>(completedRun.WithHostDecimalPlaces(check.MinDecimalPlaces, check.MaxDecimalPlaces));
+            Assert.Equal(check.Text, rendering.ToDisplayString().ReplaceLineEndings("\n"));
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public void OptionalDisplaysShareOnePublicEngineRun(int checkCount)
+    {
+        var original = CasesById["division-decimal-quotient"];
+        var checks = original.DisplayChecks.Where(check => !check.UsesDefaultHostSettings()).Take(checkCount).ToArray();
+        Assert.Equal(checkCount, checks.Length);
+        var specCase = original with { DisplayChecks = checks };
+
+        var calls = 0;
+        VerifyEvaluation(specCase, source =>
+        {
+            calls++;
+            return KatLangEngine.Run(source);
+        });
+        Assert.Equal(1, calls);
+        Assert.Throws<InvalidDataException>(() => specCase.RequireDefaultDisplay());
     }
 
     public static TheoryData<string> CachePilotCaseIds()
@@ -119,7 +152,8 @@ public class LanguageSpecRunnerTests
     public void Probe_MatchesCanonicalNeutral(string caseId, int probeIndex)
     {
         var probe = CasesById[caseId].Probes[probeIndex];
-        var observation = SemanticExplorerHarness.Observe($"{caseId}@probe{probeIndex}", probe.Probe);
+        var observation = SemanticExplorerHarness.ObserveEvaluation(
+            $"{caseId}@probe{probeIndex}", probe.Probe, static source => KatLangEngine.Run(source), out _);
         Assert.Equal(probe.ExpectedNeutral, observation.Neutral);
     }
 
@@ -172,7 +206,10 @@ public class LanguageSpecRunnerTests
             switch (specCase.Outcome)
             {
                 case SpecOutcome.Evaluates:
-                    Assert.True(specCase.ExpectedDisplay is not null, $"{specCase.Id}: Evaluates requires ExpectedDisplay.");
+                    var settings = new HashSet<(int?, int?)>();
+                    foreach (var check in specCase.DisplayChecks)
+                        Assert.True(settings.Add((check.MinDecimalPlaces, check.MaxDecimalPlaces)),
+                            $"{specCase.Id}: duplicate host decimal settings in displayChecks.");
                     Assert.True(specCase.ExpectedRaw is not null, $"{specCase.Id}: Evaluates requires ExpectedRaw.");
                     Assert.True(specCase.ExpectedEmittedCount is not null, $"{specCase.Id}: Evaluates requires ExpectedEmittedCount.");
                     Assert.True(specCase.ExpectedErrorCategory is null, $"{specCase.Id}: Evaluates forbids ExpectedErrorCategory.");
@@ -181,13 +218,13 @@ public class LanguageSpecRunnerTests
                     break;
                 case SpecOutcome.EvalError:
                     Assert.True(specCase.ExpectedErrorCategory is not null, $"{specCase.Id}: EvalError requires ExpectedErrorCategory.");
-                    Assert.True(specCase.ExpectedDisplay is null && specCase.ExpectedRaw is null && specCase.ExpectedEmittedCount is null,
+                    Assert.True(specCase.DisplayChecks.Count == 0 && specCase.ExpectedRaw is null && specCase.ExpectedEmittedCount is null,
                         $"{specCase.Id}: EvalError forbids value expectations.");
                     Assert.True(specCase.ExpectedParseDiagnosticFragment is null, $"{specCase.Id}: EvalError forbids ExpectedParseDiagnosticFragment.");
                     Assert.True(specCase.ExpectedDiagnosticCode is null, $"{specCase.Id}: EvalError forbids ExpectedDiagnosticCode.");
                     break;
                 case SpecOutcome.ParseError:
-                    Assert.True(specCase.ExpectedDisplay is null && specCase.ExpectedRaw is null
+                    Assert.True(specCase.DisplayChecks.Count == 0 && specCase.ExpectedRaw is null
                         && specCase.ExpectedEmittedCount is null && specCase.ExpectedErrorCategory is null,
                         $"{specCase.Id}: ParseError forbids value/error expectations.");
                     // Every diagnostic-level case pins its structured family, so

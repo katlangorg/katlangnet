@@ -1,0 +1,187 @@
+[
+  {
+    "id": "grouped-runtime-member-value-call",
+    "category": "name-resolution",
+    "source": "Use(v) = {\n    Box = {\n        public A = v\n        0\n    }\n    (Box.A)()\n}\nUse(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Use(v) = {\n    Box = {\n        public A = v\n        0\n    }\n    Box.A()\n}\nUse(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nUse(v) = {\n    Box = {\n        public A = v\n        0\n    }\n    (Box.A)(2)\n}\nUse(Inc)",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "Parentheses never change a call: a value-only runtime member answers `(Box.A)()` with its one supplied value, exactly as the member call `Box.A()` does. Grouping creates no callable identity: passing `Box.A` on still passes no callable."
+  },
+  {
+    "id": "grouped-runtime-member-value-arity",
+    "category": "errors",
+    "source": "Use(v) = {\n    Box = {\n        public A = v\n        0\n    }\n    (Box.A)(1)\n}\nUse(5)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        0,
+        1
+      ]
+    },
+    "explanation": "A non-empty supply of a value-only runtime member is its row's arity rejection, grouped or not, never `NotAnAlgorithm`."
+  },
+  {
+    "id": "open-reference-private-member-provides-public-names",
+    "category": "name-resolution",
+    "source": "open A\nLib = {\n    Sub = {\n        public Q(x) = x + 1\n    }\n}\nA = Lib.Sub\nQ(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "explanation": "`A = Lib.Sub` is an ordinary dot reference, whose path selects declared members in its lexical owner, so `open A` provides the target's public `Q` to the front end and the evaluator alike. A written `open Lib.Sub` still selects public members only."
+  },
+  {
+    "id": "open-reference-private-member-keeps-private-names",
+    "category": "name-resolution",
+    "source": "open Lib.Sub\nLib = {\n    Sub = {\n        public Q(x) = x + 1\n    }\n}\nQ(5)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnresolvedOpenTarget",
+    "expectedParseDiagnosticFragment": "is not public",
+    "explanation": "A written open path selects public members: a private step is refused, although a reference to the same member can be opened."
+  },
+  {
+    "id": "open-runtime-link-provides-its-own-namespace",
+    "category": "name-resolution",
+    "source": "Cap(meta r) = r\nInc(x) = x + 1\nL = Cap(Inc(1)).Algorithm\nK = {\n    open L\n    5\n}\nK",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "explanation": "A link whose receiver is a call is a runtime link, not a transparent reference: like every body that is no reference, it is its own namespace (Lean `openStructure`, `Evaluator.OpenStructure`). It provides no names here, so the row reads the literal."
+  },
+  {
+    "id": "open-calculation-link-is-refused",
+    "category": "name-resolution",
+    "source": "Mk(t) = t + 1\nL = Mk.Algorithm\nK = {\n    open L\n    5\n}\nK",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "IllegalInOpen",
+    "expectedParseDiagnosticFragment": "'L' cannot be opened because open providers must have an empty effective parameter list",
+    "explanation": "`L = Mk.Algorithm` is a link to a parameterized calculation, not a transparent reference, so `open L` judges `L` itself by the provider rule, which refuses a provider with parameters.",
+    "notes": "Front-end rejection; no elaborated Lean program exists for a rejected parse."
+  },
+  {
+    "id": "open-reference-to-a-calculation-link-reports-the-target-refusal",
+    "category": "name-resolution",
+    "source": "Mk(t) = t + 1\nL = Mk.Algorithm\nA = L\nK = {\n    open A\n    5\n}\nK",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "IllegalInOpen",
+    "expectedParseDiagnosticFragment": "'A' cannot be opened because",
+    "explanation": "`A = L` is a transparent reference, so `open A` opens what `L` is; `L` is a calculation link, so the provider rule refuses it rather than reporting an unresolved target.",
+    "notes": "Front-end rejection; no elaborated Lean program exists for a rejected parse."
+  },
+  {
+    "id": "open-parameterized-fallback-row-is-refused",
+    "category": "name-resolution",
+    "source": "Add(x, y) = x + y\nL = Add.abs\nK = {\n    open L\n    5\n}\nK",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "IllegalInOpen",
+    "explanation": "`Add.abs` names no declared member, so `L` is a calculation over `Add` and inherits its parameters: the provider rule refuses it.",
+    "notes": "Front-end rejection; no elaborated Lean program exists for a rejected parse."
+  },
+  {
+    "id": "open-link-over-a-head-only-an-open-provides-is-unresolved",
+    "category": "name-resolution",
+    "source": "Q = {\n    public S = {\n        public X = 1\n    }\n}\nK = {\n    open Q\n    L = S.Algorithm\n    M = {\n        open L\n        5\n    }\n    M\n}\nK",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "UnresolvedOpenTarget",
+    "explanation": "An open target's own head resolves directly, through declarations and the declaring chain but never through another `open` (OD-C). `L = S.Algorithm` links to `S`, which only `open Q` provides, so `open L` is unresolved.",
+    "notes": "Front-end rejection; no elaborated Lean program exists for a rejected parse."
+  },
+  {
+    "id": "open-of-a-link-over-a-cyclic-head-compiles-in-every-order",
+    "category": "name-resolution",
+    "source": "P5 = {\n    open P3\n    Z\n}\nP6 = P6\nP3 = P6.Algorithm\nP5(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1"
+      }
+    ],
+    "expectedRaw": "1",
+    "expectedEmittedCount": 1,
+    "explanation": "`P6 = P6` returns to itself, so `P3 = P6.Algorithm` is a runtime link and its own empty namespace: `open P3` provides nothing and `Z` is `P5`'s parameter. The front end once answered a miss here and then the link's own structure, a refinement it forbids, in some declaration orders."
+  },
+  {
+    "id": "receiver-expansion-return-through-a-reference",
+    "category": "name-resolution",
+    "source": "A = B\nB = {\n    public M = C\n    0\n}\nC = A.M.abs\n7",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "Expanding `C = A.M.abs` reaches `B` through the reference `A`, consumes `M` and returns to `C` with `.abs` still pending, so `C` is its own calculation, as in its inlined twin `C = B.M.abs`. An unused recursive calculation compiles; the program reads only the literal."
+  },
+  {
+    "id": "receiver-expansion-return-through-a-reference-link",
+    "category": "name-resolution",
+    "source": "A = B\nB = {\n    public M = C\n    0\n}\nC = A.M.Algorithm\n7",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "The same return ending at the `.Algorithm` intrinsic keeps its runtime-link classification instead of becoming a calculation namespace."
+  },
+  {
+    "id": "receiver-expansion-return-through-a-self-member",
+    "category": "name-resolution",
+    "source": "B = {\n    public M = B\n    public N = C\n    0\n}\nC = B.M.N.abs\n7",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "7"
+      }
+    ],
+    "expectedRaw": "7",
+    "expectedEmittedCount": 1,
+    "explanation": "No reference is needed: `B.M` is `B`, `B.N` is `C`, and `C` is reached again with `.abs` pending, so `C` is its own calculation."
+  },
+  {
+    "id": "receiver-expansion-consumed-members-are-no-return",
+    "category": "name-resolution",
+    "source": "Q = {\n    public V = 5\n}\nB = {\n    public M = B\n    public N = Q\n    0\n}\nC = B.M.M.N\nC.V",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5"
+      }
+    ],
+    "expectedRaw": "5",
+    "expectedEmittedCount": 1,
+    "explanation": "Reaching `B` again after its pending members were consumed is no return: `B.M.M.N` is `B.N`, a reference to `Q`, so `C.V` is 5."
+  }
+]

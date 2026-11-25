@@ -1,0 +1,152 @@
+[
+  {
+    "id": "hunt-meta-capture-is-inert",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = 5\nCap(tick()), tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "5\n1"
+      }
+    ],
+    "expectedRaw": "S[5, 1]",
+    "expectedEmittedCount": 2,
+    "explanation": "Binding a `meta` parameter captures the call without running it: the captured `tick()` never runs, so the root `tick()` is 1."
+  },
+  {
+    "id": "hunt-meta-invoke-reuses-sticky-supply",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = r\nAdd(a, b) = a + b\nR = Cap(Add(tick(), 10))\nR.Invoke(), R.Invoke()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "11\n11"
+      }
+    ],
+    "expectedRaw": "S[11, 11]",
+    "expectedEmittedCount": 2,
+    "explanation": "Each `R.Invoke()` is a fresh execution over the plan's one supply: the argument `tick()` is evaluated once and reused."
+  },
+  {
+    "id": "hunt-meta-arguments-count-demands-nothing",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = r\nAdd(a, b) = a + b\nR = Cap(Add(1 / 0, 2))\nR.Arguments.count",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "`R.Arguments.count` counts the supplied cells without demanding any, so `1 / 0` never runs."
+  },
+  {
+    "id": "hunt-meta-arguments-selection-validates-before-reading",
+    "category": "equality-and-indexing",
+    "source": "Cap(meta r) = r\nAdd(a, b) = a + b\nR = Cap(Add(1 / 0, 2))\nR.Arguments[5]",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "index",
+    "explanation": "Selection validates the selector against the cell count before any cell is read: `[5]` is `BadIndex`, not the failure of the first argument."
+  },
+  {
+    "id": "hunt-meta-extension-route-receiver-first",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = r\nAdd(a, b) = a + b\nR = Cap(5.Add(1))\nR.Invoke(), R.Arguments.count, R.Arguments[0]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6\n2\n5"
+      }
+    ],
+    "expectedRaw": "S[6, 2, 5]",
+    "expectedEmittedCount": 3,
+    "explanation": "A captured `5.Add(1)` is the call `Add(5, 1)`: two supplied cells, the receiver first."
+  },
+  {
+    "id": "hunt-meta-intrinsic-route-refuses-invocation",
+    "category": "errors",
+    "source": "Cap(meta r) = r\nR = Cap(5.string())\nR.Invoke()",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "notAnAlgorithm",
+    "explanation": "A captured `5.string()` is a non-callable intrinsic route: invoking it is `NotAnAlgorithm`, though capture and identity work."
+  },
+  {
+    "id": "hunt-meta-arguments-and-invoke-share-cells",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = r\nAdd(a, b) = a + b\nR = Cap(Add(tick(), 100))\nR.Arguments[0], R.Invoke()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n101"
+      }
+    ],
+    "expectedRaw": "S[1, 101]",
+    "expectedEmittedCount": 2,
+    "explanation": "`R.Arguments[0]` demands the first cell (tick 1); `R.Invoke()` then reuses it."
+  },
+  {
+    "id": "hunt-meta-member-route-invoke-is-fresh",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = r\nBox = { public V = tick() }\nR = Cap(Box.V())\nR.Invoke(), Box.V, R.Invoke()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 2]",
+    "expectedEmittedCount": 3,
+    "explanation": "A captured `Box.V()` invokes the member freshly; its first invocation establishes `V`'s empty entry, which the bare `Box.V` reads."
+  },
+  {
+    "id": "hunt-meta-sticky-supply-self-demand-cycle",
+    "category": "errors",
+    "source": "Cap(meta r) = r\nF(x) = x + 1\nR = Cap(F(R.Invoke()))\nR.Invoke()",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "demandCycle",
+    "explanation": "The captured argument re-invokes the same reference, which demands the same sticky cell while it is being evaluated: `DemandCycle`."
+  },
+  {
+    "id": "hunt-meta-arguments-count-inside-own-argument",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = r\nF(x) = x + 1\nR = Cap(F(R.Arguments.count))\nR.Invoke()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "explanation": "Counting the supplied cells demands none of them, so the self-reference is harmless."
+  },
+  {
+    "id": "hunt-meta-invoke-body-fresh-arguments-sticky",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = r\nF(x) = x + tick() * 100\nR = Cap(F(tick()))\nR.Invoke(), R.Invoke(), R.Arguments[0]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "201\n301\n1"
+      }
+    ],
+    "expectedRaw": "S[201, 301, 1]",
+    "expectedEmittedCount": 3,
+    "explanation": "The body's own `tick()` runs on every invocation, while the argument cell runs once."
+  },
+  {
+    "id": "hunt-meta-algorithm-call-takes-fresh-supply",
+    "category": "variadic-calls",
+    "source": "Cap(meta r) = r\nF(x) = x + tick() * 100\nR = Cap(F(tick()))\nR.Algorithm(tick()), R.Invoke()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "201\n403"
+      }
+    ],
+    "expectedRaw": "S[201, 403]",
+    "expectedEmittedCount": 2,
+    "explanation": "`R.Algorithm(tick())` calls the captured callee with exactly the new argument; the plan's own supply is untouched until `R.Invoke()`."
+  }
+]

@@ -1,0 +1,264 @@
+[
+  {
+    "id": "hunt-cache-carrier-call-fresh-bare-read-target",
+    "category": "access-boundaries",
+    "source": "P = tick()\nB = { P }\nP, B(), B",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 1]",
+    "expectedEmittedCount": 3,
+    "explanation": "`B = { P }` owns no entry: `B()` is a fresh call of `P` (the second `tick()`), while a bare `B` is `P`'s own bare read and reuses the entry the first `P` published."
+  },
+  {
+    "id": "hunt-cache-deconstruction-call-establishes-target-entry",
+    "category": "deconstruction",
+    "source": "a, b = tick(), 20\na(), a, b()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1\n20"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 20]",
+    "expectedEmittedCount": 3,
+    "explanation": "The first `a()` demands the shared right-hand side once and, finding `a`'s own entry empty, establishes it; `a` then reuses it, and `b()` projects the same calculation: `tick()` runs once."
+  },
+  {
+    "id": "hunt-cache-collecting-only-owner-read-and-calls",
+    "category": "access-boundaries",
+    "source": "Only(*xs) = tick() + xs.count\nOnly, Only(), Only, Only(5)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n1\n4"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 1, 4]",
+    "expectedEmittedCount": 4,
+    "explanation": "`Only(*xs)` accepts the empty supply, so a bare `Only` is a cached read (one entry); `Only()` and `Only(5)` are fresh calls and never replace it."
+  },
+  {
+    "id": "hunt-cache-collecting-only-owner-exported-member",
+    "category": "access-boundaries",
+    "source": "Only(*xs) = {\n  V = tick()\n  V + xs.count\n}\nOnly, Only.V, Only(), Only(7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1\n2\n4"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 2, 4]",
+    "expectedEmittedCount": 4,
+    "explanation": "A bare `Only` is a read, not a call, and `Only.V` is written outside every call of `Only`: both use the one `V` that belongs to the run (1). `Only()` and `Only(7)` are calls of `Only`, and each works out its own `V` (2, then 3), so they give `2 + 0` and `3 + 1`.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026). The bug hunt wrote this case before that rule with (1, 1, 1, 2): `V` uses nothing of `xs`, so one `V` served the read, the member read and both calls."
+  },
+  {
+    "id": "hunt-collecting-owner-dependent-member-refused-at-root",
+    "category": "access-boundaries",
+    "source": "Only(*xs) = {\n  V = tick() + xs.count\n  V\n}\nOnly, Only.V, Only, Only.V",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "localOnlyProperty",
+    "explanation": "`V` reads `xs`, so it is local-only and needs an activation of `Only`; the root path `Only.V` lies outside every activation and is refused as `LocalOnlyProperty`."
+  },
+  {
+    "id": "hunt-cache-declared-algorithm-member-grouped-call",
+    "category": "access-boundaries",
+    "source": "Box = { public Algorithm = tick() }\n(Box.Algorithm)(), Box.Algorithm, (Box.Algorithm)()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 2]",
+    "expectedEmittedCount": 3,
+    "explanation": "A declared member named `Algorithm` wins over the intrinsic. `(Box.Algorithm)()` is that member's fresh call, which finds its entry empty and establishes it; the bare read reuses it and the second call is fresh."
+  },
+  {
+    "id": "hunt-cache-alias-of-member-path-shares-member-entry",
+    "category": "access-boundaries",
+    "source": "Box = { public V = tick() }\nA = Box.V\nA, Box.V, A(), A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n1\n2\n1"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 2, 1]",
+    "expectedEmittedCount": 4,
+    "explanation": "`A = Box.V` is a transparent reference: reading `A` is reading `Box.V` (one entry), and `A()` is `V`'s fresh call, which never replaces the entry."
+  },
+  {
+    "id": "hunt-cache-carrier-own-member-and-forwarded-read",
+    "category": "access-boundaries",
+    "source": "P = tick()\nB = {\n  public Q = 99\n  P\n}\nB.Q, B, B(), P",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "99\n1\n2\n1"
+      }
+    ],
+    "expectedRaw": "S[99, 1, 2, 1]",
+    "expectedEmittedCount": 4,
+    "explanation": "`B` declares `Q` and forwards to `P`: `B.Q` is its own member, a bare `B` is `P`'s bare read, and `B()` is `P`'s fresh call."
+  },
+  {
+    "id": "hunt-cache-explicit-call-establishes-inner-reads-cached",
+    "category": "access-boundaries",
+    "source": "A = tick()\nB = A + tick()\nB(), B, A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3\n3\n1"
+      }
+    ],
+    "expectedRaw": "S[3, 3, 1]",
+    "expectedEmittedCount": 3,
+    "explanation": "`B()` is a fresh evaluation that finds `B`'s entry empty and establishes it; the read of `A` inside it is an ordinary cached read."
+  },
+  {
+    "id": "hunt-cache-reentrant-explicit-call-inside-owner",
+    "category": "access-boundaries",
+    "source": "A = tick() + if(tick() < 3, A(), 0)\nA, A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "4\n4"
+      }
+    ],
+    "expectedRaw": "S[4, 4]",
+    "expectedEmittedCount": 2,
+    "explanation": "While the outermost read of `A` runs, the inner `A()` is re-entrant: it evaluates but publishes nothing, so only the outer result `4` is published and reused."
+  },
+  {
+    "id": "hunt-cache-carrier-call-uses-declaring-activation",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  O = {\n    public V = y * 0 + tick()\n    V\n  }\n  O(), O, O.V\n}\nF(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 1, 1)"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 1]",
+    "expectedEmittedCount": 1,
+    "explanation": "A carrier adds no activation: `O()` is `V`'s fresh call in `O`'s declaring activation, so it establishes the entry that the later bare `O` and `O.V` read."
+  },
+  {
+    "id": "hunt-cache-explicit-owner-call-binds-fresh-activation",
+    "category": "access-boundaries",
+    "source": "F(y) = {\n  O = {\n    public V = y * 0 + tick()\n    V + 0\n  }\n  O(), O, O.V\n}\nF(1)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(1, 1, 2)"
+      }
+    ],
+    "expectedRaw": "S[1, 1, 2]",
+    "expectedEmittedCount": 1,
+    "explanation": "`O` is an ordinary parameterless owner: `O()` evaluates its body in a fresh activation (establishing `O`'s own entry), so the later `O.V`, read in the declaring activation, evaluates `V` again."
+  },
+  {
+    "id": "hunt-cache-explicit-call-owns-empty-key",
+    "category": "access-boundaries",
+    "source": "A = tick() + if(tick() < 3, A(), 0)\nA(), A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "4\n4"
+      }
+    ],
+    "expectedRaw": "S[4, 4]",
+    "expectedEmittedCount": 2,
+    "explanation": "`A()` finds the entry empty and inactive, so it owns it; the inner `A()` is re-entrant and publishes nothing; the outer result is published and the bare `A` reuses it."
+  },
+  {
+    "id": "hunt-cache-deconstruction-in-loop-step-per-round",
+    "category": "deconstruction",
+    "source": "Step(n, s) = {\n  a, b = n * 10 + tick(), 0\n  n + 1, s + a, n < 2\n}\nStep(0, 0).while, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(2, 13)\n3"
+      }
+    ],
+    "expectedRaw": "S[S[2, 13], 3]",
+    "expectedEmittedCount": 2,
+    "explanation": "The deconstruction reads the step's `n`, so its targets belong to each round: every round unpacks its own right-hand side, and the `false` round unpacks none."
+  },
+  {
+    "id": "hunt-cache-alias-of-collecting-owner",
+    "category": "access-boundaries",
+    "source": "Only(*xs) = tick() + xs.count\nA = Only\nA(5), A, Only(), A",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2\n2\n3\n2"
+      }
+    ],
+    "expectedRaw": "S[2, 2, 3, 2]",
+    "expectedEmittedCount": 4,
+    "explanation": "`A = Only` owns no entry: `A(5)` is a fresh supplied call, a bare `A` is `Only`'s cached read, and `Only()` is fresh and never replaces it."
+  },
+  {
+    "id": "hunt-cache-carrier-forwards-supplied-calls-fresh",
+    "category": "access-boundaries",
+    "source": "P(x) = x + tick()\nB = {\n  public Q = 1\n  P\n}\nB(10), B(10), B.Q",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "11\n12\n1"
+      }
+    ],
+    "expectedRaw": "S[11, 12, 1]",
+    "expectedEmittedCount": 3,
+    "explanation": "Each `B(10)` forwards its supplied argument to a fresh call of `P`; the carrier's own member `Q` is unaffected."
+  },
+  {
+    "id": "hunt-runtime-alias-cell-lifetime-exported",
+    "category": "access-boundaries",
+    "source": "Cap(meta r) = r\nMul(t) = t * 10\nPick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0)))\nF(k) = {\n  A = Pick(tick()).Algorithm\n  A(k)\n}\nF(1), F(2), F(1), tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n10\n4"
+      }
+    ],
+    "expectedRaw": "S[10, 20, 10, 4]",
+    "expectedEmittedCount": 4,
+    "explanation": "`A = Pick(tick()).Algorithm` is declared inside `F`, so every call of `F` has its own `A`, exactly as the same row written as a property would be worked out in every call: `Pick(tick())` runs once in each of the three calls, and the final `tick()` is 4. It makes no difference that the row uses nothing of `k`.",
+    "notes": "INNER-PROPERTY LIFETIME (November 2026). The bug hunt wrote this case before that rule with (10, 20, 10, 2): under ALIAS-CELL-LIFETIME alone the row uses nothing of `k`, so one binding cell served the whole run."
+  },
+  {
+    "id": "hunt-runtime-alias-cell-lifetime-local",
+    "category": "access-boundaries",
+    "source": "Cap(meta r) = r\nMul(t) = t * 10\nPick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0)))\nF(k) = {\n  A = Pick(tick() + k * 0).Algorithm\n  A(k)\n}\nF(1), F(2), F(1), tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20\n10\n4"
+      }
+    ],
+    "expectedRaw": "S[10, 20, 10, 4]",
+    "expectedEmittedCount": 4,
+    "explanation": "The row reads `k`, so its binding cell belongs to each call of `F`, like its property twin: `Pick` runs once per call."
+  },
+  {
+    "id": "hunt-runtime-alias-cell-lifetime-per-loop-round",
+    "category": "access-boundaries",
+    "source": "Cap(meta r) = r\nMul(t) = t * 10\nPick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0)))\nStep(n, acc) = {\n  A = Pick(tick() + n * 0).Algorithm\n  n + 1, acc + A(n), n < 3\n}\nStep(0, 0).while, tick()",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(3, 30)\n4"
+      }
+    ],
+    "expectedRaw": "S[S[3, 30], 4]",
+    "expectedEmittedCount": 2,
+    "explanation": "Each of the three continuing rounds establishes its own `A` when it evaluates `acc + A(n)`. At `n = 3` the flag is false, so the loop returns its entering state and the next `tick()` is 4."
+  }
+]

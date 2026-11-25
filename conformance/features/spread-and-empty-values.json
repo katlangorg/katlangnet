@@ -1,0 +1,342 @@
+[
+  {
+    "id": "property-value-boundary",
+    "category": "item-supply-vs-value",
+    "source": "Coordinates = 10, 20\nCoordinates\nCoordinates*, 997",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "(10, 20)\n10\n20\n997"
+      }
+    ],
+    "expectedRaw": "S[S[10, 20], 10, 20, 997]",
+    "expectedEmittedCount": 4,
+    "expectedCachePublications": {
+      "Coordinates": 1
+    },
+    "explanation": "Property-style access observes a multi-item body as one sequence value; caller-site spread turns it back into separate output rows."
+  },
+  {
+    "id": "spread-capture-count",
+    "category": "item-supply-vs-value",
+    "source": "A = [1, 2, 3]\n\n(A*).count",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "3"
+      }
+    ],
+    "expectedRaw": "3",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "A = [1, 2, 3]\nA*.count",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "Parentheses around a supply-producing expression perform CAPTURE — they are not always redundant grouping: `(A*).count` counts one captured sequence value (3), while the fluent `A*.count` is the call `count(A*)` whose three argument slots do not fit the fixed `count(collection)` signature (an arity error).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "repeated-spread-fixed-point",
+    "category": "item-supply-vs-value",
+    "source": "Collect(*items) = items\nA = [[1, 2], [3, 4]]\n\nCollect(A*)\nCollect(A**)\nCollect((A*)*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[[1, 2], [3, 4]]\n[[1, 2], [3, 4]]\n[[1, 2], [3, 4]]"
+      }
+    ],
+    "expectedRaw": "S[L[L[1, 2], L[3, 4]], L[L[1, 2], L[3, 4]], L[L[1, 2], L[3, 4]]]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "Collect(*items) = items\nCollect([[1, 2], 3]*)",
+        "expectedNeutral": "ok raw=L[L[1, 2], 3] n=1"
+      },
+      {
+        "source": "Collect(*items) = items\nCollect([[1, 2], 3]**)",
+        "expectedNeutral": "ok raw=L[L[1, 2], 3] n=1"
+      },
+      {
+        "source": "A = [[1, 2], [3, 4]]\nA**, 997",
+        "expectedNeutral": "ok raw=S[L[1, 2], L[3, 4], 997] n=3"
+      }
+    ],
+    "explanation": "Repeated spread is ordinary composition, not recursive flattening: `A**` means `(A*)*`. The first star supplies A's two inner lists; the ordinary expression boundary CAPTURES that two-item supply back into one sequence value; the second star re-spreads the same two items — a fixed point. The inner lists are never opened.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "repeated-spread-singleton-opens",
+    "category": "item-supply-vs-value",
+    "source": "Collect(*items) = items\n\nCollect([[7]]*)\nCollect([[7]]**)\nCollect([7]*)\nCollect([7]**)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[[7]]\n[7]\n[7]\n[7]"
+      }
+    ],
+    "expectedRaw": "S[L[L[7]], L[7], L[7], L[7]]",
+    "expectedEmittedCount": 4,
+    "probes": [
+      {
+        "source": "Collect(*items) = items\nCollect([]*)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Collect(*items) = items\nCollect([]**)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Collect(*items) = items\nCollect(5*)",
+        "expectedNeutral": "ok raw=L[5] n=1"
+      }
+    ],
+    "explanation": "A second star changes the observable supply only when the first spread contributes exactly ONE structured value: singleton capture collapses to that item, so the second star can open its boundary (`[[7]]**` supplies `7`). A scalar singleton is neutral (`[7]**` equals `[7]*` — spread is total), and a zero-item supply stays zero (`[]**` captures `()` in between)."
+  },
+  {
+    "id": "scalar-spread-neutral",
+    "category": "item-supply-vs-value",
+    "source": "Collect(*items) = items\n\nCollect(5)\nCollect(5*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[5]\n[5]"
+      }
+    ],
+    "expectedRaw": "S[L[5], L[5]]",
+    "expectedEmittedCount": 2,
+    "explanation": "The item view is total: an atom contributes itself as a one-item supply, so spreading an atom is observationally neutral in this collecting context. This is a fact about the item view, not a claim that atoms and collection values are the same kind of value."
+  },
+  {
+    "id": "select-spread-vs-capture-select",
+    "category": "item-supply-vs-value",
+    "source": "A = [[1, 2], [3, 4]]\n\n(A[0])*,\n(A*)[0]",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n[1, 2]"
+      }
+    ],
+    "expectedRaw": "S[1, 2, L[1, 2]]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "A = [[1, 2], [3, 4]]\nA[0]*, 997",
+        "expectedNeutral": "ok raw=S[1, 2, 997] n=3"
+      },
+      {
+        "source": "A = [[1, 2], [3, 4]]\n(A[0])*\n(A*)[0]",
+        "expectedNeutral": "ok raw=S[1, 2, L[1, 2]] n=3"
+      },
+      {
+        "source": "A = [[1, 2], [3, 4]]\n(A[0]) *\n(A*)[0]",
+        "expectedNeutral": "err type"
+      }
+    ],
+    "explanation": "Select-then-spread and capture-then-select are different operations: `(A[0])*` selects the stored list `[1, 2]` and spreads its elements into two rows, while `(A*)[0]` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. The trailing comma closes the spread row explicitly; the end of the line closes it too, because an attached line-final star completes its spread (issue #183). A DETACHED `(A[0]) *` before the next line is instead the multiplication `(A[0]) * (A*)[0]`, which fails on the list operands. (`A[0]*` is the same select-then-spread: the star follows the completed index. `A*:0` is a targeted parse error — selection cannot be applied directly to an item supply.)"
+  },
+  {
+    "id": "fixed-call-preserves-boundaries",
+    "category": "item-supply-vs-value",
+    "source": "Pair = 10, 20\nAdd(x, y) = x + y\n\nAdd(Pair)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        2,
+        1
+      ]
+    },
+    "probes": [
+      {
+        "source": "Pair = 10, 20\nAdd(x, y) = x + y\nAdd(Pair*)",
+        "expectedNeutral": "ok raw=30 n=1"
+      },
+      {
+        "source": "Pair = 10, 20\nAdd(x, y) = x + y\nAdd(Pair[0], Pair[1])",
+        "expectedNeutral": "ok raw=30 n=1"
+      }
+    ],
+    "explanation": "A property reference is one argument expression even when it evaluates to several items: `Add(Pair)` is an arity error. Open it explicitly with `Add(Pair*)` or index with `Add(Pair[0], Pair[1])`.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "spread-fills-remaining-slots",
+    "category": "item-supply-vs-value",
+    "source": "Tail = 2, 3\nUse(a, b, c) = a + b + c\n\nUse(1, Tail*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "6"
+      }
+    ],
+    "expectedRaw": "6",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Tail = 2, 3\nUse(a, b, c) = a + b + c\nUse(1, Tail)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Tail = 2, 3\nUse(a, b, c) = a + b + c\nUse(1*, Tail)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "`Tail*` spreads its items into the remaining argument slots; the unspread `Use(1, Tail)` supplies only two argument boundaries, and `Use(1*, Tail)` spreads the scalar `1` (one item) so only two slots are supplied. The comma after a spread is required before another same-line item — `1* Tail` would be the multiplication `1 * Tail`."
+  },
+  {
+    "id": "empty-count-one-arg",
+    "category": "empty-visible-vs-spread",
+    "source": "count(())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "0"
+      }
+    ],
+    "expectedRaw": "0",
+    "expectedEmittedCount": 1,
+    "explanation": "One supplied `()` is a single grouped value; the builtin collection binding opens it and finds zero items."
+  },
+  {
+    "id": "empty-count-two-args",
+    "category": "empty-visible-vs-spread",
+    "source": "count(((), ()))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "count((), ())",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "`count(collection)` takes exactly one collection argument. The grouped `((), ())` collection holds two visible `()` items, so its count is 2; the bare two-argument form `count((), ())` is an ordinary arity error.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "fixed-empty-arg-visible",
+    "category": "empty-visible-vs-spread",
+    "source": "F(a) = a\nF(())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "()"
+      }
+    ],
+    "expectedRaw": "S[]",
+    "expectedEmittedCount": 1,
+    "explanation": "A non-spread `()` occupies one visible supplied slot: `F(())` binds `a = ()`."
+  },
+  {
+    "id": "fixed-empty-spread-zero-items",
+    "category": "empty-visible-vs-spread",
+    "source": "F(a) = a\nF(()*)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "expectedErrorPayload": {
+      "kind": "arity",
+      "names": [],
+      "counts": [
+        1,
+        0
+      ]
+    },
+    "explanation": "Spreading `()` contributes zero items, so `F(()*)` supplies no arguments and the one-parameter call fails.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "variadic-empty-arg-vs-spread",
+    "category": "empty-visible-vs-spread",
+    "source": "F(*a) = a.count\nF((), ())",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "2"
+      }
+    ],
+    "expectedRaw": "2",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "F(*a) = a.count\nF(())",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "F(*a) = a.count\nF()",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "F(*a) = a.count\nF(()*)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "F(*a) = a.count\nF(()*, (), 1)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "F(*a) = a\nF(())",
+        "expectedNeutral": "ok raw=L[S[]] n=1"
+      },
+      {
+        "source": "One(a) = 1\nOne(())",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "One(a) = 1\nOne(()*)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "A non-spread `()` is one visible argument: `One(())` binds it, `F((), ())` collects two items, and `F(())` collects ONE item — the empty sequence value `[()]` — never the zero-item supply of the empty call `F()`. Only spreading `()` contributes zero items (`F(()*)` is 0, `One(()*)` is an arity error, and `F(()*, (), 1)` collects the visible `()` beside `1`): an empty value is still a value, and only explicit opening turns it into nothing."
+  },
+  {
+    "id": "spread-empty-in-sequence",
+    "category": "empty-visible-vs-spread",
+    "source": "(()*, 99)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "99"
+      }
+    ],
+    "expectedRaw": "99",
+    "expectedEmittedCount": 1,
+    "explanation": "Inside a written sequence value, `()*` contributes zero items, leaving one item — and a one-item construction is the item itself, not a wrapper."
+  },
+  {
+    "id": "empty-visible-in-sequence",
+    "category": "empty-visible-vs-spread",
+    "source": "((), 99)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "((), 99)"
+      }
+    ],
+    "expectedRaw": "S[S[], 99]",
+    "expectedEmittedCount": 1,
+    "explanation": "A written non-spread `()` stays a visible sequence item: `((), 99)` keeps two items."
+  },
+  {
+    "id": "empty-visible-at-root",
+    "category": "empty-visible-vs-spread",
+    "source": "(), 99",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "()\n99"
+      }
+    ],
+    "expectedRaw": "S[S[], 99]",
+    "expectedEmittedCount": 2,
+    "explanation": "At root output, a non-spread `()` slot is one visible row."
+  }
+]

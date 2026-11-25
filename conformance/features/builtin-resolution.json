@@ -1,0 +1,609 @@
+[
+  {
+    "id": "builtin-callable-is-an-ordinary-prelude-binding",
+    "category": "name-resolution",
+    "source": "if(x) = x + 1\n\nif(7)\n7.if\nif((7)*)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8\n8\n8"
+      }
+    ],
+    "expectedRaw": "S[8, 8, 8]",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "count(x) = x + 1\ncount(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "sum(x) = x + 100\nsum(5)",
+        "expectedNeutral": "ok raw=105 n=1"
+      },
+      {
+        "source": "Apply(if, x) = if(x)\nInc(x) = x + 1\nApply(Inc, 7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "F(count) = count + 1\nF(4)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "if(true, 10, 20)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "count((1, 2, 3))",
+        "expectedNeutral": "ok raw=3 n=1"
+      }
+    ],
+    "explanation": "Builtin callables live at the prelude level of ordinary name resolution, so any nearer binding — a property or a parameter — shadows one completely. `if` is no different from `count` or `sum`: the three spellings here all select the user's `if`, because lexical resolution picks the binding and only then does the resolved callable decide the semantics.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "no-arity-based-callable-selection",
+    "category": "name-resolution",
+    "source": "if(x) = x + 1\n\nif(true, 2, 3)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "if(a, b, c) = a + b + c\nif(1, 10, 20)",
+        "expectedNeutral": "ok raw=31 n=1"
+      },
+      {
+        "source": "if(a, b, c) = a + b + c\n1.if(10, 20)",
+        "expectedNeutral": "ok raw=31 n=1"
+      },
+      {
+        "source": "count(x) = x + 1\ncount(1, 2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "if(true, 2)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "KatLang never overloads by argument count. Lexical resolution selects exactly one callable, the argument supply is assembled, and only then is that callable's signature validated — so a user `if(x)` shadows builtin `if` COMPLETELY and a three-argument call fails against `if(x)` instead of falling back to the builtin.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "if-composition-forms-agree",
+    "category": "conditionals",
+    "source": "Cond = true\nBranches = (10, 20)\nApply3(f, a, b, c) = f(a, b, c)\n\nif(Cond, 10, 20)\nCond.if(10, 20)\nif(Cond, Branches*)\nCond.if(Branches*)\nApply3(if, Cond, 10, 20)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n10\n10\n10\n10"
+      }
+    ],
+    "expectedRaw": "S[10, 10, 10, 10, 10]",
+    "expectedEmittedCount": 5,
+    "explanation": "Builtin `if` composes through the ordinary callable rules and nothing else: a dot-call injects the receiver as the leading argument, a spread supplies argument slots, and a higher-order parameter carries the resolved callable. All five spellings assemble the same three-argument supply, so they select the same branch.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "if-arity-is-uniform-across-spellings",
+    "category": "conditionals",
+    "source": "if(true, 2)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "if()",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "if(1)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "if(true, 2, 3, 4)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "if((1, 2)*)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "if((1, 2, 3, 4)*)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "true.if(2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "true.if(2, 3, 4)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Apply2(f, a, b) = f(a, b)\nApply2(if, 1, 2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "if((true, 10, 20)*)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "if(true, (10, 20)*)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "true.if((10, 20)*)",
+        "expectedNeutral": "ok raw=10 n=1"
+      }
+    ],
+    "explanation": "`if(condition, whenTrue, whenFalse)` is one fixed signature checked once, after receiver injection and spread expansion have produced the argument supply. A wrong count is therefore an ordinary evaluation-time arity mismatch, identical whichever spelling built the supply — never a rule attached to how the call was written."
+  },
+  {
+    "id": "if-laziness-follows-the-resolved-identity",
+    "category": "conditionals",
+    "source": "Boom = 1 / 0\n\nif(true, 10, Boom)\nfalse.if(Boom, 20)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "10\n20"
+      }
+    ],
+    "expectedRaw": "S[10, 20]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, Boom)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, Boom, 20)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "if(a, b, c) = b + c\nBoom = 1 / 0\nif(true, 10, Boom)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Risky = (10, 1 / 0)\nif(true, Risky*)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Risky = (10, 1 / 0)\nMyIf(a, b, c) = if(a, b, c)\nMyIf(true, Risky*)",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "The one intrinsic thing about `if` is its invocation: evaluate the condition, then only the selected branch. That belongs to the resolved builtin — shadow the name and the selected user callable determines which of the same suspended arguments it demands — and it is not a promise about arguments the CALLER already evaluated, so building a value before spreading it follows the ordinary expression-to-value-to-supply rule.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "lazy-slot-demand-is-the-ordinary-zero-argument-demand",
+    "category": "conditionals",
+    "source": "Inc(x) = x + 1\nProbe(u) = if(true, Inc, 0)\nProbe(0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nProbe(u) = if(false, 0, Inc)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nProbe(u) = if(Inc, 1, 0)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nProbe(u) = if(false, Inc, 7)\nProbe(0)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nProbe(u) = if(true, 7, Inc)\nProbe(0)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "A = 7\nif(true, A, 0)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Outer(v) = { Inner = v + 1\n if(true, Inner, 0) }\nOuter(7)",
+        "expectedNeutral": "ok raw=8 n=1"
+      },
+      {
+        "source": "K(x) = 5\nProbe(u) = if(true, K, 0)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nif(true, Inc(4), 0)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nif(true, Inc(), 0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = q + 1\nProbe(u) = if(true, A, 0)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Collect(*xs) = xs\nif(true, Collect, 0)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Collect(*xs) = xs\nif(true, Collect(), 0)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Head(x, *rest) = x\nProbe(u) = if(true, Head, 0)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F(0) = 10\nF(x) = x + 1\nProbe(u) = if(true, F, 0)\nProbe(0)",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "Inc(x) = x + 1\nApply(g) = if(true, g, 0)\nApply(Inc)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Boom = 1 / 0\nif(true, Boom, 0)",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Inc(x) = x + 1\nG = if(true, Inc, 0)\nG(4)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nG = if(false, Inc, 7)\nG(4)",
+        "expectedNeutral": "ok raw=7 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nif(true, Inc, 0)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      }
+    ],
+    "explanation": "Where nothing forwards to it — here a closed parameter list — the selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless at run time, and an explicit call (`Inc(4)`) is an ordinary value. In a formula that infers its parameters, every `if` argument is a value position whether or not a run selects it, so the reference lifts instead: `G = if(false, Inc, 7)` is `G(x) = if(false, Inc(x), 7)`, and the root program `if(true, Inc, 0)` needs `x` itself.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "lazy-slot-demand-covers-every-builtin-value-slot",
+    "category": "collection-builtins",
+    "source": "Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step(0), Inc)\nProbe(0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step(Inc), 1)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nDown(s) = s - 1, s\nProbe(u) = while(Down(Inc))\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nProbe(u) = atoms(Inc)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nProbe(u) = range(1, Inc)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "A = 0\nStep(s) = s + 1\nrepeat(Step(A), 1)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "A = 7\natoms(A)",
+        "expectedNeutral": "ok raw=L[7] n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nrepeat(Inc(0), 2)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nmap([1, 2], Inc)",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      },
+      {
+        "source": "Add(e, a) = e + a\nreduce([1, 2], Add, 0)",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "K(x) = 5\nAdd(e, a) = e + a\nProbe(u) = reduce([1, 2], Add, K)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "K(x) = 5\nProbe(u) = count(K)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "K(x) = 5\nProbe(u) = contains([1], K)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "K(x) = 5\nProbe(u) = take([1], K)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "K(x) = 5\nProbe(u) = skip([1], K)\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nStep(s) = s + 1\nG = repeat(Step(0), Inc)\nG(2)",
+        "expectedNeutral": "ok raw=3 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nG = count(Inc)\nG(4)",
+        "expectedNeutral": "ok raw=1 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nG = map([1, 2], Inc)\nG",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      }
+    ],
+    "explanation": "Every builtin value slot — the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument wherever nothing forwards to it, as under a closed parameter list: an algorithm that still needs arguments is rejected at its reference before its body runs, and `reduce` keeps its dedicated initial-accumulator hint. In a formula that infers its parameters the same value slots lift the reference instead (`G = count(Inc)` is `G(x) = count(Inc(x))`). Callback slots (`map`, `filter`, `reduce` steps) supply arguments and are unaffected either way, and a loop's `meta step` captures its written call, whose arguments are that call's own (META-S3-3).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "dot-string-receiver-is-a-zero-argument-value-demand",
+    "category": "strings",
+    "source": "Inc(x) = x + 1\nProbe(u) = Inc.string\nProbe(0)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "A = 7\nA.string",
+        "expectedNeutral": "ok raw='7' n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nInc(4).string",
+        "expectedNeutral": "ok raw='5' n=1"
+      },
+      {
+        "source": "Lib = { Sub(x) = x }\nProbe(u) = Lib.Sub.string\nProbe(0)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nF(g) = g.string\nF(Inc)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Inc(x) = x + 1\nS = Inc.string\nS(4)",
+        "expectedNeutral": "ok raw='5' n=1"
+      }
+    ],
+    "explanation": "`.string` converts its receiver's VALUE. Where nothing forwards to the receiver — here a closed parameter list — it is demanded as a zero-argument value, so a receiver that still needs arguments is the ordinary arity error at the receiver and its body is never entered; `Inc(4).string` converts the call's result. In a formula that infers its parameters the receiver lifts like any operand: `S = Inc.string` is `S(x) = Inc(x).string`."
+  },
+  {
+    "id": "dot-string-parameter-receiver-reports-the-written-argument",
+    "category": "strings",
+    "source": "Show(v) = v.string\nShow({ x + 1 })",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "unresolvedImplicitParams",
+    "probes": [
+      {
+        "source": "Plus(v, y) = v + y\nPlus({ x + 1 }, 5)",
+        "expectedNeutral": "err unresolvedImplicitParams"
+      },
+      {
+        "source": "Inc(z) = z + 1\nShow(v) = v.string\nShow(Inc)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "F(0) = 1\nF(n) = n\nShow(v) = v.string\nShow(F)",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "Z = 5\nShow(v) = v.string\nShow(Z)",
+        "expectedNeutral": "ok raw='5' n=1"
+      }
+    ],
+    "explanation": "A parameter is read through its argument's one supplied computation wherever it is read, the `.string` receiver included: the receiver demands the written argument's VALUE, so a failure is the argument's own report. A written block that still needs its own implicit parameter `x` reports `UnresolvedImplicitParams`, exactly as the value read `v + y` does — never an arity error judged against the parameter `v`."
+  },
+  {
+    "id": "zero-argument-demand-follows-actual-call-arity",
+    "category": "variadic-calls",
+    "source": "Only(*xs) = xs\nOnly",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[]"
+      }
+    ],
+    "expectedRaw": "L[]",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Only(*xs) = xs\nOnly()",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\n(Only)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\n((Only))",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\nif(true, Only, 0)",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\ncount(Only)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\nOnly.count",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\n(Only).count",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\nsum(Only)",
+        "expectedNeutral": "ok raw=0 n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\nV = Only()\nV",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Obj = {\n  public M(*xs) = xs\n}\nObj.M",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Head(x, *rest) = x\nHead",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Head(x, *rest) = x\nHead()",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Tail(*rest, z) = z\nTail",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Tail(*rest, z) = z\nTail()",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P((x, *rest)) = x\nP",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P((x, *rest)) = x\nP()",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P((*xs)) = xs\nP",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "P((*xs)) = xs\nP(())",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "P([*xs]) = xs\nP",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Only(*xs) = xs\nmap((1, 2), Only)",
+        "expectedNeutral": "ok raw=L[L[1], L[2]] n=1"
+      }
+    ],
+    "explanation": "A callable may be read as a zero-argument value exactly when an ordinary call with no arguments can bind it. A collecting parameter requires no supplied argument, so `Only` and `Only()` both collect nothing and give `[]`; `Head(x, *rest)` still requires one supplied value, so both of its zero-argument spellings are the same arity error. Callback positions still receive the callable itself.",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "zero-argument-callable-name-is-read-not-lifted",
+    "category": "variadic-calls",
+    "source": "Cnt(*xs) = xs.count\nPair(*xs) = 10, 20\nAlias = Cnt\nTwice(*items) = Cnt + Cnt\n\nCnt + 1, [Cnt], Cnt == Cnt, Pair[1]\nAlias, Alias()\nTwice(1, 2, 3)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n[0]\ntrue\n20\n0\n0\n0"
+      }
+    ],
+    "expectedRaw": "S[1, L[0], true, 20, 0, 0, 0]",
+    "expectedEmittedCount": 7,
+    "probes": [
+      {
+        "source": "Cnt(*xs) = xs.count\nabs(Cnt), Cnt.abs",
+        "expectedNeutral": "ok raw=S[0, 0] n=2"
+      },
+      {
+        "source": "Cnt(*xs) = xs.count\nAlias = Cnt\nAlias(1, 2)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nAlias(1, 2)",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Cnt(*xs) = xs.count\nTwice(*items) = Cnt(items*) + Cnt(items*)\nTwice(1, 2, 3)",
+        "expectedNeutral": "ok raw=6 n=1"
+      },
+      {
+        "source": "Head(x, *rest) = x\nH = Head + 0\nH(5, 6)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Inc(x) = x + 1\nK = Inc * 2\nK(4)",
+        "expectedNeutral": "ok raw=10 n=1"
+      },
+      {
+        "source": "Cnt(*ys) = ys.count\nH(k) = abs(Cnt) + k\nH(5)",
+        "expectedNeutral": "ok raw=5 n=1"
+      },
+      {
+        "source": "Pair(*xs) = 10, 20\nfirst(Pair) == Pair[0], last(Pair) == Pair[1]",
+        "expectedNeutral": "ok raw=S[true, true] n=2"
+      }
+    ],
+    "explanation": "If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name inside an expression — as an operand or comparison operand, a list element, a Math argument, an index target, or anywhere in a formula — is never rewritten into a forwarding call: `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. A definition whose whole body is the name is a callable alias instead: `Alias = Cnt` names Cnt's callable, so `Alias(1, 2)` is Cnt's call, 2, while `Alias` alone is Cnt's own cached value, `0` (an alias keeps no value of its own). Forwarding inside a formula is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).",
+    "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "same-arity-user-if-keeps-user-identity",
+    "category": "name-resolution",
+    "source": "if(a, b, c) = a + b + c\nif(1, 10, 20)\n1.if(10, 20)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "31\n31"
+      }
+    ],
+    "expectedRaw": "S[31, 31]",
+    "expectedEmittedCount": 2,
+    "explanation": "A user callable with the builtin's arity still shadows it: both calls compute the user's sum, never the builtin's selected branch."
+  },
+  {
+    "id": "parameter-named-if-carries-the-supplied-callable",
+    "category": "name-resolution",
+    "source": "Apply(if, x) = { Inner = if(x)\n Inner }\nInc(x) = x + 1\nApply(Inc, 7)",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "8"
+      }
+    ],
+    "expectedRaw": "8",
+    "expectedEmittedCount": 1,
+    "explanation": "A parameter named if owns that name in nested bodies too; its algorithm channel carries the supplied Inc callable."
+  },
+  {
+    "id": "if-spread-builds-values-before-branch-selection",
+    "category": "conditionals",
+    "source": "Risky = (10, 1 / 0)\nif(true, Risky*)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "div0",
+    "expectedCachePublications": {
+      "Risky": 0
+    },
+    "explanation": "Spread evaluates its operand before supplying argument slots, so the failing row is evaluated before builtin if can select a branch."
+  },
+  {
+    "id": "dot-string-intrinsic-rejects-arguments",
+    "category": "strings",
+    "source": "A = 42\nA.string(1)",
+    "outcome": "EvalError",
+    "expectedErrorCategory": "arity",
+    "probes": [
+      {
+        "source": "A = 42\nA.string()",
+        "expectedNeutral": "ok raw='42' n=1"
+      },
+      {
+        "source": "A = 42\nA.string(1, 2)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "S = 1, 2\nA = 42\nA.string(S*)",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Obj = {\n    5\n}\nObj.string(1)",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "The `.string` intrinsic is a zero-parameter member. A written argument list is formed exactly like every call's supply (explicit spreads opened, every other slot a suspended computation) and then rejected by its cardinality before any argument or the receiver is demanded — the outcome `Obj.V(1)` has for a declared zero-parameter member — so a written bundle is never silently dropped. An empty written list (`A.string()`) stays the intrinsic, as `A()` stays a call of `A`."
+  }
+]
