@@ -221,20 +221,40 @@ internal static class PropertyExposureResolver
             if (bound)
                 return false;
 
-            var owner = this;
-            while (owner is not null && !ReferenceEquals(owner.Algorithm, requirement.Owner))
-                owner = owner.Parent;
+            var owner = OwnerLevel(requirement.Owner);
             landing = owner?.Depth ?? int.MaxValue;
             if (owner is null)
                 return false;
-            // The completed key names the branch binding region by its body. Runtime capture
-            // positions retain the existing separate family-binding frame above that body.
-            if (owner.PropertyScope.CompletedContext?.Key.BindingRegion is not null
-                && !owner.Parameters.Contains(requirement.Name)
-                && owner.Parent?.Parameters.Contains(requirement.Name) == true)
-                owner = owner.Parent;
-            resolved = new Requirement(requirement.Name, owner.PropertyScope);
+            resolved = new Requirement(requirement.Name, BindingScope(owner, requirement.Name));
             return true;
+        }
+
+        /// <summary>
+        /// The level of this chain, from here outward, whose algorithm is <paramref name="owner"/> (null: none). An owner
+        /// lookup of <see cref="TryResolveRequirement"/>; QUALIFIED SEED PARTS (<c>PendingResolution</c>) make it once per
+        /// owner for every requirement a seed's parts qualify with it.
+        /// </summary>
+        public SummaryScope? OwnerLevel(Algorithm owner)
+        {
+            var level = this;
+            while (level is not null && !ReferenceEquals(level.Algorithm, owner))
+                level = level.Parent;
+            return level;
+        }
+
+        /// <summary>
+        /// The scope that binds the owner-qualified parameter <paramref name="name"/> of the owner found at
+        /// <paramref name="owner"/> (<see cref="OwnerLevel"/>): that level's, except at a branch binding region. The
+        /// completed key names the branch binding region by its body, and runtime capture positions retain the separate
+        /// family-binding frame above that body, so a name the body does not bind and that frame does is the frame's.
+        /// </summary>
+        public static ElaboratedPropertyScope BindingScope(SummaryScope owner, string name)
+        {
+            if (owner.PropertyScope.CompletedContext?.Key.BindingRegion is not null
+                && !owner.Parameters.Contains(name)
+                && owner.Parent?.Parameters.Contains(name) == true)
+                owner = owner.Parent;
+            return owner.PropertyScope;
         }
 
         /// <summary>
@@ -1479,10 +1499,60 @@ internal static class PropertyExposureResolver
         internal Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool> NameAndReferenceFreeParts
             => _nameAndReferenceFreeParts ??= new(ReferenceEqualityComparer.Instance);
 
+        /// <summary>
+        /// QUALIFIED SEED PARTS (<c>PendingResolution.AnchorPublishedSeed</c>): per completed seed part that holds no
+        /// visible name and no pending reference, and per intervening owner with the parameter set its level binds, the
+        /// part as the expansion at that level makes it (<see cref="PropertyDependencyGraphBuilder.SummarySeed.QualifiedOwnSets"/>;
+        /// the part itself when the level binds none of its names). Its retained weight is <see cref="QualifiedPartWeight"/>.
+        /// </summary>
+        internal Dictionary<(PropertyDependencyGraphBuilder.SummarySeed Part, Algorithm Owner, IReadOnlySet<string> Parameters),
+            PropertyDependencyGraphBuilder.SummarySeed> QualifiedParts => _qualifiedParts ??= new(QualifiedPartKeyComparer.Instance);
+
+        /// <summary>One unit per entry, own requirement and child reference retained by a new qualified copy.</summary>
+        internal long QualifiedPartWeight { get; set; }
+
+        /// <summary>
+        /// QUALIFIED SEED PARTS (<c>PendingResolution.ResolveSeed</c>): per completed seed part that holds no visible name and
+        /// no pending reference, the distinct owners of the owner-qualified requirements it and every part it holds carry,
+        /// in the order first met; null when one of them has no owner or there are more than <see cref="MaxFootprint"/>.
+        /// </summary>
+        internal Dictionary<PropertyDependencyGraphBuilder.SummarySeed, Algorithm[]?> PartOwners
+            => _partOwners ??= new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>
+        /// QUALIFIED SEED PARTS: per completed seed part and a level of a site's chain, the canonical set of the requirements
+        /// the part and every part it holds qualify with that level's algorithm, each at the scope that binds it there
+        /// (<see cref="SummaryScope.BindingScope"/>) — a function of the part's content and the level's static chain, so it
+        /// is kept for the whole resolution.
+        /// </summary>
+        internal Dictionary<(PropertyDependencyGraphBuilder.SummarySeed Part, SummaryScope OwnerLevel), RequirementSet> QualifiedPartRequirements
+            => _qualifiedPartRequirements ??= [];
+
         // Created when first used: most shares (a component discovery's above all) never settle a seed with parts.
         private Dictionary<(PropertyDependencyGraphBuilder.SummarySeed Part, SummaryScope Level), RequirementSet>? _seedPartRequirements;
         private Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool>? _requiredNameParts;
         private Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool>? _nameAndReferenceFreeParts;
+        private Dictionary<(PropertyDependencyGraphBuilder.SummarySeed Part, Algorithm Owner, IReadOnlySet<string> Parameters),
+            PropertyDependencyGraphBuilder.SummarySeed>? _qualifiedParts;
+        private Dictionary<PropertyDependencyGraphBuilder.SummarySeed, Algorithm[]?>? _partOwners;
+        private Dictionary<(PropertyDependencyGraphBuilder.SummarySeed Part, SummaryScope OwnerLevel), RequirementSet>? _qualifiedPartRequirements;
+
+        // A qualified part's key by identity: the part, the owner algorithm (a record, whose generated equality compares
+        // content) and the parameter set object its level reads.
+        private sealed class QualifiedPartKeyComparer
+            : IEqualityComparer<(PropertyDependencyGraphBuilder.SummarySeed Part, Algorithm Owner, IReadOnlySet<string> Parameters)>
+        {
+            public static readonly QualifiedPartKeyComparer Instance = new();
+
+            public bool Equals((PropertyDependencyGraphBuilder.SummarySeed Part, Algorithm Owner, IReadOnlySet<string> Parameters) x,
+                (PropertyDependencyGraphBuilder.SummarySeed Part, Algorithm Owner, IReadOnlySet<string> Parameters) y)
+                => ReferenceEquals(x.Part, y.Part) && ReferenceEquals(x.Owner, y.Owner) && ReferenceEquals(x.Parameters, y.Parameters);
+
+            public int GetHashCode((PropertyDependencyGraphBuilder.SummarySeed Part, Algorithm Owner, IReadOnlySet<string> Parameters) key)
+                => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Part),
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Owner),
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Parameters));
+        }
 
         /// <summary>The members one open crossing selects: each by the view, owner and name it is charged with.</summary>
         internal sealed class OpenCrossing((StaticLookupFacts Facts, StaticScopeKey Owner, string Name)[] selections,
@@ -3642,10 +3712,24 @@ internal static class PropertyExposureResolver
                             // qualify), and settling it at the prelude keeps that content too. It is carried through as it is:
                             // formerly every intervening level copied its whole width (navigated members of a library
                             // nested in parameterless blocks: depth × width per member).
-                            if (_seedParts && ownerLevel.ParameterNames.Count == 0 && seed.OwnSetsHoldNoNamesOrReferences
+                            var parameterNames = ownerLevel.ParameterNames;
+                            if (_seedParts && parameterNames.Count == 0 && seed.OwnSetsHoldNoNamesOrReferences
                                 && (seed.AbsorbedPartsWithoutFolding is not { Count: > 0 } parts
                                     || PartsSatisfy(parts, NoNamesOrReferences, shared.NameAndReferenceFreeParts)))
                                 continue;
+                            // QUALIFIED SEED PARTS: at a level that binds parameters such a seed expands to its content with
+                            // the required names the level binds qualified with its owner, name by name, so the expansion is
+                            // taken part by part: each part's is kept for the resolution (QualifiedAt), and the seed's width is
+                            // never folded and copied per member (output rows reading K chained library members under their
+                            // owner: K² / 2 names folded and qualified). Settling it at the prelude keeps that content too.
+                            if (_seedParts && parameterNames.Count > 0 && seed.AbsorbedPartsWithoutFolding is { Count: > 0 } held
+                                && seed.OwnSetsHoldNoNamesOrReferences
+                                && PartsSatisfy(held, NoNamesOrReferences, shared.NameAndReferenceFreeParts)
+                                && QualifiedAt(seed, held, ownerBody, parameterNames) is { } qualified)
+                            {
+                                seed = qualified;
+                                continue;
+                            }
                             seed = PropertyDependencyGraphBuilder.ExpandAtLevel(seed, ownerLevel);
                             if (ownerBody.IsModuleRoot) seed = PropertyDependencyGraphBuilder.SettledAtPrelude(seed);
                         }
@@ -3684,11 +3768,12 @@ internal static class PropertyExposureResolver
         {
             var landing = SummaryScope.NoOwnerLookup;
             IEnumerable<SummaryReference> references;
-            if (TryPartUnion(seed, level, out var partUnion))
+            if (TryPartUnion(self, seed, level, site, boundOwners, ref landing, out var partUnion))
             {
-                // SEED PARTS: the parts hold required names only, so the folded seed's owner-qualified parameters and pending
-                // references are this seed's own, and its names are its own and its parts'. The parts' names are resolved
-                // here exactly as the folded names would be, through their kept sets: no copy of their width.
+                // SEED PARTS: the parts hold required names (and, QUALIFIED SEED PARTS, owner-qualified requirements) only,
+                // so the folded seed's pending references are this seed's own, and its names and owner-qualified parameters
+                // are its own and its parts'. The parts' are resolved exactly as the folded ones would be, through their kept
+                // sets (TryQualifiedPartUnion: each owner once): no copy of their width.
                 var names = sets.From(level.ResolveRequirements(seed.OwnRequiredNamesWithoutFolding ?? NoNames)
                     .Concat(site.ResolveRequirementsFromSite(seed.OwnQualifiedParametersWithoutFolding ?? NoQualifiedParameters,
                         boundOwners, self, ref landing)));
@@ -3711,12 +3796,14 @@ internal static class PropertyExposureResolver
         private static readonly Func<PropertyDependencyGraphBuilder.SummarySeed, bool> RequiredNamesOnly = static seed => seed.OwnSetsHoldOnlyRequiredNames;
         private static readonly Func<PropertyDependencyGraphBuilder.SummarySeed, bool> NoNamesOrReferences = static seed => seed.OwnSetsHoldNoNamesOrReferences;
 
-        private bool TryPartUnion(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, out RequirementSet result)
+        private bool TryPartUnion(Frame self, PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site,
+            BoundOwnerSet? boundOwners, ref int landing, out RequirementSet result)
         {
             result = default;
-            if (!_seedParts || seed.AbsorbedPartsWithoutFolding is not { Count: > 0 } parts
-                || !PartsSatisfy(parts, RequiredNamesOnly, shared.RequiredNameParts))
+            if (!_seedParts || seed.AbsorbedPartsWithoutFolding is not { Count: > 0 } parts)
                 return false;
+            if (!PartsSatisfy(parts, RequiredNamesOnly, shared.RequiredNameParts))
+                return TryQualifiedPartUnion(self, parts, level, site, boundOwners, ref landing, out result);
             ChargeSeedPartWork(parts.Count);
             for (var i = 0; i < parts.Count; i++)
             {
@@ -3852,6 +3939,385 @@ internal static class PropertyExposureResolver
             }
 
             return memo[(root, level)];
+        }
+
+        /// <summary>
+        /// QUALIFIED SEED PARTS (November 2026; implementation only, no classification, requirement, diagnostic or Lean rule):
+        /// the union of a seed's parts that hold owner-qualified requirements besides required names — no visible name, no
+        /// pending reference, every requirement with its owner — resolved exactly as <see cref="ResolveSeed"/> resolves the
+        /// folded seed's (<see cref="SeedRequirements"/>). The parts' required names are resolved at
+        /// <paramref name="level"/> through the kept sets of SEED PARTS (<see cref="PartRequirements"/>). Each owner the
+        /// parts qualify requirements with is looked up ONCE from <paramref name="site"/>, as
+        /// <c>SummaryScope.TryResolveRequirement</c> looks it up for each of them: its bound-owner membership is read and
+        /// noted; a bound owner discharges every requirement qualified with it; otherwise the level of the site's chain whose
+        /// algorithm it is gives the landing and, through the kept set of each part and that level
+        /// (<see cref="QualifiedRequirements"/>), the requirements, each at the scope that binds it there; and an owner on no
+        /// level of that chain charges nothing and is noted off-chain. The folded settlement read the same memberships with
+        /// the same answers (one read per requirement), landed at the same levels and made the same off-chain lookups, so
+        /// the result and the record are the same, and only the per-requirement repetitions are gone: K readers of a chain
+        /// whose member i holds i requirements of one owner read it K² / 2 times. False, with nothing noted on
+        /// <paramref name="self"/>, when a part holds a name, a path or a requirement without an owner, when the parts
+        /// qualify with more owners than a footprint records, or when a kept table has no room: the caller then folds the
+        /// seed and settles it whole, as before.
+        /// </summary>
+        private bool TryQualifiedPartUnion(Frame self, IReadOnlyList<PropertyDependencyGraphBuilder.SummarySeed> parts,
+            SummaryScope level, SummaryScope site, BoundOwnerSet? boundOwners, ref int landing, out RequirementSet result)
+        {
+            result = default;
+            if (!PartsSatisfy(parts, NoNamesOrReferences, shared.NameAndReferenceFreeParts))
+                return false;
+            ChargeSeedPartWork(parts.Count);
+            var owners = NoOwners;
+            for (var i = 0; i < parts.Count; i++)
+            {
+                CheckWideWalkCancellation(i);
+                if (PartOwners(parts[i]) is not { } partOwners || MergeOwners(owners, partOwners) is not { } merged)
+                    return false;
+                owners = merged;
+            }
+
+            // Each owner's outcome from the site, decided before anything is noted on the frame.
+            ChargeSeedPartWork(owners.Length);
+            var outcomes = new (Algorithm Owner, bool Bound, SummaryScope? Level)[owners.Length];
+            for (var j = 0; j < owners.Length; j++)
+            {
+                var bound = boundOwners?.Contains(owners[j]) == true;
+                var ownerLevel = bound ? null : site.OwnerLevel(owners[j]);
+                if (!bound)
+                    ChargeSeedPartWork(site.Depth - (ownerLevel?.Depth ?? 0) + 1L);
+                outcomes[j] = (owners[j], bound, ownerLevel);
+            }
+
+            for (var i = 0; i < parts.Count; i++)
+            {
+                CheckWideWalkCancellation(i);
+                if (PartRequirements(parts[i], level) is not { } names)
+                    return false;
+                result = sets.Union(result, names);
+                var partOwners = shared.PartOwners[parts[i]]!;
+                foreach (var (owner, _, ownerLevel) in outcomes)
+                {
+                    if (ownerLevel is null || !HoldsOwner(partOwners, owner))
+                        continue;
+                    if (QualifiedRequirements(parts[i], ownerLevel) is not { } qualified)
+                        return false;
+                    result = sets.Union(result, qualified);
+                }
+            }
+
+            foreach (var (owner, bound, ownerLevel) in outcomes)
+            {
+                self.NoteMembership(owner, bound);
+                if (bound)
+                    continue;
+                if (ownerLevel is null)
+                    self.NoteOwnerOffChain();
+                else
+                    landing = Math.Max(landing, ownerLevel.Depth);
+            }
+
+            memos.Observations?.RecordSettlementQualifiedPartOwnerLookups(outcomes.Length);
+            return true;
+        }
+
+        private static readonly Algorithm[] NoOwners = [];
+
+        // Membership by reference: an owner is an algorithm, whose generated record equality compares content.
+        private static bool HoldsOwner(IReadOnlyList<Algorithm> owners, Algorithm owner)
+        {
+            for (var i = 0; i < owners.Count; i++)
+                if (ReferenceEquals(owners[i], owner))
+                    return true;
+            return false;
+        }
+
+        // `owners` with every owner of `more` it lacks appended: `owners` itself (or `more`, when `owners` is empty) when
+        // nothing is added; null past what a footprint records (SettlementShare.MaxFootprint).
+        private static Algorithm[]? MergeOwners(Algorithm[] owners, IReadOnlyList<Algorithm> more)
+        {
+            if (owners.Length == 0 && more is Algorithm[] { Length: <= SettlementShare.MaxFootprint } whole)
+                return whole;
+            List<Algorithm>? merged = null;
+            for (var i = 0; i < more.Count; i++)
+                if (!HoldsOwner(owners, more[i]) && (merged is null || !HoldsOwner(merged, more[i])))
+                    (merged ??= [.. owners]).Add(more[i]);
+            if (merged is null)
+                return owners;
+            return merged.Count > SettlementShare.MaxFootprint ? null : [.. merged];
+        }
+
+        // QUALIFIED SEED PARTS: the owners the owner-qualified requirements of a part and everything it holds carry, each once
+        // (SettlementShare.PartOwners), kept per part for the resolution, in post-order on the heap; null when one has no owner
+        // or there are more than a footprint records, or when the table has no room. Building one charges its own
+        // requirements and the parts it holds, once.
+        private Algorithm[]? PartOwners(PropertyDependencyGraphBuilder.SummarySeed root)
+        {
+            var memo = shared.PartOwners;
+            if (memo.TryGetValue(root, out var known))
+                return known;
+            var pending = new Stack<(PropertyDependencyGraphBuilder.SummarySeed Seed, bool PartsDone)>();
+            pending.Push((root, false));
+            var visited = 0;
+            while (pending.TryPop(out var entry))
+            {
+                CheckWideWalkCancellation(visited++);
+                var (seed, partsDone) = entry;
+                if (memo.ContainsKey(seed))
+                    continue;
+                if (memo.Count >= _residualCapacity)
+                    return null;
+                if (!partsDone)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    pending.Push((seed, true));
+                    if (seed.AbsorbedPartsWithoutFolding is { } nested)
+                    {
+                        ChargeSeedPartWork(nested.Count);
+                        for (var i = nested.Count - 1; i >= 0; i--)
+                        {
+                            CheckWideWalkCancellation(i);
+                            if (!memo.ContainsKey(nested[i]))
+                                pending.Push((nested[i], false));
+                        }
+                    }
+                    continue;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var own = seed.OwnQualifiedParametersWithoutFolding;
+                var children = seed.AbsorbedPartsWithoutFolding;
+                ChargeSeedPartWork(1);
+                Algorithm[]? owners = NoOwners;
+                var inspected = 0;
+                while (children is not null && owners is not null && inspected < children.Count)
+                {
+                    CheckWideWalkCancellation(inspected);
+                    owners = memo[children[inspected++]] is { } childOwners ? MergeOwners(owners, childOwners) : null;
+                }
+                if (own is { Count: > 0 } && owners is not null)
+                {
+                    List<Algorithm>? added = null;
+                    var index = 0;
+                    foreach (var parameter in own)
+                    {
+                        CheckWideWalkCancellation(index++);
+                        if (parameter.Owner is not { } owner)
+                        {
+                            owners = null;
+                            break;
+                        }
+                        if (HoldsOwner(owners, owner) || added is not null && HoldsOwner(added, owner))
+                            continue;
+                        if (owners.Length + (added?.Count ?? 0) == SettlementShare.MaxFootprint)
+                        {
+                            owners = null;
+                            break;
+                        }
+                        (added ??= []).Add(owner);
+                    }
+                    if (owners is not null && added is not null)
+                        owners = MergeOwners(owners, added);
+                    inspected += index;
+                }
+                ChargeSeedPartWork(inspected);
+                memo.Add(seed, owners);
+            }
+
+            return memo[root];
+        }
+
+        // QUALIFIED SEED PARTS: the canonical set of the requirements a part and everything it holds qualify with the
+        // algorithm of `ownerLevel`, a level of a site's chain, each at the scope that binds it there (SummaryScope.BindingScope,
+        // as TryResolveRequirement resolves it), kept per part and level for the resolution (the run's share), in post-order
+        // on the heap. A part whose kept owners (PartOwners, computed first) lack that algorithm is not visited. Building one
+        // charges its own requirements and the parts it unites, once; null when the table has no room.
+        private RequirementSet? QualifiedRequirements(PropertyDependencyGraphBuilder.SummarySeed root, SummaryScope ownerLevel)
+        {
+            var owner = ownerLevel.Algorithm ?? throw new InvalidOperationException("An owner level has its algorithm.");
+            var memo = shared.QualifiedPartRequirements;
+            if (memo.TryGetValue((root, ownerLevel), out var known))
+                return known;
+            var owners = shared.PartOwners;
+            var pending = new Stack<(PropertyDependencyGraphBuilder.SummarySeed Seed, bool PartsDone)>();
+            pending.Push((root, false));
+            var visited = 0;
+            while (pending.TryPop(out var entry))
+            {
+                CheckWideWalkCancellation(visited++);
+                var (seed, partsDone) = entry;
+                if (memo.ContainsKey((seed, ownerLevel)))
+                    continue;
+                if (memo.Count >= _residualCapacity)
+                    return null;
+                if (!partsDone)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    pending.Push((seed, true));
+                    if (seed.AbsorbedPartsWithoutFolding is { } nested)
+                    {
+                        ChargeSeedPartWork(nested.Count);
+                        for (var i = nested.Count - 1; i >= 0; i--)
+                        {
+                            CheckWideWalkCancellation(i);
+                            if (HoldsOwner(owners[nested[i]]!, owner) && !memo.ContainsKey((nested[i], ownerLevel)))
+                                pending.Push((nested[i], false));
+                        }
+                    }
+                    continue;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var own = seed.OwnQualifiedParametersWithoutFolding;
+                var children = seed.AbsorbedPartsWithoutFolding;
+                ChargeSeedPartWork((own?.Count ?? 0) + (children?.Count ?? 0));
+                var result = default(RequirementSet);
+                if (own is { Count: > 0 })
+                {
+                    List<Requirement>? requirements = null;
+                    var index = 0;
+                    foreach (var parameter in own)
+                    {
+                        CheckWideWalkCancellation(index++);
+                        if (ReferenceEquals(parameter.Owner, owner))
+                        {
+                            (requirements ??= []).Add(new Requirement(parameter.Name, SummaryScope.BindingScope(ownerLevel, parameter.Name)));
+                            if (requirements.Count == 256)
+                            {
+                                result = sets.Union(result, sets.From(requirements));
+                                requirements.Clear();
+                            }
+                        }
+                    }
+                    if (requirements is { Count: > 0 })
+                        result = sets.Union(result, sets.From(requirements));
+                }
+                for (var i = 0; children is not null && i < children.Count; i++)
+                {
+                    CheckWideWalkCancellation(i);
+                    if (HoldsOwner(owners[children[i]]!, owner))
+                        result = sets.Union(result, memo[(children[i], ownerLevel)]);
+                }
+                memo.Add((seed, ownerLevel), result);
+            }
+
+            return memo[(root, ownerLevel)];
+        }
+
+        /// <summary>
+        /// QUALIFIED SEED PARTS (November 2026; implementation only, <see cref="AnchorPublishedSeed"/>): the expansion of
+        /// <paramref name="seed"/> at an intervening level whose algorithm <paramref name="owner"/> binds
+        /// <paramref name="parameterNames"/>, for a seed whose own sets and parts hold no visible name and no pending
+        /// reference. Such an expansion only copies the content and qualifies the required names the level binds with
+        /// <paramref name="owner"/>, name by name (<see cref="PropertyDependencyGraphBuilder.ExpandAtLevel"/>), so it is
+        /// taken part by part: the seed's own names are qualified, and each part is replaced by its own expansion
+        /// (<see cref="QualifiedPart"/>), kept for the resolution. Formerly the seed was folded, copying its whole width,
+        /// and every name was qualified once per anchored member: output rows reading K chained library members under
+        /// their owner folded and qualified K² / 2 names. The seed itself when the level binds none of its names; null
+        /// when the kept table has no room (the caller expands the seed as before).
+        /// </summary>
+        private PropertyDependencyGraphBuilder.SummarySeed? QualifiedAt(PropertyDependencyGraphBuilder.SummarySeed seed,
+            IReadOnlyList<PropertyDependencyGraphBuilder.SummarySeed> parts, Algorithm owner, IReadOnlySet<string> parameterNames)
+        {
+            // The expansion's own cancellation checkpoint (ExpandAtLevel observes one on entry).
+            memos.SharedMemo.ObserveCancellation();
+            ChargeSeedPartWork(parts.Count);
+            for (var i = 0; i < parts.Count; i++)
+            {
+                CheckWideWalkCancellation(i);
+                if (QualifiedPart(parts[i], owner, parameterNames) is null)
+                    return null;
+            }
+            return QualifyWithCompletedChildren(seed, owner, parameterNames, retain: false);
+        }
+
+        // QUALIFIED SEED PARTS: a completed part that holds no visible name and no pending reference, here or in any part it
+        // holds, as the expansion at the level of `owner` (binding `parameterNames`) makes it: a copy of its own sets with the
+        // names the level binds qualified, holding the same expansion of each of its parts by reference; the part itself when
+        // the level binds none of its names, here or below. Kept per part, owner and parameter set for the resolution (the
+        // run's share), in post-order on the heap. A new copy also retains its own requirements and child references.
+        private PropertyDependencyGraphBuilder.SummarySeed? QualifiedPart(PropertyDependencyGraphBuilder.SummarySeed root,
+            Algorithm owner, IReadOnlySet<string> parameterNames)
+        {
+            var memo = shared.QualifiedParts;
+            if (memo.TryGetValue((root, owner, parameterNames), out var known))
+                return known;
+            var pending = new Stack<(PropertyDependencyGraphBuilder.SummarySeed Seed, bool PartsDone)>();
+            pending.Push((root, false));
+            var visited = 0;
+            while (pending.TryPop(out var entry))
+            {
+                CheckWideWalkCancellation(visited++);
+                var (seed, partsDone) = entry;
+                if (memo.ContainsKey((seed, owner, parameterNames)))
+                    continue;
+                if (shared.QualifiedPartWeight >= _residualCapacity)
+                    return null;
+                if (!partsDone)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    pending.Push((seed, true));
+                    if (seed.AbsorbedPartsWithoutFolding is { } nested)
+                    {
+                        ChargeSeedPartWork(nested.Count);
+                        for (var i = nested.Count - 1; i >= 0; i--)
+                        {
+                            CheckWideWalkCancellation(i);
+                            if (!memo.ContainsKey((nested[i], owner, parameterNames)))
+                                pending.Push((nested[i], false));
+                        }
+                    }
+                    continue;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                if (QualifyWithCompletedChildren(seed, owner, parameterNames, retain: true) is not { } qualified)
+                    return null;
+                memo.Add((seed, owner, parameterNames), qualified);
+            }
+
+            return memo[(root, owner, parameterNames)];
+        }
+
+        // The children have already been qualified. Charge the smaller name set even on a disjoint intersection.
+        // Reserve the retained weight before allocating the copied sets or their list and index of child references.
+        private PropertyDependencyGraphBuilder.SummarySeed? QualifyWithCompletedChildren(
+            PropertyDependencyGraphBuilder.SummarySeed seed, Algorithm owner, IReadOnlySet<string> parameterNames, bool retain)
+        {
+            var children = seed.AbsorbedPartsWithoutFolding;
+            ChargeSeedPartWork(1L + Math.Min(seed.OwnRequiredNamesWithoutFolding?.Count ?? 0, parameterNames.Count));
+            var names = seed.SharedOwnNames(parameterNames, memos.Observations, cancellationToken);
+            var copy = names is { Count: > 0 };
+            var parts = shared.QualifiedParts;
+            if (!copy && children is not null)
+            {
+                var inspected = 0;
+                while (inspected < children.Count && !copy)
+                {
+                    CheckWideWalkCancellation(inspected);
+                    var child = children[inspected++];
+                    copy = !ReferenceEquals(child, parts[(child, owner, parameterNames)]);
+                }
+                ChargeSeedPartWork(inspected);
+            }
+            var copiedEntries = copy ? (long)seed.OwnRequirementCount + (children?.Count ?? 0) : 0;
+            if (retain)
+            {
+                if (shared.QualifiedPartWeight + 1 + copiedEntries > _residualCapacity)
+                    return null;
+                shared.QualifiedPartWeight += 1 + copiedEntries;
+            }
+            if (!copy)
+                return seed;
+            ChargeSeedPartWork(copiedEntries);
+            var qualified = seed.QualifiedOwnSets(owner, names, cancellationToken);
+            for (var i = 0; children is not null && i < children.Count; i++)
+            {
+                CheckWideWalkCancellation(i);
+                qualified.AbsorbReference(parts[(children[i], owner, parameterNames)]);
+            }
+            if (retain)
+                memos.Observations?.RecordSettlementQualifiedPartCopy();
+            return qualified;
         }
 
         // Charge a part's classification, edge scans, and the inputs of each requirement set built.

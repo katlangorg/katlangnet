@@ -979,6 +979,26 @@ internal sealed class FrontEndTraversalObservations
         => SettlementSeedPartWork = checked(SettlementSeedPartWork + units);
 
     /// <summary>
+    /// QUALIFIED SEED PARTS (<c>PropertyExposureResolver.PendingResolution</c>): seed parts copied with the required names
+    /// an intervening level binds qualified, while a navigated member's seed is anchored through that level. Each copy is
+    /// kept for the resolution, so a part is copied at most once per such level, never once per member that holds it.
+    /// </summary>
+    public long SettlementQualifiedPartCopies { get; private set; }
+
+    internal void RecordSettlementQualifiedPartCopy()
+        => SettlementQualifiedPartCopies = checked(SettlementQualifiedPartCopies + 1);
+
+    /// <summary>
+    /// QUALIFIED SEED PARTS: owners a settled seed's parts qualify requirements with, each looked up once for all of them
+    /// (its bound-owner membership read, then its level on the site's chain) where the folded settlement looked one up
+    /// per requirement.
+    /// </summary>
+    public long SettlementQualifiedPartOwnerLookups { get; private set; }
+
+    internal void RecordSettlementQualifiedPartOwnerLookups(long owners)
+        => SettlementQualifiedPartOwnerLookups = checked(SettlementQualifiedPartOwnerLookups + owners);
+
+    /// <summary>
     /// Bound-owner work for settlement keys (<c>BoundOwnerSet</c>): one per owner offered to a set and the
     /// set's count when distinct sets with the same count and fingerprint reach the membership comparison.
     /// </summary>

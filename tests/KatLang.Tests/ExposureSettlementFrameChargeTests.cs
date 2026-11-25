@@ -155,6 +155,8 @@ public sealed class ExposureSettlementFrameChargeTests
     [InlineData("live-member")]
     [InlineData("live-overlapping")]
     [InlineData("seed-parts")]
+    [InlineData("qualified-seed-parts")]
+    [InlineData("qualified-seed-parts-detached")]
     public void EveryFrame_ChargesOneUnitOfTheOperationsWork_BeforeItIsCounted(string shape)
     {
         var source = shape switch
@@ -169,6 +171,8 @@ public sealed class ExposureSettlementFrameChargeTests
             "live-member" => ExposureResidualReuseTests.LiveMemberFamily(24, 24),
             "live-overlapping" => ExposureResidualReuseTests.OverlappingLiveReads(24, 12),
             "seed-parts" => ExposureResidualReuseTests.NavigatedChain(48, depth: 2),
+            "qualified-seed-parts" => ExposureResidualReuseTests.OwnerQualifiedRows(48),
+            "qualified-seed-parts-detached" => ExposureResidualReuseTests.OwnerQualifiedRows(48, "detached"),
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
         var (resolved, ledger, limits) = Resolved(source);
@@ -199,6 +203,12 @@ public sealed class ExposureSettlementFrameChargeTests
         }
         if (shape == "seed-parts")
             Assert.True(observations.SettlementSeedPartWork > 0);
+        if (shape.StartsWith("qualified", StringComparison.Ordinal))
+        {
+            Assert.True(observations.SettlementSeedPartWork > 0);
+            Assert.True(observations.SettlementQualifiedPartCopies > 0);
+            Assert.True(observations.SettlementQualifiedPartOwnerLookups > 0);
+        }
         // What follows the last frame is the unit's retargeting and sealing, charged as before.
         Assert.InRange(ledger.WorkCharged, before + seen * PropertyExposureResolver.SettlementFrameWork + Reuse(), limits.MaxEvaluations);
         Assert.False(ledger.IsFailed);

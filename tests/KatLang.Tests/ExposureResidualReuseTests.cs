@@ -22,6 +22,10 @@ using Mode = PropertyExposureResolver.SettlementShareMode;
 /// canonicalized whole at every settlement, and copied at every parameterless level between its declaration and the
 /// reader (K² / 2 elements; depth × K² / 2 copies). A part holding required names only is now resolved once per
 /// level through a kept set, and such a seed is carried through those levels unchanged.</item>
+/// <item>QUALIFIED SEED PARTS (the seed residual 5d747bb8 recorded): a part holding owner-qualified requirements was folded,
+/// qualified name by name while anchored through a level that binds parameters, and read once per requirement when settled
+/// (output rows reading K chained library members under their owner: K² / 2 names, 404 MB at K = 2,000). Each part is now
+/// qualified once per level and kept, and each settlement looks each owner up once, with the folded walk's record.</item>
 /// <item>OFF-CHAIN (<c>exposure-offchain-terminal-disables-footprints</c>): NOT repaired. A settlement with an owner
 /// lookup off its site's chain answers its exact key only, because extending it changes the metadata of THE OFF-CHAIN
 /// GAP's programs, an owner decision. Its negative controls and the latent <c>LocalOnlyProperty</c> are pinned here.</item>
@@ -158,7 +162,7 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
     /// With <paramref name="depth"/>, the library is nested in that many parameterless blocks read through one alias
     /// (<c>navalias</c>).
     /// </summary>
-    internal static string NavigatedChain(int members, int depth = 0)
+    internal static string NavigatedChain(int members, int depth = 0, string? output = null)
     {
         var source = new StringBuilder($"F({string.Join(", ", Enumerable.Range(1, members).Select(i => $"p{i}"))}) = {{\n");
         for (var d = 1; d <= depth; d++) source.Append($"W{d} = {{\n");
@@ -169,8 +173,58 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
         var head = depth == 0 ? "Lib" : "L";
         if (depth > 0) source.Append($"L = {string.Join(".", Enumerable.Range(1, depth).Select(d => $"W{d}"))}.Lib\n");
         for (var i = 1; i <= members; i++) source.Append($"R{i} = {head}.P{i}\n");
-        source.Append($"R{members}\n}}\nF({string.Join(", ", Enumerable.Range(1, members))})\n");
+        source.Append($"{output ?? $"R{members}"}\n}}\nF({string.Join(", ", Enumerable.Range(1, members))})\n");
         return source.ToString();
+    }
+
+    /// <summary>
+    /// The owner-qualified seed-part shapes (QUALIFIED SEED PARTS). The library member <c>P{i}</c> reads <c>P{i-1}</c>
+    /// and the parameter <c>p{i}</c>, so its seed holds its predecessor's by reference, and the members are read where
+    /// the owner that binds the <c>p{i}</c> lies between their library and the reader:
+    /// <list type="bullet">
+    /// <item><c>rows</c>, the source report's fixture: <c>F</c>'s output rows <c>Lib.P1</c> … <c>Lib.P{K}</c>, settled
+    /// where <c>F</c> is declared with <c>F</c> as a bound owner. Each row's seed is anchored through <c>F</c>'s level,
+    /// which binds every <c>p{i}</c>.</item>
+    /// <item><c>same-names</c>: those rows inside <c>G(p1, …, p{K})</c>, itself in <c>F(p1, …, p{K})</c>: the names are
+    /// <c>G</c>'s, and <c>F</c>'s same-named parameters are never required.</item>
+    /// <item><c>one-name</c>: inside <c>G(p2)</c> in <c>F</c>: <c>p2</c> is <c>G</c>'s and every other <c>p{i}</c> is
+    /// <c>F</c>'s, so <c>G</c> requires them.</item>
+    /// <item><c>outer-name</c>: the first member also reads <c>y</c>, which <c>F</c> does not bind and the enclosing
+    /// <c>H(y)</c> does, so <c>F</c> requires <c>H</c>'s <c>y</c>.</item>
+    /// <item><c>detached</c>: root properties <c>R{i} = F.Lib.P{i}</c> read the members without calling <c>F</c>: the
+    /// owner of their requirements is on no level of the reader's chain (THE OFF-CHAIN GAP), and the root's output is 0.</item>
+    /// <item><c>self-path</c>: the chain is <c>F</c>'s own members (qualified with <c>F</c> by its member solve) and
+    /// <c>X = F.P{K}</c>, inside <c>F</c>, reads the last one through <c>F</c>'s name: the owner is on the reader's
+    /// chain and not bound, so <c>X</c> requires every <c>p{i}</c>.</item>
+    /// <item><c>path</c> (NEGATIVE CONTROL): <c>rows</c> whose members also read <c>Q.X{i}</c>, a path in every part.</item>
+    /// </list>
+    /// </summary>
+    internal static string OwnerQualifiedRows(int members, string shape = "rows")
+    {
+        var parameters = string.Join(", ", Enumerable.Range(1, members).Select(i => $"p{i}"));
+        var arguments = string.Join(", ", Enumerable.Range(1, members));
+        var path = shape == "path";
+        var library = new StringBuilder("Lib = {\n");
+        library.Append(shape == "outer-name" ? "public P1 = p1 + y\n" : path ? "public P1 = p1 + Q.X1\n" : "public P1 = p1\n");
+        for (var i = 2; i <= members; i++) library.Append(path ? $"public P{i} = P{i - 1} + p{i} + Q.X{i}\n" : $"public P{i} = P{i - 1} + p{i}\n");
+        library.Append("}\n");
+        var rows = string.Concat(Enumerable.Range(1, members).Select(i => $"Lib.P{i}\n"));
+        return shape switch
+        {
+            "rows" => $"F({parameters}) = {{\n{library}{rows}}}\nF({arguments})\n",
+            "same-names" => $"F({parameters}) = {{\nG({parameters}) = {{\n{library}{rows}}}\nG({arguments})\n}}\nF({arguments})\n",
+            "one-name" => $"F({parameters}) = {{\nG(p2) = {{\n{library}{rows}}}\nG(100)\n}}\nF({arguments})\n",
+            "outer-name" => $"H(y) = {{\nF({parameters}) = {{\n{library}{rows}}}\nF({arguments})\n}}\nH(5)\n",
+            "detached" => $"F({parameters}) = {{\n{library}0\n}}\n"
+                + string.Concat(Enumerable.Range(1, members).Select(i => $"R{i} = F.Lib.P{i}\n")) + "0\n",
+            "self-path" => $"F({parameters}) = {{\nP1 = p1\n"
+                + string.Concat(Enumerable.Range(2, members - 1).Select(i => $"P{i} = P{i - 1} + p{i}\n"))
+                + $"X = F.P{members}\nX\n}}\nF({arguments})\n",
+            "path" => $"F(y, {parameters}) = {{\nQ = {{\n"
+                + string.Concat(Enumerable.Range(1, members).Select(i => $"public X{i} = y + {i}\n"))
+                + $"}}\n{library}{rows}}}\nF(7, {arguments})\n",
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
     }
 
     // ── Live reads: the unbound open walks past sixteen live summaries ────────
@@ -234,9 +288,11 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
     public void SaturatedReuseTables_FallBackToTheSameExposure(int capacity)
     {
         var seam = PropertyExposureResolver.ResidualCacheCapacityForTesting;
-        foreach (var (source, seedParts) in new[]
+        foreach (var (source, kind) in new[]
         {
-            (LiveOpenFamily(20, 24), false), (LiveMemberFamily(20, 24), false), (NavigatedChain(48, depth: 2), true)
+            (LiveOpenFamily(20, 24), "live"), (LiveMemberFamily(20, 24), "live"), (NavigatedChain(48, depth: 2), "names"),
+            (OwnerQualifiedRows(48), "qualified"), (OwnerQualifiedRows(48, "one-name"), "qualified"),
+            (OwnerQualifiedRows(48, "detached"), "qualified"),
         })
         {
             var normal = Parse(source);
@@ -248,13 +304,24 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
                 var limited = Parse(source);
                 Assert.Equal(normal.Diagnostics, limited.Diagnostics);
                 Assert.Equal(normal.Metadata, limited.Metadata);
-                if (capacity == 0 && !seedParts)
+                if (capacity == 0 && kind == "live")
                 {
                     Assert.True(limited.Observations.SettlementSnapshotNames < normal.Observations.SettlementSnapshotNames);
                     Assert.True(limited.Observations.RequiredAncestorSettlementFrames > normal.Observations.RequiredAncestorSettlementFrames);
                 }
-                if (seedParts)
+                if (kind == "names")
                     Assert.True(limited.Observations.RequiredAncestorElementsCanonicalized > normal.Observations.RequiredAncestorElementsCanonicalized);
+                if (kind == "qualified")
+                {
+                    // QUALIFIED SEED PARTS: with no room every seed is expanded and folded as before.
+                    Assert.True(normal.Observations.SettlementQualifiedPartOwnerLookups > 0);
+                    Assert.True(limited.Observations.SettlementQualifiedPartOwnerLookups < normal.Observations.SettlementQualifiedPartOwnerLookups);
+                    if (capacity == 0)
+                    {
+                        Assert.Equal(0, limited.Observations.SettlementQualifiedPartCopies);
+                        Assert.Equal(0, limited.Observations.SettlementQualifiedPartOwnerLookups);
+                    }
+                }
             }
             finally { seam.Value = prior; }
         }
@@ -633,16 +700,18 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// NEGATIVE CONTROLS (what a part holds). The parts a seed holds by reference are taken through kept sets only when
-    /// they hold required names alone. Here each member also reads a navigated path (<c>Q.X{i}</c>, a pending reference in
-    /// every part), or the library binds a parameter of its own (<c>q</c>, an owner-qualified requirement in every part):
-    /// such seeds are folded and settled whole, as before, and every reader requires the path's input or keeps
-    /// <c>q</c> qualified at <c>Lib</c>. Taking such a part through its names alone would drop those requirements.
+    /// What a part holds decides its route. Here each member also reads a navigated path (<c>Q.X{i}</c>, a pending
+    /// reference in every part: a NEGATIVE CONTROL), or the library binds a parameter of its own (<c>q</c>, an
+    /// owner-qualified requirement in every part). Parts with paths are folded and settled whole, as before, and every
+    /// reader requires the path's input. Parts with owner-qualified requirements take QUALIFIED SEED PARTS: <c>Lib</c>,
+    /// the owner of <c>q</c>, is on no level of the readers' chain, so it is looked up once per settlement, charges
+    /// nothing and is noted off-chain exactly as the folded settlement noted it per requirement, and every reader keeps
+    /// its own prefix of the <c>p{i}</c>. Taking either part through its names alone would drop those requirements.
     /// </summary>
     [Theory]
     [InlineData("path")]
     [InlineData("library-parameter")]
-    public void SeedPartsHoldingPathsOrQualifiedRequirements_AreSettledWhole(string shape)
+    public void SeedPartsHoldingPathsOrQualifiedRequirements_SettleAsTheFormerWalk(string shape)
     {
         const int Members = 24;
         var source = new StringBuilder("F(y, " + string.Join(", ", Enumerable.Range(1, Members).Select(i => $"p{i}")) + ") = {\n");
@@ -660,9 +729,12 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
         Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, last.Exposure);
         if (shape == "path")
             Assert.Contains("y", last.RequiredAncestorParameters);
+        else
+            ExposureOpenChainComplexityTests.AssertRequires(last,
+                Enumerable.Range(1, Members).Select(static i => $"p{i}").Order(StringComparer.Ordinal).Select(static name => (name, 0)).ToArray());
         Assert.Contains($"p{Members}", last.RequiredAncestorParameters);
+        Assert.Equal(shape != "path", production.SettlementQualifiedPartOwnerLookups > 0);
         Assert.Equal("0", Value(text));
-        _ = production;
     }
 
     /// <summary>
@@ -743,6 +815,395 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
         AssertSameAsFormerWalk(Source, PropertyExposureResolver.SeedPartsFoldedForTesting, clean: false);
         var m = Assert.Single(SourceProvenance.ParseAllowingDiagnostics(Source).Root.Properties, property => property.Name == "M");
         Assert.Equal(["x"], m.RequiredAncestorParameters);
+    }
+
+    // ── Qualified seed parts: parts that hold owner-qualified requirements ──────
+
+    [Theory]
+    [InlineData(19, 1)]
+    [InlineData(20, 2)]
+    public void AQualifiedCopyReservesItsChildReferences(int capacity, int expectedCopies)
+    {
+        // The first two completed parts each cost ten units. The second holds eight names,
+        // its predecessor reference and its cache entry.
+        var source = OwnerQualifiedRows(64);
+        var former = With(PropertyExposureResolver.SeedPartsFoldedForTesting, () => Parse(source));
+        var seam = PropertyExposureResolver.ResidualCacheCapacityForTesting;
+        var prior = seam.Value;
+        try
+        {
+            seam.Value = capacity;
+            var actual = Parse(source);
+            Assert.Empty(actual.Diagnostics);
+            Assert.Equal(former.Metadata, actual.Metadata);
+            Assert.Equal(expectedCopies, actual.Observations.SettlementQualifiedPartCopies);
+        }
+        finally { seam.Value = prior; }
+    }
+
+    [Fact]
+    public void ADisjointQualificationObservesCancellationInsideTheNameSet()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var probes = 0;
+        var watch = false;
+        var comparer = EqualityComparer<string>.Create(StringComparer.Ordinal.Equals, name =>
+        {
+            if (watch && ++probes == 32)
+                cancellation.Cancel();
+            return StringComparer.Ordinal.GetHashCode(name);
+        });
+        var parameters = Enumerable.Range(0, 512).Select(i => $"p{i}").ToHashSet(comparer);
+        var seed = new PropertyDependencyGraphBuilder.SummarySeed(Enumerable.Range(0, 512).Select(i => $"q{i}"));
+        watch = true;
+        var error = Assert.ThrowsAny<OperationCanceledException>(() => seed.SharedOwnNames(parameters, null, cancellation.Token));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.InRange(probes, 32, 256);
+    }
+
+    [Fact]
+    public void AWideQualifiedPartKeepsEveryCaptureAcrossCancellationBatches()
+    {
+        var names = Enumerable.Range(1, 513).Select(i => $"p{i}").ToArray();
+        var all = string.Join(", ", names);
+        var chain = string.Join("\n", Enumerable.Range(2, 11).Select(i => $"P{i} = P{i - 1} + p{i}"));
+        var source = $"H(y) = {{\nF({all}) = {{\nP1 = p1\n{chain}\nR = [{all}, P12]\nQ = [R, y]\nX = F.Q\n0\n}}\n"
+            + $"F({string.Join(", ", Enumerable.Range(1, names.Length))})\n}}\nH(5)\n";
+        var (production, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.SeedPartsFoldedForTesting);
+        Assert.True(production.SettlementQualifiedPartOwnerLookups > 0);
+        ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(Root(source), "H", "F", "X"),
+            names.Order(StringComparer.Ordinal).Select(name => (name, 0)).Append(("y", 1)).ToArray());
+    }
+
+    /// <summary>
+    /// The witnesses of what a QUALIFIED SEED PARTS settlement records (<see cref="AQualifiedSettlementsRecord_DecidesWhereItIsReused"/>).
+    /// Inside <c>H(y)</c>, <c>F(p1, …, p{K})</c>'s own chain <c>P1</c> … <c>P{K}</c> ends in <c>R = p1 + … + p9 + P{K}</c> and
+    /// <c>Q = R + y</c>: <c>R</c>'s own sets hold nine names, so <c>Q</c> holds it BY REFERENCE and <c>Q</c>'s own sets hold only
+    /// <c>H</c>'s <c>y</c>. <c>F</c>'s requirements are in <c>Q</c>'s parts alone, so only the parts' record notes <c>F</c>, and
+    /// two readers read <c>F.Q</c> under one share key (content, level, bound owners) or one footprint:
+    /// <list type="bullet">
+    /// <item><c>bound-then-found</c>: <c>F</c>'s output row <c>F.Q</c> is settled where <c>F</c> is declared, with <c>F</c>
+    /// bound, then <c>X = F.Q</c> inside <c>F</c> reads it with <c>F</c> unbound and on its chain;</item>
+    /// <item><c>off-chain-then-found</c>: <c>T = F.Q</c> in <c>H</c> finds <c>F</c> on no level of its chain, then
+    /// <c>G(z) = F.Q + z</c> inside <c>F</c> reads it under the bound owner <c>G</c>;</item>
+    /// <item><c>found-then-off-chain</c>: <c>X = F.Q</c> inside <c>F</c> lands at <c>F</c>'s level, then <c>Y = F.Q</c> in
+    /// <c>S(w)</c>, a sibling of <c>F</c>, reads it off <c>F</c>'s chain.</item>
+    /// </list>
+    /// </summary>
+    internal static string QualifiedRecordWitness(int members, string shape)
+    {
+        var parameters = string.Join(", ", Enumerable.Range(1, members).Select(i => $"p{i}"));
+        var chain = new StringBuilder("P1 = p1\n");
+        for (var i = 2; i <= members; i++) chain.Append($"P{i} = P{i - 1} + p{i}\n");
+        chain.Append($"R = {string.Join(" + ", Enumerable.Range(1, 9).Select(i => $"p{i}"))} + P{members}\nQ = R + y\n");
+        var (inside, beside) = shape switch
+        {
+            "bound-then-found" => ("X = F.Q\nF.Q\nX\n", ""),
+            "off-chain-then-found" => ("G(z) = F.Q + z\nG(1)\n", "T = F.Q\n"),
+            "found-then-off-chain" => ("X = F.Q\nX\n", "S(w) = {\nY = F.Q\nY + w\n}\n"),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+        return $"H(y) = {{\nF({parameters}) = {{\n{chain}{inside}}}\n{beside}F({string.Join(", ", Enumerable.Range(1, members))})\n}}\nH(5)\n";
+    }
+
+    /// <summary>
+    /// THE RECORD OF A QUALIFIED SETTLEMENT decides where it is reused, so it must be the folded settlement's: each owner's
+    /// bound-owner membership with its answer, the landing of an owner found on the site's chain, and an owner found on no
+    /// level of it (<see cref="QualifiedRecordWitness"/>). Without the membership, the settlement that discharged <c>F</c> as a
+    /// bound owner would answer <c>X</c>, and <c>T</c>'s would answer <c>G</c>: both would lose every <c>p{i}</c>. Without the
+    /// off-chain note, <c>T</c>'s settlement would be kept by footprint and answer <c>G</c>. Without the landing, <c>X</c>'s
+    /// settlement would stand from every site and answer <c>Y</c>, which would require <c>F</c>'s names off its chain. The
+    /// readers' requirements are checked against an independent oracle, production agrees with the former walk and the
+    /// unshared settlement, the parts were taken owner by owner, and the values are unchanged.
+    /// </summary>
+    [Theory]
+    [InlineData("bound-then-found")]
+    [InlineData("off-chain-then-found")]
+    [InlineData("found-then-off-chain")]
+    public void AQualifiedSettlementsRecord_DecidesWhereItIsReused(string shape)
+    {
+        const int Members = 12;
+        var source = QualifiedRecordWitness(Members, shape);
+        var (production, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.SeedPartsFoldedForTesting);
+        Assert.True(production.SettlementQualifiedPartOwnerLookups > 0);
+        var root = Root(source);
+        var throughF = Enumerable.Range(1, Members).Select(static i => $"p{i}").Order(StringComparer.Ordinal)
+            .Select(static name => (name, 0)).Append(("y", 1)).ToArray();
+        ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "H", "F"), ("y", 0));
+        var q = Members * (Members + 1) / 2 + 45 + 5;
+        switch (shape)
+        {
+            case "bound-then-found":
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "H", "F", "X"), throughF);
+                Assert.Equal($"({q}, {q})", Value(source));
+                break;
+            case "off-chain-then-found":
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "H", "T"), ("y", 0));
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "H", "F", "G"), throughF);
+                Assert.Equal($"{q + 1}", Value(source));
+                break;
+            case "found-then-off-chain":
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "H", "F", "X"), throughF);
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "H", "S"), ("y", 0));
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "H", "S", "Y"), ("y", 1));
+                Assert.Equal($"{q}", Value(source));
+                break;
+        }
+    }
+
+    // The value of an owner call whose output rows are members 1 … members: one sequence value.
+    private static string Rows(int members, Func<int, int> value)
+        => $"({string.Join(", ", Enumerable.Range(1, members).Select(value))})";
+
+    /// <summary>
+    /// QUALIFIED SEED PARTS: the source report's <c>rows</c> fixture (<see cref="OwnerQualifiedRows"/>). While a row's
+    /// member seed was anchored through <c>F</c>'s level, it was folded and every name qualified with <c>F</c>, and its
+    /// settlement then read <c>F</c>'s bound-owner membership once per name: K² / 2 names folded, qualified and read
+    /// (2,005,000 footprint reads and 404 MB of exposure allocation at K = 2,000). Now each part is qualified once and kept,
+    /// and each settlement looks each owner up once: qualification probes, footprint reads, owner lookups, part copies and
+    /// seed-part work grow linearly with the rows, the frames are unchanged, and the former walk
+    /// (<see cref="PropertyExposureResolver.SeedPartsFoldedForTesting"/>) stays quadratic. The metadata is the former
+    /// walk's and the unshared settlement's.
+    /// </summary>
+    [Fact]
+    public void OwnerQualifiedRows_QualifyAndReadEveryPartOnce_InLinearWork()
+    {
+        var sizes = new[] { 100, 200, 400 };
+        var probes = new long[3];
+        var footprint = new long[3];
+        var lookups = new long[3];
+        var copies = new long[3];
+        var parts = new long[3];
+        var formerProbes = new long[3];
+        var formerFootprint = new long[3];
+        for (var k = 0; k < sizes.Length; k++)
+        {
+            var (production, former) = AssertSameAsFormerWalk(OwnerQualifiedRows(sizes[k]), PropertyExposureResolver.SeedPartsFoldedForTesting);
+            Assert.Equal(former.RequiredAncestorSettlementFrames, production.RequiredAncestorSettlementFrames);
+            Assert.Equal(0, former.SettlementQualifiedPartOwnerLookups);
+            Assert.Equal(0, former.SettlementQualifiedPartCopies);
+            probes[k] = production.SummaryQualificationProbes;
+            footprint[k] = production.SettlementFootprintWork;
+            lookups[k] = production.SettlementQualifiedPartOwnerLookups;
+            copies[k] = production.SettlementQualifiedPartCopies;
+            parts[k] = production.SettlementSeedPartWork;
+            formerProbes[k] = former.SummaryQualificationProbes;
+            formerFootprint[k] = former.SettlementFootprintWork;
+            output.WriteLine($"K = {sizes[k]}: {production.RequiredAncestorSettlementFrames} frames, {probes[k]} qualification probes, "
+                + $"{footprint[k]} footprint reads, {lookups[k]} owner lookups, {copies[k]} part copies, {parts[k]} seed-part units; "
+                + $"folded {formerProbes[k]} probes, {formerFootprint[k]} footprint reads");
+        }
+
+        AssertLinear(probes, "qualification probes");
+        AssertLinear(footprint, "footprint reads");
+        AssertLinear(lookups, "owner lookups");
+        AssertLinear(copies, "part copies");
+        AssertLinear(parts, "seed-part work");
+        Assert.InRange((double)formerProbes[2] / formerProbes[1], 3.0, 5.0);
+        Assert.InRange((double)formerFootprint[2] / formerFootprint[1], 3.0, 5.0);
+        Assert.Equal(Rows(12, i => i * (i + 1) / 2), Value(OwnerQualifiedRows(12)));
+    }
+
+    /// <summary>
+    /// QUALIFIED SEED PARTS keep each requirement with its exact owner. A part's names are qualified with the innermost
+    /// owner the anchoring passes that binds them, discharged where that owner is bound, and the names no passed owner
+    /// binds stay required where the rows are settled (<see cref="OwnerQualifiedRows"/>): <c>rows</c> and
+    /// <c>same-names</c> — the rows' owner requires nothing although <c>F</c> binds every name too; <c>one-name</c> —
+    /// <c>G</c> requires <c>F</c>'s <c>p1</c>, <c>p3</c> … but not <c>p2</c>; <c>outer-name</c> — <c>F</c> requires
+    /// <c>H</c>'s <c>y</c>. A name qualified with the wrong owner, or left unqualified, would be required of the wrong
+    /// owner. Where the parts' owner is neither bound nor off the reader's chain (<c>self-path</c>, whose parts the member
+    /// solve qualified), the requirements are the ones each part keeps for that owner's level: <c>X</c> requires every
+    /// <c>p{i}</c>. Production, the former walk and the unshared settlement agree, the parts were taken owner by owner,
+    /// and the values are unchanged.
+    /// </summary>
+    [Theory]
+    [InlineData("rows")]
+    [InlineData("same-names")]
+    [InlineData("one-name")]
+    [InlineData("outer-name")]
+    [InlineData("self-path")]
+    public void OwnerQualifiedParts_KeepEveryRequirementWithItsOwner(string shape)
+    {
+        const int Members = 24;
+        var source = OwnerQualifiedRows(Members, shape);
+        var (production, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.SeedPartsFoldedForTesting);
+        Assert.Equal(shape != "self-path", production.SettlementQualifiedPartCopies > 0);
+        Assert.True(production.SettlementQualifiedPartOwnerLookups > 0);
+        var root = Root(source);
+        switch (shape)
+        {
+            case "rows":
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F"));
+                Assert.Equal(Rows(Members, i => i * (i + 1) / 2), Value(source));
+                break;
+            case "same-names":
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", "G"));
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F"));
+                Assert.Equal(Rows(Members, i => i * (i + 1) / 2), Value(source));
+                break;
+            case "one-name":
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", "G"),
+                    Enumerable.Range(1, Members).Where(static i => i != 2).Select(static i => $"p{i}").Order(StringComparer.Ordinal)
+                        .Select(static name => (name, 0)).ToArray());
+                Assert.Equal(Rows(Members, i => i * (i + 1) / 2 + (i >= 2 ? 98 : 0)), Value(source));
+                break;
+            case "outer-name":
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "H", "F"), ("y", 0));
+                Assert.Equal(Rows(Members, i => i * (i + 1) / 2 + 5), Value(source));
+                break;
+            case "self-path":
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", "X"),
+                    Enumerable.Range(1, Members).Select(static i => $"p{i}").Order(StringComparer.Ordinal).Select(static name => (name, 0)).ToArray());
+                Assert.Equal((Members * (Members + 1) / 2).ToString(), Value(source));
+                break;
+        }
+    }
+
+    /// <summary>
+    /// QUALIFIED SEED PARTS read without their owner (<c>detached</c>, <see cref="OwnerQualifiedRows"/>): root properties read
+    /// <c>F.Lib.P{i}</c> without calling <c>F</c>, so the owner of the parts' requirements is on no level of the reader's
+    /// chain. Each settlement notes that lookup once instead of once per requirement, charges nothing for it, and keeps it:
+    /// such a result answers its exact key only (THE OFF-CHAIN GAP), so the exact-key share publishes the same metadata. The
+    /// read stays a latent check: unused, the program's value is 0, and demanding <c>R{K}</c> fails with
+    /// <c>LocalOnlyProperty</c>.
+    /// </summary>
+    [Fact]
+    public void OwnerQualifiedPartsReadWithoutTheirOwner_ChargeNothing_AndKeepTheLatentCheck()
+    {
+        const int Members = 24;
+        var source = OwnerQualifiedRows(Members, "detached");
+        var (production, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.SeedPartsFoldedForTesting);
+        Assert.True(production.SettlementQualifiedPartOwnerLookups > 0);
+        Assert.Equal(Parse(source).Metadata, InMode(Mode.ExactBoundOwners, () => Parse(source)).Metadata);
+        var root = Root(source);
+        for (var i = 1; i <= Members; i++)
+            ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, $"R{i}"));
+        Assert.Equal("0", Value(source));
+        var demanded = KatLangEngine.Run(source[..^"0\n".Length] + $"R{Members}\n");
+        var failure = Assert.IsType<RunResult.EvalFailure>(demanded);
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, Assert.Single(failure.Errors).Code);
+    }
+
+    /// <summary>
+    /// NEGATIVE CONTROLS (what QUALIFIED SEED PARTS take). Parts that hold a path — every member also reads <c>Q.X{i}</c>, a
+    /// pending reference in every part (<c>path</c>) — are neither qualified part by part when anchored nor read owner by
+    /// owner when settled: the seed is expanded, folded and its paths settled as before (no part copied, no owner looked up
+    /// for parts), and the metadata is the former walk's. Parts that hold required names alone, read by members of the
+    /// library's own owner (the navigated chain with output <c>0</c>), keep the name-only SEED PARTS route.
+    /// </summary>
+    [Fact]
+    public void PartsHoldingPathsOrOnlyNames_DoNotTakeTheQualifiedRoute()
+    {
+        const int Members = 24;
+        var pathSource = OwnerQualifiedRows(Members, "path");
+        var path = AssertSameAsFormerWalk(pathSource, PropertyExposureResolver.SeedPartsFoldedForTesting).Production;
+        Assert.Equal(0, path.SettlementQualifiedPartCopies);
+        Assert.Equal(0, path.SettlementQualifiedPartOwnerLookups);
+        ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(Root(pathSource), "F"));
+        Assert.Equal(Rows(Members, i => i * (i + 1) / 2 + Enumerable.Range(1, i).Sum(j => 7 + j)), Value(pathSource));
+
+        var names = AssertSameAsFormerWalk(NavigatedChain(48, output: "0"), PropertyExposureResolver.SeedPartsFoldedForTesting).Production;
+        Assert.True(names.SettlementSeedPartWork > 0);
+        Assert.Equal(0, names.SettlementQualifiedPartCopies);
+        Assert.Equal(0, names.SettlementQualifiedPartOwnerLookups);
+    }
+
+    /// <summary>
+    /// An owner only a part's part carries is still looked up. Inside <c>H(y1, …, y10)</c>, <c>F</c>'s chain ends in
+    /// <c>R = p1 + … + p9 + P{K}</c> (nine names qualified with <c>F</c>), <c>Q = R + y1 + … + y9</c> and <c>Z = Q + y10</c>:
+    /// <c>Z</c> holds <c>Q</c> by reference and <c>Q</c> holds <c>R</c>, so <c>Q</c>'s own sets hold <c>H</c>'s names only and
+    /// <c>F</c> is an owner of <c>Q</c> through <c>R</c> alone. <c>X = F.Z</c> inside <c>F</c> finds <c>F</c> on its chain and
+    /// requires every <c>p{i}</c> and every <c>y{j}</c>: the owners of a part are its own and those of every part it holds.
+    /// </summary>
+    [Fact]
+    public void AnOwnerOnlyANestedPartCarries_IsStillLookedUp()
+    {
+        const int Members = 12;
+        var source = new StringBuilder($"H({string.Join(", ", Enumerable.Range(1, 10).Select(j => $"y{j}"))}) = {{\n");
+        source.Append($"F({string.Join(", ", Enumerable.Range(1, Members).Select(i => $"p{i}"))}) = {{\nP1 = p1\n");
+        for (var i = 2; i <= Members; i++) source.Append($"P{i} = P{i - 1} + p{i}\n");
+        source.Append($"R = {string.Join(" + ", Enumerable.Range(1, 9).Select(i => $"p{i}"))} + P{Members}\n");
+        source.Append($"Q = R + {string.Join(" + ", Enumerable.Range(1, 9).Select(j => $"y{j}"))}\nZ = Q + y10\nX = F.Z\nX\n}}\n");
+        source.Append($"F({string.Join(", ", Enumerable.Range(1, Members))})\n}}\nH({string.Join(", ", Enumerable.Range(1, 10))})\n");
+        var text = source.ToString();
+        var (production, _) = AssertSameAsFormerWalk(text, PropertyExposureResolver.SeedPartsFoldedForTesting);
+        Assert.True(production.SettlementQualifiedPartOwnerLookups > 0);
+        ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(Root(text), "H", "F", "X"),
+            Enumerable.Range(1, Members).Select(static i => ($"p{i}", 0)).Concat(Enumerable.Range(1, 10).Select(static j => ($"y{j}", 1)))
+                .OrderBy(static r => r.Item1, StringComparer.Ordinal).ToArray());
+        Assert.Equal((Members * (Members + 1) / 2 + 45 + 55).ToString(), Value(text));
+    }
+
+    /// <summary>
+    /// NEGATIVE CONTROL (a path in a PART, at an owner that binds parameters; the shape of the targeted generator's
+    /// <c>q3_00698</c>). <c>D = G.Lib.P{K}</c> in <c>F</c> reads <c>G</c>'s library without calling <c>G</c>, so the member's
+    /// seed is anchored through <c>G</c>'s level, which binds every <c>p{i}</c>. <c>P1</c> reads the path <c>Q.X</c>, and the
+    /// late members hold it by reference: their own sets hold names only, but a part holds the path. Such a seed is expanded
+    /// at <c>G</c>'s level as before, never qualified part by part (a part with a path is no requirement set), and <c>D</c>
+    /// requires <c>F</c>'s <c>y</c> through the path while <c>G</c>'s names charge nothing off its chain.
+    /// </summary>
+    [Theory]
+    [InlineData("X")]
+    [InlineData("Missing")]
+    public void APartHoldingAPath_IsExpandedAtAnOwnerThatBindsParameters(string member)
+    {
+        const int Members = 12;
+        var parameters = string.Join(", ", Enumerable.Range(1, Members).Select(i => $"p{i}"));
+        var source = new StringBuilder($"F(y) = {{\nQ = {{ public X = y + 1 }}\nG({parameters}) = {{\nLib = {{\npublic P1 = p1 + Q.{member}\n");
+        for (var i = 2; i <= Members; i++) source.Append($"public P{i} = P{i - 1} + p{i}\n");
+        source.Append($"}}\n0\n}}\nD = G.Lib.P{Members}\n0\n}}\nF(7)\n");
+        var text = source.ToString();
+        AssertSameAsFormerWalk(text, PropertyExposureResolver.SeedPartsFoldedForTesting);
+        var reader = ExposureOpenChainComplexityTests.Member(Root(text), "F", "D");
+        if (member == "X")
+            ExposureOpenChainComplexityTests.AssertRequires(reader, ("y", 0));
+        else
+            ExposureOpenChainComplexityTests.AssertRequires(reader);
+        Assert.Equal("0", Value(text));
+    }
+
+    /// <summary>
+    /// CANCELLATION while parts are qualified: the anchoring of each row's seed observes the summary channel's checkpoint
+    /// as the expansion it replaces did, so the first one after a part was copied cancels the operation, which surfaces with
+    /// its token and fails the unit, and no part is copied after it. A fresh parse of the same source then exposes in full
+    /// with the uncancelled metadata and counters: nothing of the cancelled resolution is kept.
+    /// </summary>
+    [Fact]
+    public void CancellationWhilePartsAreQualified_StopsTheSolve_AndAFreshParseExposesInFull()
+    {
+        var source = OwnerQualifiedRows(96);
+        var expected = Parse(source);
+        using var cancellation = new CancellationTokenSource();
+        long copiesAtCancel = -1;
+        FrontEndTraversalObservations observations = null!;
+        observations = new FrontEndTraversalObservations
+        {
+            CheckpointReached = (kind, _) =>
+            {
+                if (kind != FrontEndCancellationCheckpoint.SummaryChannel || cancellation.IsCancellationRequested
+                    || observations.SettlementQualifiedPartCopies == 0)
+                    return;
+                copiesAtCancel = observations.SettlementQualifiedPartCopies;
+                cancellation.Cancel();
+            },
+        };
+
+        var (resolved, _, _) = ExposureSettlementFrameChargeTests.Resolved(source);
+        var unit = resolved.CompletedStructure!.Facts;
+        var error = Assert.ThrowsAny<OperationCanceledException>(
+            () => PropertyExposureResolver.Resolve(resolved, observations, cancellationToken: cancellation.Token));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.True(unit.IsFailed);
+        Assert.False(unit.IsSealed);
+        Assert.True(copiesAtCancel > 0);
+        Assert.Equal(copiesAtCancel, observations.SettlementQualifiedPartCopies);
+        Assert.True(observations.SettlementQualifiedPartCopies < expected.Observations.SettlementQualifiedPartCopies);
+
+        var again = Parse(source);
+        Assert.Equal(expected.Diagnostics, again.Diagnostics);
+        Assert.Equal(expected.Metadata, again.Metadata);
+        Assert.Equal(expected.Observations.SettlementQualifiedPartCopies, again.Observations.SettlementQualifiedPartCopies);
+        Assert.Equal(expected.Observations.SettlementQualifiedPartOwnerLookups, again.Observations.SettlementQualifiedPartOwnerLookups);
     }
 
     // ── Off-chain: the residual that needs an owner decision ──────────────────

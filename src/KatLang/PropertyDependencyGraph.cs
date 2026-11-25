@@ -541,7 +541,7 @@ internal static class PropertyDependencyGraphBuilder
         // one-element hash sets alive). Membership is the same reference-identity test either way.
         private const int AbsorbedScanLimit = 8;
 
-        private void AbsorbReference(SummarySeed part)
+        internal void AbsorbReference(SummarySeed part)
         {
             if (_absorbedSet is { } set)
             {
@@ -814,9 +814,16 @@ internal static class PropertyDependencyGraphBuilder
             if (_requiredAncestorOwnedParameterNames is not { Count: > 0 } required)
                 return;
 
-            foreach (var name in SharedNames(required, ownerParameterNames, observations))
+            MoveQualifiedNames(SharedNames(required, ownerParameterNames, observations), owner, default);
+        }
+
+        private void MoveQualifiedNames(List<string> names, Algorithm owner, CancellationToken cancellationToken)
+        {
+            for (var i = 0; i < names.Count; i++)
             {
-                required.Remove(name);
+                if ((i & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
+                var name = names[i];
+                _requiredAncestorOwnedParameterNames!.Remove(name);
                 (_ownerQualifiedParameters ??= []).Add(new(name, owner));
             }
         }
@@ -858,16 +865,19 @@ internal static class PropertyDependencyGraphBuilder
         private static List<string> SharedNames(
             HashSet<string> requirements,
             IReadOnlySet<string> names,
-            FrontEndTraversalObservations? observations)
+            FrontEndTraversalObservations? observations,
+            CancellationToken cancellationToken = default)
         {
             var shared = new List<string>();
             if (requirements.Count == 0 || names.Count == 0)
                 return shared;
 
+            var index = 0;
             if (requirements.Count <= names.Count)
             {
                 foreach (var name in requirements)
                 {
+                    if ((index++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
                     observations?.RecordSummaryQualificationProbe();
                     if (names.Contains(name))
                         shared.Add(name);
@@ -877,6 +887,7 @@ internal static class PropertyDependencyGraphBuilder
             {
                 foreach (var name in names)
                 {
+                    if ((index++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
                     observations?.RecordSummaryQualificationProbe();
                     if (requirements.Contains(name))
                         shared.Add(name);
@@ -921,6 +932,53 @@ internal static class PropertyDependencyGraphBuilder
         /// <summary>Whether this seed's OWN sets hold no visible name and no pending reference.</summary>
         internal bool OwnSetsHoldNoNamesOrReferences
             => (_visiblePropertyDependencyNames?.Count ?? 0) == 0 && (_pendingReferences?.Count ?? 0) == 0;
+
+        /// <summary>The entries of this seed's OWN sets (its required names and owner-qualified parameters, here).</summary>
+        internal int OwnRequirementCount
+            => (_requiredAncestorOwnedParameterNames?.Count ?? 0) + (_ownerQualifiedParameters?.Count ?? 0);
+
+        /// <summary>
+        /// The intersection the ordinary qualification uses, restricted to this seed's own names.
+        /// </summary>
+        internal List<string>? SharedOwnNames(IReadOnlySet<string> names, FrontEndTraversalObservations? observations,
+            CancellationToken cancellationToken)
+            => _requiredAncestorOwnedParameterNames is { Count: > 0 } required
+                ? SharedNames(required, names, observations, cancellationToken) : null;
+
+        /// <summary>
+        /// QUALIFIED SEED PARTS (exposure anchoring, implementation only): what <see cref="ExpandAtLevel"/> makes of this
+        /// seed at a level whose algorithm <paramref name="owner"/> binds <paramref name="sharedNames"/>, WITHOUT
+        /// folding, for a seed that holds no visible name and no pending reference here or in any part. The caller has
+        /// already found the names this level binds and will attach the qualified children.
+        /// </summary>
+        internal SummarySeed QualifiedOwnSets(Algorithm owner, List<string>? sharedNames, CancellationToken cancellationToken)
+        {
+            if (!OwnSetsHoldNoNamesOrReferences)
+                throw new InvalidOperationException("Only a seed without visible names or pending references is qualified part by part.");
+            var qualified = new SummarySeed();
+            var index = 0;
+            if (_requiredAncestorOwnedParameterNames is { Count: > 0 } required)
+            {
+                qualified._requiredAncestorOwnedParameterNames = new(required.Count, StringComparer.Ordinal);
+                foreach (var name in required)
+                {
+                    if ((index++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    qualified._requiredAncestorOwnedParameterNames.Add(name);
+                }
+            }
+            if (_ownerQualifiedParameters is { Count: > 0 } parameters)
+            {
+                qualified._ownerQualifiedParameters = new(parameters.Count);
+                foreach (var parameter in parameters)
+                {
+                    if ((index++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    qualified._ownerQualifiedParameters.Add(parameter);
+                }
+            }
+            if (sharedNames is { Count: > 0 })
+                qualified.MoveQualifiedNames(sharedNames, owner, cancellationToken);
+            return qualified;
+        }
 
         /// <summary>
         /// FE-4a: whether the seed's content is empty, decided WITHOUT folding: its own sets and every
