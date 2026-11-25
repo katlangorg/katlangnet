@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace KatLang.CLI.Tests;
 
 /// <summary>
-/// What the CLI says about program links, in <c>--help</c> and in the README, against what it
+/// What the CLI says about program links, in <c>--help</c> and in its guide, against what it
 /// does: the usage lines, the two kinds of link, the download rules with their shipped bounds,
 /// and every exact stderr line. Tools read those lines (the KatLang agent skill among them), so
 /// each documented sentence is the sentence the code produces.
@@ -169,37 +169,39 @@ public sealed class ProgramLinkDocumentationTests
     }
 
     [Fact]
-    public void Readme_DocumentsProgramLinks_AndEveryExactLine()
+    public void CliGuide_DocumentsProgramLinks_AndEveryExactLine()
     {
-        var readme = File.ReadAllText(RepositoryFile("README.md"));
+        var guide = File.ReadAllText(RepositoryFile("docs/cli.md"));
 
         // Both kinds of link, with their examples.
-        Assert.Contains("katlang run \"https://katlang.org/#1/4MWjDBlNE4PH\"", readme, StringComparison.Ordinal);
-        Assert.Contains("prints `25`", readme, StringComparison.Ordinal);
-        Assert.Contains("katlang run \"https://katlang.org/a/019ead4b-d41d-7564-ba11-c177f917a0fe\"", readme, StringComparison.Ordinal);
-        Assert.Contains("katlang source \"https://katlang.org/a/019ead4b-d41d-7564-ba11-c177f917a0fe\"", readme, StringComparison.Ordinal);
-        Assert.Contains("`https://katlang.org/api/a/<id>`", readme, StringComparison.Ordinal);
-        Assert.Contains("`text/plain`, in any character set, or `application/octet-stream`", readme, StringComparison.Ordinal);
+        Assert.Contains("katlang run \"https://katlang.org/#1/4MWjDBlNE4PH\"", guide, StringComparison.Ordinal);
+        Assert.Contains("prints `25`", guide, StringComparison.Ordinal);
+        Assert.Contains("katlang run \"https://katlang.org/a/019ead4b-d41d-7564-ba11-c177f917a0fe\"", guide, StringComparison.Ordinal);
+        Assert.Contains("katlang source \"https://katlang.org/a/019ead4b-d41d-7564-ba11-c177f917a0fe\"", guide, StringComparison.Ordinal);
+        Assert.Contains("`https://katlang.org/api/a/<id>`", guide, StringComparison.Ordinal);
+        Assert.Contains("`text/plain`, in any character set, or `application/octet-stream`", guide, StringComparison.Ordinal);
 
         // The refusal and download error lines.
-        Assert.Contains("`katlang: invalid code link: <reason>`", readme, StringComparison.Ordinal);
-        Assert.Contains("`katlang: not found: '<link>'.`", readme, StringComparison.Ordinal);
-        Assert.Contains("`katlang: not KatLang source: '<link>' returned text/html.`", readme, StringComparison.Ordinal);
-        Assert.Contains("`katlang: cannot download '<link>': <reason>`", readme, StringComparison.Ordinal);
-        Assert.Contains("`no Content-Type`", readme, StringComparison.Ordinal);
-        Assert.Contains("`a Content-Type that cannot be read`", readme, StringComparison.Ordinal);
-        Assert.Contains("`load: failed to fetch '<url>': <reason>`", readme, StringComparison.Ordinal);
+        Assert.Contains("`katlang: invalid code link: <reason>`", guide, StringComparison.Ordinal);
+        Assert.Contains("`katlang: not found: '<link>'.`", guide, StringComparison.Ordinal);
+        Assert.Contains("`katlang: not KatLang source: '<link>' returned text/html.`", guide, StringComparison.Ordinal);
+        Assert.Contains("`katlang: cannot download '<link>': <reason>`", guide, StringComparison.Ordinal);
+        Assert.Contains("`no Content-Type`", guide, StringComparison.Ordinal);
+        Assert.Contains("`a Content-Type that cannot be read`", guide, StringComparison.Ordinal);
+        Assert.Contains("`load: failed to fetch '<url>': <reason>`", guide, StringComparison.Ordinal);
         Assert.All(
             DocumentedReasons(),
             reason => Assert.True(
-                readme.Contains("`" + reason.Documented + "`", StringComparison.Ordinal),
-                $"README.md does not list the download reason: {reason.Documented}"));
+                guide.Contains("`" + reason.Documented + "`", StringComparison.Ordinal),
+                $"docs/cli.md does not list the download reason: {reason.Documented}"));
 
-        // Where modules may come from.
-        Assert.Contains("a module may come from **any public HTTPS host**", readme, StringComparison.Ordinal);
-        Assert.Contains("`RunOptions.AllowAnyHost = true`", readme, StringComparison.Ordinal);
-        Assert.Contains("the system proxy settings are not used", readme, StringComparison.Ordinal);
-        Assert.DoesNotContain("on an allowed host (`katlang.org` and its subdomains)", readme, StringComparison.Ordinal);
+        // Where modules may come from: the CLI admits any public HTTPS host, and the library's
+        // guide names the one typed way a host does the same.
+        Assert.Contains("a module may come from **any public HTTPS host**", guide, StringComparison.Ordinal);
+        Assert.Contains("the system proxy settings are not used", guide, StringComparison.Ordinal);
+        Assert.Contains("`RunOptions.AllowAnyHost = true`", File.ReadAllText(RepositoryFile("docs/dotnet.md")), StringComparison.Ordinal);
+        foreach (var document in new[] { "README.md", "docs/cli.md", "docs/dotnet.md" })
+            Assert.DoesNotContain("on an allowed host (`katlang.org` and its subdomains)", File.ReadAllText(RepositoryFile(document)), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -215,7 +217,7 @@ public sealed class ProgramLinkDocumentationTests
     }
 
     /// <summary>
-    /// Every sentence a <see cref="DownloadException"/> can carry, and how the README writes it:
+    /// Every sentence a <see cref="DownloadException"/> can carry, and how the CLI guide writes it:
     /// with a placeholder where the sentence holds a value.
     /// </summary>
     private static IEnumerable<(string Sentence, string Documented)> DocumentedReasons()
@@ -247,7 +249,7 @@ public sealed class ProgramLinkDocumentationTests
     [Fact]
     public void TheDocumentedReasons_CoverEveryDownloadFailure()
     {
-        // A new kind of failure needs its sentence in the README: this list is what the README
+        // A new kind of failure needs its sentence in the CLI guide: this list is what the guide
         // test reads, and it must reach every kind but the one worded on its own line.
         var covered = new HashSet<DownloadFailure>
         {

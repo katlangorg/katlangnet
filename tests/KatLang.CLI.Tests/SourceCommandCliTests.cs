@@ -503,15 +503,15 @@ public sealed class SourceCommandCliTests
     }
 
     [Fact]
-    public void Readme_DocumentsTheSourceCommandAndItsExactLines()
+    public void CliGuide_DocumentsTheSourceCommandAndItsExactLines()
     {
-        var readme = File.ReadAllText(RepositoryFile("README.md"));
+        var guide = File.ReadAllText(RepositoryFile("docs/cli.md"));
 
-        Assert.Contains("katlang source \"<link>\" > program.kat", readme, StringComparison.Ordinal);
-        Assert.Contains("katlang: invalid code link: <reason>", readme, StringComparison.Ordinal);
-        Assert.Contains(UnpairedSurrogateLine, readme, StringComparison.Ordinal);
+        Assert.Contains("katlang source \"<link>\" > program.kat", guide, StringComparison.Ordinal);
+        Assert.Contains("katlang: invalid code link: <reason>", guide, StringComparison.Ordinal);
+        Assert.Contains(UnpairedSurrogateLine, guide, StringComparison.Ordinal);
         foreach (var reason in Enum.GetValues<CodeLinkRefusal>())
-            Assert.Contains(CodeLinkText.RefusalReason(reason), readme, StringComparison.Ordinal);
+            Assert.Contains(CodeLinkText.RefusalReason(reason), guide, StringComparison.Ordinal);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

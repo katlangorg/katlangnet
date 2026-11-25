@@ -12,8 +12,8 @@ namespace KatLang.Formatting.PublicApi.Tests;
 /// the contracts a NuGet host relies on that the exact public API baseline alone would not
 /// protect — a regeneration can bless a re-exposed implementation type, and the baseline says
 /// nothing about how an entry point answers a null argument, whether an overload set is
-/// ambiguous, whether the package carries its documentation, or whether the README's examples
-/// still compile.
+/// ambiguous, whether the package carries its documentation, or whether the C# examples of the
+/// README and the .NET guide still compile.
 /// </summary>
 public class HostApiContractTests
 {
@@ -600,17 +600,16 @@ public class HostApiContractTests
             static attribute => attribute.Key == "IsTrimmable" && attribute.Value == "True");
 
     /// <summary>
-    /// Every C# example in the README compiles, as a consumer, against the public surface: each
-    /// fence becomes one method (its <c>using</c> directives hoisted, and <c>source</c> /
-    /// <c>result</c> supplied as parameters where a fragment reads them without declaring them).
-    /// A removed or renamed API therefore cannot linger in the primary documentation.
+    /// Every C# example of the README and the .NET guide compiles, as a consumer, against the
+    /// public surface: each fence becomes one method (its <c>using</c> directives hoisted, and
+    /// <c>source</c> / <c>result</c> supplied as parameters where a fragment reads them without
+    /// declaring them). A removed or renamed API therefore cannot linger in the documentation.
     /// </summary>
     [Fact]
-    public void ReadmeCSharpExamples_CompileAgainstThePublicSurface()
+    public void DocumentationCSharpExamples_CompileAgainstThePublicSurface()
     {
-        var readme = File.ReadAllText(Path.Combine(RepoRoot.Find(), "README.md")).ReplaceLineEndings("\n");
-        var fences = Regex.Matches(readme, @"^```c#\n(?<body>.*?)^```", RegexOptions.Multiline | RegexOptions.Singleline);
-        Assert.True(fences.Count >= 7, $"Expected the README's C# examples, found {fences.Count}.");
+        // Each document with the fewest C# examples it is expected to keep.
+        (string Document, int MinimumExamples)[] documents = [("README.md", 1), ("docs/dotnet.md", 10)];
 
         var directives = new SortedSet<string>(StringComparer.Ordinal)
         {
@@ -621,30 +620,38 @@ public class HostApiContractTests
             "using System.Threading.Tasks;",
         };
         var methods = new StringBuilder();
-        for (var i = 0; i < fences.Count; i++)
+        var index = 0;
+        foreach (var (document, minimumExamples) in documents)
         {
-            var lines = fences[i].Groups["body"].Value.Split('\n');
-            foreach (var line in lines.Where(IsUsingDirective))
-                directives.Add(line.Trim());
+            var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), document)).ReplaceLineEndings("\n");
+            var fences = Regex.Matches(text, @"^```c#\n(?<body>.*?)^```", RegexOptions.Multiline | RegexOptions.Singleline);
+            Assert.True(fences.Count >= minimumExamples, $"Expected the C# examples of {document}, found {fences.Count}.");
 
-            var body = string.Join('\n', lines.Where(line => !IsUsingDirective(line)));
-            var parameters = new List<string>();
-            if (Reads(body, "source") && !Declares(body, "source"))
-                parameters.Add("string source");
-            if (Reads(body, "result") && !Declares(body, "result"))
-                parameters.Add("KatLang.RunResult result");
+            foreach (Match fence in fences)
+            {
+                var lines = fence.Groups["body"].Value.Split('\n');
+                foreach (var line in lines.Where(IsUsingDirective))
+                    directives.Add(line.Trim());
 
-            methods.Append("    public static async Task Example").Append(i).Append('(')
-                .Append(string.Join(", ", parameters)).Append(")\n    {\n")
-                .Append(body).Append("\n        await Task.CompletedTask;\n    }\n\n");
+                var body = string.Join('\n', lines.Where(line => !IsUsingDirective(line)));
+                var parameters = new List<string>();
+                if (Reads(body, "source") && !Declares(body, "source"))
+                    parameters.Add("string source");
+                if (Reads(body, "result") && !Declares(body, "result"))
+                    parameters.Add("KatLang.RunResult result");
+
+                methods.Append("    public static async Task Example").Append(index++).Append('(')
+                    .Append(string.Join(", ", parameters)).Append(")\n    {\n")
+                    .Append(body).Append("\n        await Task.CompletedTask;\n    }\n\n");
+            }
         }
 
-        var source = string.Join('\n', directives) + "\n\npublic static class ReadmeExamples\n{\n" + methods + "}\n";
-        var compilation = ConsumerCompiler.Compile(source, "readme-examples");
+        var source = string.Join('\n', directives) + "\n\npublic static class DocumentationExamples\n{\n" + methods + "}\n";
+        var compilation = ConsumerCompiler.Compile(source, "documentation-examples");
 
         Assert.True(
             compilation.ExitCode == 0 && compilation.Diagnostics.Count == 0,
-            "The README's C# examples must compile against the public package surface:\n" + compilation.Output);
+            "The C# examples of the README and the .NET guide must compile against the public package surface:\n" + compilation.Output);
 
         static bool IsUsingDirective(string line) => Regex.IsMatch(line, @"^\s*using\s+[A-Za-z_][\w.]*\s*;\s*$");
         static bool Reads(string body, string name) => Regex.IsMatch(body, $@"\b{name}\b");
@@ -662,6 +669,8 @@ public class HostApiContractTests
         string[] documents =
         [
             "README.md",
+            "docs/dotnet.md",
+            "docs/cli.md",
             "tutorial.md",
             ".github/agents/katlang-generator.agent.md",
             "experimental/prompts/katlang-generator.txt",

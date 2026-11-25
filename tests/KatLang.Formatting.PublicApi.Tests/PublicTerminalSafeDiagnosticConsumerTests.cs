@@ -16,8 +16,8 @@ public sealed class ConsoleCaptureCollection
 /// <summary>
 /// SEC-S2, as a NuGet consumer meets it: this assembly is not a friend of KatLang, so every
 /// call here proves <see cref="KatLangError.ToTerminalSafeString"/> is public package surface.
-/// The official embedding examples — the README's explicit and asynchronous handling and the
-/// DemoApp — are compiled as consumer executables, run in-process with their console captured
+/// The official embedding examples — the explicit and asynchronous handling of the .NET guide
+/// (docs/dotnet.md) and the DemoApp — are compiled as consumer executables, run in-process with their console captured
 /// in memory, and fed hostile programs: diagnostics must reach stderr terminal-safe with a
 /// nonzero exit status, and successful output must reach stdout exactly as before. Hostile text
 /// is built from code units and never written to a real terminal.
@@ -170,28 +170,28 @@ public sealed class PublicTerminalSafeDiagnosticConsumerTests
     // ── S12: the official examples, compiled and run as consumers ───────────
 
     [Fact]
-    public void ReadmeExplicitHandling_KeepsOutput_AndWritesSafeDiagnosticsToStderr()
+    public void GuideExplicitHandling_KeepsOutput_AndWritesSafeDiagnosticsToStderr()
     {
-        var fence = ReadmeFence("NetSalary(1600, 2)");
+        var fence = GuideFence("NetSalary(1600, 2)");
         var (original, replace) = SourceLiteral(fence);
 
-        var success = RunExample(fence, "readme-explicit-success");
+        var success = RunExample(fence, "guide-explicit-success");
         Assert.Equal(KatLangEngine.Run(original).ToDisplayString() + Environment.NewLine, success.Stdout);
         Assert.Equal("", success.Stderr);
         Assert.Equal(0, success.ExitCode);
 
         foreach (var hostile in new[] { HostileEvaluation, HostileParse })
-            AssertSafeFailure(RunExample(replace(hostile), "readme-explicit-failure"), hostile);
+            AssertSafeFailure(RunExample(replace(hostile), "guide-explicit-failure"), hostile);
     }
 
     [Fact]
-    public void ReadmeAsyncHandling_KeepsOutput_AndWritesSafeDiagnosticsToStderr()
+    public void GuideAsyncHandling_KeepsOutput_AndWritesSafeDiagnosticsToStderr()
     {
-        var fence = ReadmeFence("TaxRate");
+        var fence = GuideFence("TaxRate");
         var call = Regex.Match(fence, "KatLangEngine\\.RunAsync\\(\"[^\"]*\"");
-        Assert.True(call.Success, "the asynchronous README example passes its source as one string literal");
+        Assert.True(call.Success, "the asynchronous example of the .NET guide passes its source as one string literal");
 
-        var success = RunExample(fence, "readme-async-success");
+        var success = RunExample(fence, "guide-async-success");
         Assert.Equal("", success.Stderr);
         Assert.Equal(0, success.ExitCode);
         Assert.StartsWith("1192", success.Stdout);
@@ -200,14 +200,14 @@ public sealed class PublicTerminalSafeDiagnosticConsumerTests
         foreach (var hostile in new[] { HostileEvaluation, HostileParse })
         {
             var program = fence[..call.Index] + "KatLangEngine.RunAsync(" + CSharpLiteral(hostile) + fence[(call.Index + call.Length)..];
-            AssertSafeFailure(RunExample(program, "readme-async-failure"), hostile);
+            AssertSafeFailure(RunExample(program, "guide-async-failure"), hostile);
         }
     }
 
     [Fact]
-    public void ReadmeAsyncHandling_PreservesEverySuccessfulResult()
+    public void GuideAsyncHandling_PreservesEverySuccessfulResult()
     {
-        var fence = ReadmeFence("TaxRate");
+        var fence = GuideFence("TaxRate");
         var call = Regex.Match(fence, "KatLangEngine\\.RunAsync\\(\"[^\"]*\"");
         Assert.True(call.Success);
 
@@ -217,7 +217,7 @@ public sealed class PublicTerminalSafeDiagnosticConsumerTests
             Assert.True(result is RunResult.Success or RunResult.NoProgramOutput);
             var program = fence[..call.Index] + "KatLangEngine.RunAsync(" + CSharpLiteral(source) + fence[(call.Index + call.Length)..];
 
-            var run = RunExample(program, "readme-async-success-variants");
+            var run = RunExample(program, "guide-async-success-variants");
 
             Assert.Equal(result.ToDisplayString() + Environment.NewLine, run.Stdout);
             Assert.Equal("", run.Stderr);
@@ -256,11 +256,11 @@ public sealed class PublicTerminalSafeDiagnosticConsumerTests
 
     private sealed record ExampleRun(string Stdout, string Stderr, int ExitCode);
 
-    /// <summary>The README's one C# fence containing <paramref name="marker"/>.</summary>
-    private static string ReadmeFence(string marker)
+    /// <summary>The .NET guide's one C# fence containing <paramref name="marker"/>.</summary>
+    private static string GuideFence(string marker)
     {
-        var readme = File.ReadAllText(Path.Combine(RepoRoot.Find(), "README.md")).ReplaceLineEndings("\n");
-        var fences = Regex.Matches(readme, @"^```c#\n(?<body>.*?)^```", RegexOptions.Multiline | RegexOptions.Singleline)
+        var guide = File.ReadAllText(Path.Combine(RepoRoot.Find(), "docs", "dotnet.md")).ReplaceLineEndings("\n");
+        var fences = Regex.Matches(guide, @"^```c#\n(?<body>.*?)^```", RegexOptions.Multiline | RegexOptions.Singleline)
             .Select(match => match.Groups["body"].Value)
             .Where(body => body.Contains(marker, StringComparison.Ordinal))
             .ToList();

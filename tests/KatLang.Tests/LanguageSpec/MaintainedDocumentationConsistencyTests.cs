@@ -30,6 +30,8 @@ public class MaintainedDocumentationConsistencyTests
     [
         "AGENTS.md",
         "README.md",
+        "docs/dotnet.md",
+        "docs/cli.md",
         "tutorial.md",
         "KatLang.ebnf",
         ".github/agents/katlang-generator.agent.md",

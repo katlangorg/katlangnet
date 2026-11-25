@@ -46,11 +46,11 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public void Readme_ReportsTheShippedTransportBounds()
+    public void CliGuide_ReportsTheShippedTransportBounds()
     {
-        var readme = File.ReadAllText(RepositoryFile("README.md"));
-        Assert.Contains($"1 MiB ({HttpSourceDownloader.MaxResponseBodyBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} content bytes)", readme);
-        Assert.Contains($"{HttpSourceDownloader.DownloadTimeout.TotalSeconds:0}-second cancellation deadline", readme);
+        var guide = File.ReadAllText(RepositoryFile("docs/cli.md"));
+        Assert.Contains($"1 MiB ({HttpSourceDownloader.MaxResponseBodyBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} content bytes)", guide);
+        Assert.Contains($"{HttpSourceDownloader.DownloadTimeout.TotalSeconds:0}-second cancellation deadline", guide);
     }
 
     /// <summary>
@@ -61,6 +61,8 @@ public sealed class CliApplicationTests
     /// </summary>
     [Theory]
     [InlineData("README.md")]
+    [InlineData("docs/cli.md")]
+    [InlineData("docs/dotnet.md")]
     [InlineData("tutorial.md")]
     [InlineData("AGENTS.md")]
     [InlineData(".github/agents/katlang-generator.agent.md")]
