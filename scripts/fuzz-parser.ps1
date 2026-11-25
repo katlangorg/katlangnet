@@ -10,7 +10,7 @@
     for linux-x64, so WSL needs no .NET install of its own.
 
     Pipeline:
-      1. Restore the repository-local tools from dotnet-tools.json (SharpFuzz.CommandLine is
+      1. Restore the repository-local tools from .config/dotnet-tools.json (SharpFuzz.CommandLine is
          pinned there to an exact version), then dotnet publish the harness self-contained
          for linux-x64 (dotnet/fuzz/artifacts/publish-linux).
       2. Instrument KatLang.dll (the target) with `dotnet tool run sharpfuzz`.
@@ -73,7 +73,7 @@ $publishDir = Join-Path $fuzzDir 'artifacts\publish-linux'
 $dictFile   = Join-Path $fuzzDir 'katlang.dict'
 $runnerSh   = Join-Path $fuzzDir 'run-campaign.sh'
 $targetDll  = Join-Path $publishDir 'KatLang.dll'
-$toolManifest = Join-Path $repoRoot 'dotnet-tools.json'
+$toolManifest = Join-Path $repoRoot '.config/dotnet-tools.json'
 
 # Each target keeps its own writable corpus and crash directory, so switching modes never
 # mixes one target's coverage-increasing inputs into another's. An unset -Mode is the raw
@@ -169,13 +169,13 @@ function ConvertTo-WslPath([string]$Path) {
 Test-Wsl
 
 if (-not $SkipBuild) {
-    # The instrumenter is the repository-local tool pinned in dotnet-tools.json, never whatever
+    # The instrumenter is the repository-local tool pinned in .config/dotnet-tools.json, never whatever
     # `sharpfuzz` happens to be on PATH or installed globally: instrumentation must be reproducible
     # from the commit, and the developer's global tool environment is left exactly as it was.
     # `dotnet tool run` resolves the manifest from the working directory, so both steps run from
     # the repository root whatever directory the script was started from. Restoring first means a
     # restore failure stops the run before the existing publish is replaced.
-    Write-Section 'Restore pinned local tools (dotnet-tools.json)'
+    Write-Section 'Restore pinned local tools (.config/dotnet-tools.json)'
     Push-Location $repoRoot
     try {
         & dotnet tool restore --tool-manifest $toolManifest

@@ -1,6 +1,6 @@
 # Mutation-testing campaign — semantic core (2026-08-22)
 
-The campaign uses Stryker.NET 4.16.0 (pinned in `dotnet-tools.json`) and [the .NET mutation configuration](../../dotnet/stryker-config.json).
+The campaign uses Stryker.NET 4.16.0 (pinned in `.config/dotnet-tools.json`) and [the .NET mutation configuration](../../dotnet/stryker-config.json).
 Reports (gitignored): `artifacts/stryker/{calibration,core,evalcore}/reports/`.
 Lean-side counterpart (one decision of the Lean model at a time against the generated differential
 corpora): `lean-model-mutation-campaign-2026-11.md`.

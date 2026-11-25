@@ -8,7 +8,7 @@ namespace KatLang.Tests.Infrastructure;
 
 /// <summary>
 /// SEC-06: the fuzz launcher obtains its SharpFuzz instrumenter ONLY as the repository-local
-/// tool pinned in <c>dotnet-tools.json</c>. It never installs a global tool, never resolves a
+/// tool pinned in <c>.config/dotnet-tools.json</c>. It never installs a global tool, never resolves a
 /// <c>sharpfuzz</c> executable through <c>PATH</c>, and never falls back to one when restore or
 /// instrumentation fails.
 ///
@@ -20,7 +20,7 @@ namespace KatLang.Tests.Infrastructure;
 /// </summary>
 public class FuzzToolingPolicyTests
 {
-    private const string ManifestPath = "dotnet-tools.json";
+    private const string ManifestRelativePath = ".config/dotnet-tools.json";
     private const string LauncherPath = "scripts/fuzz-parser.ps1";
     private const string ReadmePath = "dotnet/fuzz/README.md";
     private const string HarnessProjectPath = "dotnet/fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj";
@@ -32,7 +32,7 @@ public class FuzzToolingPolicyTests
     [Fact]
     public void Manifest_PinsSharpFuzzCommandLineExactly()
     {
-        using var manifest = JsonDocument.Parse(Text(ManifestPath));
+        using var manifest = JsonDocument.Parse(Text(ManifestRelativePath));
         var root = manifest.RootElement;
         Assert.Equal(1, root.GetProperty("version").GetInt32());
         Assert.True(root.GetProperty("isRoot").GetBoolean());
@@ -48,7 +48,7 @@ public class FuzzToolingPolicyTests
     [Fact]
     public void Manifest_PreservesStrykerEntry()
     {
-        using var manifest = JsonDocument.Parse(Text(ManifestPath));
+        using var manifest = JsonDocument.Parse(Text(ManifestRelativePath));
         var tool = manifest.RootElement.GetProperty("tools").GetProperty("dotnet-stryker");
         Assert.Equal("4.16.0", tool.GetProperty("version").GetString());
         Assert.Equal(new[] { "dotnet-stryker" }, tool.GetProperty("commands").EnumerateArray().Select(c => c.GetString()!).ToArray());
@@ -58,9 +58,8 @@ public class FuzzToolingPolicyTests
     [Fact]
     public void Manifest_IsTheOnlyRepositoryRootManifest()
     {
-        // `dotnet tool run` prefers <dir>/.config/dotnet-tools.json over <dir>/dotnet-tools.json,
-        // so a second manifest at the root would silently change which pin the launcher uses.
-        Assert.False(File.Exists(Absolute(".config/dotnet-tools.json")));
+        Assert.True(File.Exists(Absolute(ManifestRelativePath)));
+        Assert.False(File.Exists(Absolute("dotnet-tools.json")));
     }
 
     [Fact]
@@ -102,7 +101,7 @@ public class FuzzToolingPolicyTests
     public void Launcher_RestoresFromTheRepositoryManifest()
     {
         var code = LauncherCode();
-        Assert.Contains("$toolManifest = Join-Path $repoRoot 'dotnet-tools.json'", code, StringComparison.Ordinal);
+        Assert.Contains($"$toolManifest = Join-Path $repoRoot '{ManifestRelativePath}'", code, StringComparison.Ordinal);
         Assert.Contains("& dotnet tool restore --tool-manifest $toolManifest", code, StringComparison.Ordinal);
         Assert.Contains("& dotnet tool run sharpfuzz $targetDll", code, StringComparison.Ordinal);
     }
@@ -317,7 +316,8 @@ public class FuzzToolingPolicyTests
             Directory.CreateDirectory(_bin);
             Directory.CreateDirectory(Path.Combine(_profile, ".dotnet", "tools"));
             File.Copy(Path.Combine(source, "scripts", "fuzz-parser.ps1"), LauncherScript);
-            File.Copy(Path.Combine(source, "dotnet-tools.json"), ManifestPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(ManifestPath)!);
+            File.Copy(Absolute(ManifestRelativePath), ManifestPath);
             File.WriteAllText(Path.Combine(RepoRoot, "dotnet", "fuzz", "katlang.dict"), "");
             File.WriteAllText(Path.Combine(RepoRoot, "dotnet", "fuzz", "run-campaign.sh"), "");
 
@@ -340,7 +340,7 @@ public class FuzzToolingPolicyTests
         public string RepoRoot { get; }
         public string CallerDirectory { get; }
         public string LauncherScript => Path.Combine(RepoRoot, "scripts", "fuzz-parser.ps1");
-        public string ManifestPath => Path.Combine(RepoRoot, "dotnet-tools.json");
+        public string ManifestPath => Path.GetFullPath(ManifestRelativePath, RepoRoot);
         public string TargetDll => Path.Combine(RepoRoot, "dotnet", "fuzz", "artifacts", "publish-linux", "KatLang.dll");
 
         public void CreatePublishedTarget()

@@ -110,10 +110,10 @@ the harness never asserts that malformed input is rejected.
 
 ### SharpFuzz instrumenter (pinned local tool)
 
-The `sharpfuzz` instrumenter is a **repository-local .NET tool**: the committed root
-manifest [`dotnet-tools.json`](../../dotnet-tools.json) pins `sharpfuzz.commandline` to
+The `sharpfuzz` instrumenter is a **repository-local .NET tool**. The repository's
+manifest [`.config/dotnet-tools.json`](../../.config/dotnet-tools.json) pins `sharpfuzz.commandline` to
 exactly `2.3.0` with `"rollForward": false`, beside the existing `dotnet-stryker` entry.
-The launcher runs `dotnet tool restore --tool-manifest <repo>/dotnet-tools.json` and then
+The launcher runs `dotnet tool restore --tool-manifest <repo>/.config/dotnet-tools.json` and then
 `dotnet tool run sharpfuzz <publish>/KatLang.dll`, both from the repository root, so the
 same manifest is used whatever directory you start it from. It never installs anything
 globally, never looks for `sharpfuzz` on `PATH`, and does not fall back to a global tool if
@@ -139,7 +139,7 @@ deliberately:
 
 1. Identify the release and review its changes.
 2. Check that it supports the harness's target framework and the installed runtimes.
-3. Update the exact `version` of `sharpfuzz.commandline` in `dotnet-tools.json`.
+3. Update the exact `version` of `sharpfuzz.commandline` in `.config/dotnet-tools.json`.
 4. Update the `SharpFuzz` `PackageReference` in `KatLang.ParserFuzz.csproj` if the release
    requires it (the library and the CLI are separate packages, kept on the same version).
 5. Run `dotnet tool restore`, an instrumentation run (`scripts\fuzz-parser.ps1
@@ -230,7 +230,7 @@ an existing publish + instrumentation; it neither restores nor runs SharpFuzz),
 
 The script:
 
-1. Restores the pinned local tools from `dotnet-tools.json`, then `dotnet publish` the
+1. Restores the pinned local tools from `.config/dotnet-tools.json`, then `dotnet publish` the
    harness self-contained for `linux-x64` into `dotnet/fuzz/artifacts/publish-linux`.
 2. Instruments `KatLang.dll` with the pinned local tool (`dotnet tool run sharpfuzz`).
 3. Runs `dotnet/fuzz/run-campaign.sh` in WSL, which obtains the pinned, digest-verified
