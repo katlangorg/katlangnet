@@ -13,7 +13,9 @@ namespace KatLang.Tests;
 /// bodies, and the walk of the module's free reference names behind the branch's region key. Measured before (Release,
 /// one later selection of a branch that opens a completed module of W members, each <c>public F(x) = Helper(x) + i</c>):
 /// 6,266 KiB at 1,000 members and 23,486 KiB at 4,000. Signature analysis used 3,921 / 14,200 KiB, each loader gate
-/// 442 / 1,915 KiB, the load check 394 / 1,680 KiB and the measure 333 / 1,433 KiB. After sharing: about 651 / 1,975 KiB.
+/// 442 / 1,915 KiB, the load check 394 / 1,680 KiB and the measure 333 / 1,433 KiB. After sharing: about 651 / 1,975 KiB,
+/// and about 320 / 545 KiB once exposure's shared-body census took each resolved declaration's census unit instead of
+/// walking it (331 / 1,432 KiB, 2026-11-25).
 ///
 /// <para>These tests pin, with a fixed in-memory downloader:</para>
 /// <list type="bullet">
@@ -136,6 +138,7 @@ public class CompletedModuleSpliceTests
         nameof(FrontEndTraversalObservations.SignatureAnalysisBodies),
         nameof(FrontEndTraversalObservations.SignatureAnalysisExpansions),
         nameof(FrontEndTraversalObservations.ContextEntriesWritten),
+        nameof(FrontEndTraversalObservations.DeferredCensusExpansions),
     ];
 
     private static string StageView(SortedDictionary<string, long> counters)
@@ -230,12 +233,14 @@ public class CompletedModuleSpliceTests
 
     /// <summary>
     /// THE BOUND. Five branches splice one module and read five of its members. From the second selection on, what the
-    /// composed-body gate, the load check, the admission measure and signature analysis walk is the same for a module of
-    /// 24 members and one of 240: each takes the published facts of the completed view (and its published free
-    /// reference names, and the completing operation's resolved signatures) instead of walking it. In the three layouts
-    /// whose other work does not read the module's width, EVERY counter is the same. The first selection that splices the
-    /// view is the cold control (it walks the view once and publishes its facts), and the reference mode is the control
-    /// for the defect: there every selection walks the module again in every stage.
+    /// composed-body gate, the load check, the admission measure, signature analysis and exposure's shared-body census
+    /// walk is the same for a module of 24 members and one of 240: each takes the published facts of the completed view
+    /// (and its published free reference names, the completing operation's resolved signatures, and the resolved
+    /// declaration's census unit) instead of walking it. In the three layouts whose other work does not read the module's
+    /// width, EVERY counter is the same from the second selection on, and in the fourth (a branch that holds the module
+    /// in a property of its own) from the third. The first selection that splices the view is the cold control (it walks
+    /// the view once and publishes its facts), and the reference mode is the control for the defect: there every
+    /// selection walks the module again in every stage.
     /// </summary>
     [Theory]
     [InlineData(Layout.BranchOpens)]
@@ -251,11 +256,13 @@ public class CompletedModuleSpliceTests
         var wide = await MaterializeAll(Wide(layout, wideWidth, branches), CompletedModuleViews.Mode.Shared);
         var completedByTheParse = layout is Layout.RootAndBranchOpen or Layout.RootPropertyBranchOpens;
 
-        // Cold: the first selection walks the view in the gate, the load check and the measure, and publishes its facts.
-        foreach (var stage in new[] { "DeferredCompositionGateEdges", "DeferredLoadCheckExpansions", "DeferredAdmissionEdges" })
+        // Cold: the first selection walks the view in the gate, the load check, the measure and the exposure census, and
+        // publishes its facts.
+        foreach (var stage in new[] { "DeferredCompositionGateEdges", "DeferredLoadCheckExpansions", "DeferredAdmissionEdges", "DeferredCensusExpansions" })
             Assert.True(wide.Work[0][stage] - narrow.Work[0][stage] >= wideWidth - narrowWidth, $"{stage}: {StageView(narrow.Work[0])} / {StageView(wide.Work[0])}");
         Assert.Equal(1, wide.Work[0]["CompletedModuleViewsPublished"]);
         Assert.Equal(0, wide.Work[0]["CompletedModuleViewReuses"]);
+        Assert.Equal(0, wide.Work[0]["CompletedModuleCensusReuses"]);
         // A module the parse completed is never analyzed again; one the first selection fetches is analyzed there, once.
         Assert.Equal(completedByTheParse ? 1 : 0, wide.Work[0]["CompletedModuleAnalysesSkipped"]);
         if (!completedByTheParse)
@@ -266,15 +273,18 @@ public class CompletedModuleSpliceTests
         {
             Assert.True(StageCounters.All(name => narrow.Work[index].GetValueOrDefault(name) == wide.Work[index].GetValueOrDefault(name)),
                 $"selection {index}:\n  {narrowWidth}: {StageView(narrow.Work[index])}\n  {wideWidth}: {StageView(wide.Work[index])}");
-            // One reuse per stage: the gate took the view's height, the load check skipped it, the measure counted its unit.
+            // One reuse per stage: the gate took the view's height, the load check skipped it, the measure counted its unit;
+            // and the exposure census took the resolved declaration's census unit.
             Assert.Equal(3, wide.Work[index]["CompletedModuleViewReuses"]);
+            Assert.Equal(1, wide.Work[index]["CompletedModuleCensusReuses"]);
             Assert.Equal(1, wide.Work[index]["CompletedModuleAnalysesSkipped"]);
             Assert.Equal(1, wide.Work[index]["CompletedModuleFreeNameReuses"]);
             Assert.Equal(0, wide.Work[index]["CompletedModuleViewsPublished"]);
             Assert.True(wide.Work[index]["SignatureAnalysisBodies"] < narrowWidth, StageView(wide.Work[index]));
-            // A branch that holds the module in its own property still summarizes the module in its exposure: the provider
-            // share keeps inherited contexts only (CompletedProviderSummaries), so only the stages above are compared there.
-            if (layout != Layout.BranchProperty)
+            // A branch that holds the module in its own property summarizes the module once more at its second selection,
+            // the first that reads it as an earlier operation's completed content, which keeps that summary; from the
+            // third on it adopts it (CompletedProviderSummaries, A module a branch holds; CompletedProviderSummaryTests).
+            if (layout != Layout.BranchProperty || index >= 2)
                 Assert.True(narrow.Work[index].SequenceEqual(wide.Work[index]),
                     $"selection {index}:\n  {narrowWidth}: {Render(narrow.Work[index])}\n  {wideWidth}: {Render(wide.Work[index])}");
         }
@@ -288,9 +298,11 @@ public class CompletedModuleSpliceTests
         Assert.Equal(2 * wide.Work[0]["DeferredCompositionGateEdges"], unshared.Work[0]["DeferredCompositionGateEdges"]);
         for (var index = 0; index < branches; index++)
         {
-            foreach (var stage in new[] { "DeferredCompositionGateEdges", "DeferredLoadCheckExpansions", "DeferredAdmissionEdges", "SignatureAnalysisBodies" })
+            foreach (var stage in new[] { "DeferredCompositionGateEdges", "DeferredLoadCheckExpansions", "DeferredAdmissionEdges", "SignatureAnalysisBodies",
+                "DeferredCensusExpansions" })
                 Assert.True(unshared.Work[index][stage] >= wideWidth, $"selection {index}, {stage}: {StageView(unshared.Work[index])}");
             Assert.Equal(0, unshared.Work[index]["CompletedModuleViewReuses"]);
+            Assert.Equal(0, unshared.Work[index]["CompletedModuleCensusReuses"]);
             Assert.Equal(0, unshared.Work[index]["CompletedModuleAnalysesSkipped"]);
             Assert.Equal(0, unshared.Work[index]["CompletedModuleFreeNameReuses"]);
         }
@@ -302,8 +314,9 @@ public class CompletedModuleSpliceTests
     /// A coarse allocation bound over the same programs (in-process: a later selection allocates hundreds of kilobytes,
     /// far above the ~8 KB counter quantum; the minimum over the later selections damps a collection in the window). What
     /// a later selection allocates PER MODULE MEMBER fell more than tenfold in a Release harness (about 5.6 KB to 0.5 KB at
-    /// 1,000 members; the rest is the exposure's shared-body census and the per-attempt lookup index of the branch's own
-    /// open level, documented residuals), so the slope with the store is held below a quarter of the reference's.
+    /// 1,000 members, and to under 0.1 KB between 1,000 and 4,000 members once exposure's census took the declaration's
+    /// census unit; the rest is the per-attempt lookup index of the branch's own open level, a documented residual), so
+    /// the slope with the store is held below a quarter of the reference's.
     /// </summary>
     [Fact]
     public async Task LaterSelections_AllocateLittleInTheWidthOfASplicedCompletedModule()
@@ -372,10 +385,11 @@ public class CompletedModuleSpliceTests
     /// <summary>
     /// Small multi-branch programs over completed modules: thirteen kinds of member bodies (plain, a module constant, a
     /// private helper, a chain, builtins, mutual recursion, a clause family, a nested block, an alias, a deconstruction,
-    /// inferred signatures, block bodies, an output-spreading marker) in eight layouts (a branch opens the module; the root
+    /// inferred signatures, block bodies, an output-spreading marker) in nine layouts (a branch opens the module; the root
     /// opens it too; a root property holds it; a branch holds it in a property of its own; a module that opens another
     /// module, which a branch also opens directly; two modules in one branch; the same view spliced twice in one branch;
-    /// a nested deferred branch), and special programs: a branch whose own property lifts the module's inferred members,
+    /// a branch that opens a module and that module's own dependency; a nested deferred branch), and special programs: a
+    /// branch whose own property lifts the module's inferred members,
     /// a module that holds a placeholder, two URLs serving the same text, and a branch the forwarding rule refuses.
     /// </summary>
     public static TheoryData<Program> Corpus()
@@ -405,6 +419,9 @@ public class CompletedModuleSpliceTests
             Add("two modules", "", Families(_ => $"    open '{Url("tiny")}', '{Url("lib")}'\n", index => $"V + W(n) + {Read(index)}(n)"));
             Add("same view twice", "", Families(_ => $"    open '{Url("lib")}'\n    L = load('{Url("lib")}')\n",
                 index => $"L.{Read(index)}(n) + {Read(index + 1)}(n)"));
+            // A module root reached through two parts: the branch opens a module and that module's own dependency.
+            Add("module and its dependency", "", Families(_ => $"    open '{Url("libopen")}', '{Url("tiny2")}'\n",
+                index => $"Z + {Read(index)}(n)"));
             Add("nested deferred branch", "", Families(
                 index => $"    open '{Url("lib")}'\n    H(0) = 1\n    H(m) = {{\n        open '{Url("tiny2")}'\n        Z + {Read(index + 1)}(m)\n    }}\n",
                 index => $"{Read(index)}(n) + H(n)"));
@@ -616,6 +633,196 @@ public class CompletedModuleSpliceTests
             $"{program}: {shared.Published} published, {shared.Reuses} reuses, {shared.Skipped} analyses skipped");
         if (ReferenceEquals(program, SameTextTwoUrls))
             Assert.Equal(2, shared.Published);
+    }
+
+    // ── The census of a composition ─────────────────────────────────────────
+
+    private static Algorithm.User Block(params Property[] properties) => new(null, [], [], properties, OutputBundle.Empty);
+
+    private static Algorithm.User Rows(params Expr[] rows) => new(null, [], [], [], rows);
+
+    /// <summary>A hand-built module root: a body carrying the mark of a spliced import view.</summary>
+    private static Algorithm.User ModuleRoot(params Property[] properties)
+        => new(null, [], [], properties, OutputBundle.Empty) { IsModuleElaborated = true };
+
+    private static Property Member(string name, Algorithm value) => new(name, value, IsPublic: true);
+
+    private static List<Algorithm> AlgorithmsBelow(object root)
+    {
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<object>();
+        pending.Push(root);
+        var algorithms = new List<Algorithm>();
+        while (pending.TryPop(out var node))
+        {
+            if (!seen.Add(node))
+                continue;
+            if (node is Algorithm algorithm)
+                algorithms.Add(algorithm);
+            for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
+                pending.Push(child);
+        }
+
+        return algorithms;
+    }
+
+    private static T InViews<T>(CompletedModuleViews.Mode mode, Func<T> run)
+    {
+        var saved = CompletedModuleViews.ModeForTesting.Value;
+        CompletedModuleViews.ModeForTesting.Value = mode;
+        try
+        {
+            return run();
+        }
+        finally
+        {
+            CompletedModuleViews.ModeForTesting.Value = saved;
+        }
+    }
+
+    /// <summary>
+    /// THE CENSUS OF A COMPOSITION IS THE ORDINARY CENSUS. Exposure's shared-body census of a materialization counts every
+    /// module root its input splices as one unit (<see cref="SharedBodyCensus.OfLoadedBody"/>). Over hand-built bodies
+    /// that splice marked module roots, sharing inside one part (a module whose members share an expression holding a
+    /// block; a body whose rows share an expression holding a module root; a module whose members share an expression
+    /// holding another module root) and sharing ACROSS independently contributed parts (one root held twice by the body;
+    /// a dependency two modules splice; a dependency the body and a module both splice), and module roots elaborated to
+    /// callable aliases (one only the body reaches, walked as the body's own nodes; one a module reaches, which makes the
+    /// census walk the ordinary way), give exactly the bodies the ordinary walk marks, and the same answer for every
+    /// algorithm of the graph: cold, where each unit is computed and
+    /// staged; warm, where the units an earlier attempt published are taken, in the sharing and the verifying mode; and in
+    /// the reference mode, which walks everything. A unit is published only by an attempt that publishes, and only for a
+    /// declaration the registry holds as completed.
+    /// </summary>
+    [Fact]
+    public async Task TheCensusOfAComposition_MarksWhatTheOrdinaryWalkMarks_InsideAndAcrossParts()
+    {
+        Algorithm.User Leaf(string name) => ModuleRoot(Member(name, Rows(new Expr.Num(1))));
+        var cases = new List<(string Name, Algorithm.User Root, Algorithm.User[] Modules, Algorithm[] Expected)>();
+
+        var once = Leaf("A");
+        cases.Add(("a root reached once", Block(Member("L", once)), [once], []));
+
+        var twice = Leaf("A");
+        cases.Add(("one root held twice by the body", Block(Member("L", twice), Member("M", twice)), [twice], [twice]));
+
+        var other = Leaf("A");
+        cases.Add(("a distinct module with identical members", Block(Member("L", twice), Member("M", twice), Member("N", other)),
+            [twice, other], [twice]));
+
+        var parsed = await ParseDeferred(ModuleHoldingAPlaceholder, new RunHost(ModuleHoldingAPlaceholder.Library));
+        var family = Assert.IsType<Algorithm.Conditional>(parsed.Properties.Single(p => p.Name == "G0").Value);
+        var deferredBody = family.Branches.Single(b => b.Body.DeferredRegion is not null).Body;
+        var deferredModule = ModuleRoot(Member("P", deferredBody));
+        var container = ModuleRoot(Member("P", deferredModule));
+        cases.Add(("a shared module containing a deferred region", Block(Member("Direct", deferredModule), Member("Container", container)),
+            [deferredModule, container], [])); // Marked by both edges, ineligible for a shared region.
+
+        var block = Block(Member("Q", Rows(new Expr.Num(7))));
+        var sharedRow = new Expr.Binary(BinaryOp.Add, new Expr.AlgorithmExpr(block), new Expr.Num(1));
+        var inside = ModuleRoot(Member("A", Rows(sharedRow)), Member("B", Rows(sharedRow)));
+        cases.Add(("an expression two members of a module share", Block(Member("L", inside)), [inside], [block]));
+
+        var dependency = Leaf("D");
+        var left = ModuleRoot(Member("X", dependency));
+        var right = ModuleRoot(Member("Y", dependency));
+        cases.Add(("a dependency two modules splice", Block(Member("L", left), Member("R", right)), [left, right, dependency], [dependency]));
+
+        var direct = Leaf("D");
+        var holder = ModuleRoot(Member("X", direct));
+        cases.Add(("a dependency the body and a module splice", Block(Member("L", holder), Member("D", direct)), [holder, direct], [direct]));
+
+        var belowBody = Leaf("A");
+        var bodyRow = new Expr.Binary(BinaryOp.Add, new Expr.AlgorithmExpr(belowBody), new Expr.Num(1));
+        cases.Add(("a root below an expression the body shares", Block(Member("P", Rows(bodyRow)), Member("Q", Rows(bodyRow))),
+            [belowBody], [belowBody]));
+
+        var belowUnit = Leaf("D");
+        var unitRow = new Expr.Binary(BinaryOp.Add, new Expr.AlgorithmExpr(belowUnit), new Expr.Num(1));
+        var sharing = ModuleRoot(Member("A", Rows(unitRow)), Member("B", Rows(unitRow)));
+        cases.Add(("a root below an expression a module shares", Block(Member("L", sharing)), [sharing, belowUnit], [belowUnit]));
+
+        // A module root elaborated to a callable alias is no unit. The body walks one only it reaches as its own nodes; a
+        // unit that reaches one makes the census walk the ordinary way, whether the body reaches it too or not.
+        Algorithm.Alias AliasRoot() => new(new Algorithm.User(null, [], [], [], [new Expr.Resolve("abs")]) { IsModuleElaborated = true },
+            new Expr.Resolve("abs"));
+        var bodyAlias = AliasRoot();
+        var beside = Leaf("A");
+        cases.Add(("an alias root the body holds twice", Block(Member("L", bodyAlias), Member("M", bodyAlias), Member("N", beside)),
+            [beside], [bodyAlias]));
+        var alias = AliasRoot();
+        var aliasHolder = ModuleRoot(Member("X", alias));
+        cases.Add(("an alias root the body and a module splice", Block(Member("L", alias), Member("M", aliasHolder)), [aliasHolder], [alias]));
+        var innerAlias = AliasRoot();
+        var aliasTwice = ModuleRoot(Member("X", innerAlias), Member("Y", innerAlias));
+        cases.Add(("an alias root a module splices twice", Block(Member("L", aliasTwice)), [aliasTwice], [innerAlias]));
+
+        foreach (var (name, root, modules, expected) in cases)
+        {
+            var composes = !modules.Any(static module => AlgorithmsBelow(module).Any(static algorithm => algorithm is Algorithm.Alias { IsModuleElaborated: true }));
+            var ordinary = SharedBodyCensus.Of(root);
+            var algorithms = AlgorithmsBelow(root);
+            Assert.All(algorithms, algorithm => Assert.Equal(expected.Contains(algorithm, ReferenceEqualityComparer.Instance), ordinary?.Holds(algorithm) == true));
+
+            void AssertOrdinary(SharedBodyCensus? census, string at)
+            {
+                Assert.True(SharedBodyCensus.SameBodies(ordinary, census), $"{name}, {at}: the census by units differs from the ordinary walk");
+                Assert.All(algorithms, algorithm => Assert.Equal(ordinary?.Holds(algorithm) == true, census?.Holds(algorithm) == true));
+            }
+
+            var registry = new ModuleUnitRegistry();
+            var reference = new FrontEndTraversalObservations();
+            AssertOrdinary(InViews(CompletedModuleViews.Mode.Unshared,
+                () => SharedBodyCensus.OfLoadedBody(root, registry.CompletedViews.BeginAttempt(registry, reference))), "reference");
+
+            // Cold. Its modules are not completed units of the registry, so publishing it keeps nothing.
+            var cold = new FrontEndTraversalObservations();
+            var attempt = InViews(CompletedModuleViews.Mode.Shared, () => registry.CompletedViews.BeginAttempt(registry, cold));
+            AssertOrdinary(SharedBodyCensus.OfLoadedBody(root, attempt), "cold");
+            Assert.Equal(0, cold.CompletedModuleCensusReuses);
+            // Composed cold, every node is expanded once, by the body's part or by the one unit it belongs to.
+            if (composes)
+                Assert.Equal(reference.DeferredCensusExpansions, cold.DeferredCensusExpansions);
+            attempt.Publish();
+            void AssertNothingKept(string at)
+            {
+                var next = new FrontEndTraversalObservations();
+                AssertOrdinary(InViews(CompletedModuleViews.Mode.Shared,
+                    () => SharedBodyCensus.OfLoadedBody(root, registry.CompletedViews.BeginAttempt(registry, next))), at);
+                Assert.Equal((0L, cold.DeferredCensusExpansions), (next.CompletedModuleCensusReuses, next.DeferredCensusExpansions));
+            }
+
+            AssertNothingKept("after a publication of modules the registry does not hold");
+
+            // The registry holds every module as a completed unit. An attempt that publishes nothing still leaves nothing;
+            // a publishing one keeps their units.
+            var completed = new Dictionary<Algorithm, Algorithm>(ReferenceEqualityComparer.Instance);
+            foreach (var module in modules)
+                completed.Add(module, module);
+            registry.Publish([new(ReferenceEqualityComparer.Instance), new(ReferenceEqualityComparer.Instance), completed], continuation: null);
+            attempt = InViews(CompletedModuleViews.Mode.Shared, () => registry.CompletedViews.BeginAttempt(registry, observations: null));
+            AssertOrdinary(SharedBodyCensus.OfLoadedBody(root, attempt), "unpublished");
+            AssertNothingKept("after an attempt that published nothing");
+            attempt.Publish();
+
+            foreach (var mode in new[] { CompletedModuleViews.Mode.Shared, CompletedModuleViews.Mode.Verified })
+            {
+                var warm = new FrontEndTraversalObservations();
+                AssertOrdinary(InViews(mode, () => SharedBodyCensus.OfLoadedBody(root, registry.CompletedViews.BeginAttempt(registry, warm))), $"warm {mode}");
+                if (composes)
+                {
+                    // Every distinct module root is taken as published; only the body's own nodes are walked.
+                    Assert.Equal(modules.Length, warm.CompletedModuleCensusReuses);
+                    Assert.True(warm.DeferredCensusExpansions < cold.DeferredCensusExpansions, $"{name}: {warm.DeferredCensusExpansions} warm, {cold.DeferredCensusExpansions} cold");
+                }
+                else
+                {
+                    // The ordinary walk ran: every node was expanded again.
+                    Assert.True(warm.DeferredCensusExpansions >= reference.DeferredCensusExpansions,
+                        $"{name}: {warm.DeferredCensusExpansions} warm, {reference.DeferredCensusExpansions} in the reference");
+                }
+            }
+        }
     }
 
     // ── Isolation ───────────────────────────────────────────────────────────

@@ -13,11 +13,16 @@ internal sealed class SharedBodyCensus
 
     private SharedBodyCensus() { }
 
-    /// <summary>The census of the nodes a walk saw through more than one edge; null when no algorithm is reached twice.</summary>
+    /// <summary>
+    /// The census of the nodes a walk saw through more than one edge; null when no algorithm is reached twice.
+    /// </summary>
     internal static SharedBodyCensus? FromSharedNodes(HashSet<object>? sharedNodes)
+        => MergeSharedNodes(sharedNodes, null, default);
+
+    private static SharedBodyCensus? MergeSharedNodes(HashSet<object>? sharedNodes, SharedBodyCensus? census, CancellationToken cancellationToken)
     {
-        if (sharedNodes is null) return null;
-        var census = new SharedBodyCensus();
+        if (sharedNodes is null) return census;
+        census ??= new();
         var pending = new Stack<object>();
         var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
         void Mark(object node)
@@ -27,12 +32,17 @@ internal sealed class SharedBodyCensus
             if (node is not Algorithm.User && seen.Add(node)) pending.Push(node);
         }
 
-        foreach (var node in sharedNodes) Mark(node);
+        foreach (var node in sharedNodes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Mark(node);
+        }
 
         // Below a shared expression every algorithm is reached through each of its edges. A user body ends the descent: what
         // lies below it is reached once per region of that body.
         while (pending.TryPop(out var node))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
                 Mark(child);
         }
@@ -42,6 +52,9 @@ internal sealed class SharedBodyCensus
 
     /// <summary>The census of <paramref name="root"/>, walked here; null when nothing is shared.</summary>
     internal static SharedBodyCensus? Of(object root, CancellationToken cancellationToken = default)
+        => Of(root, observations: null, cancellationToken);
+
+    private static SharedBodyCensus? Of(object root, FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
     {
         var seen = new HashSet<object>(ReferenceEqualityComparer.Instance) { root };
         var pending = new Stack<object>();
@@ -50,6 +63,7 @@ internal sealed class SharedBodyCensus
         while (pending.TryPop(out var node))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            observations?.RecordDeferredCensusExpansion();
             for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
             {
                 if (seen.Add(child)) pending.Push(child);
@@ -57,8 +71,161 @@ internal sealed class SharedBodyCensus
             }
         }
 
-        return FromSharedNodes(shared);
+        return MergeSharedNodes(shared, null, cancellationToken);
     }
+
+    /// <summary>
+    /// THE CENSUS OF A DEFERRED MATERIALIZATION'S EXPOSURE INPUT (C#-only work sharing; the census is exactly
+    /// <see cref="Of(object, CancellationToken)"/>'s): the resolved branch body <paramref name="root"/>, with every module
+    /// declaration it splices counted as one CENSUS UNIT (<see cref="CompletedModuleViews.CensusUnit"/>) instead of walked.
+    /// The census marks the algorithms reached through more than one edge and those below a shared expression down to a
+    /// user body (<see cref="FromSharedNodes"/>). A module declaration's own nodes are reached only through its root: each
+    /// is the elaboration of its own parse's import view, spliced by reference, so no other part of the graph holds one of
+    /// them (the admission measure's partition, <see cref="StaticStructureAdmission.MeasureLoadedBody"/>). Hence a node
+    /// inside a declaration is shared exactly when the declaration's own walk, stopped at the module declarations it
+    /// splices in turn, reaches it twice, and the descent below such a node stays inside the declaration (it ends at a user
+    /// body, and every module root a unit stands for is one; a module root elaborated to a callable alias, which the
+    /// descent may enter, is walked by the part that reaches it, and a unit that reaches one makes the census walk the
+    /// ordinary way): both are the unit's, a pure function of the immutable declaration. What is
+    /// SHARED ACROSS PARTS is a module root alone: the body and the units each count the edges they hold to every module
+    /// root, and a root those counts reach twice (two loads of one module in the branch, a module the branch and another
+    /// module both splice) is a shared node of the composition like any other. So the body's own shared nodes, the roots
+    /// counted twice and the units' bodies give the ordinary census. A unit an earlier materialization published is taken
+    /// as published; any other is computed here and staged in <paramref name="moduleViews"/>. The deferred-region and
+    /// sharing decisions read from the census (<see cref="Holds"/>) are therefore those of the ordinary walk. The reference
+    /// mode walks the ordinary way; the verifying mode also walks it and compares the bodies.
+    /// </summary>
+    internal static SharedBodyCensus? OfLoadedBody(Algorithm root, CompletedModuleViews.Attempt? moduleViews,
+        CancellationToken cancellationToken = default)
+    {
+        if (moduleViews is not { Shares: true })
+            return Of(root, moduleViews?.Observations, cancellationToken);
+        // A module root elaborated to a callable alias is no unit: the part that reaches it walks it as its own nodes,
+        // which is exact while no other part reaches it. A unit that reaches one leaves that open (another part may reach
+        // it too, and the census's descent below an algorithm that is no user body depends on how often the whole graph
+        // marks it), so such a composition is walked the ordinary way.
+        if (!TryOfComposition(root, moduleViews, out var census, cancellationToken))
+            return Of(root, moduleViews.Observations, cancellationToken);
+        if (moduleViews.Verifies && !SameBodies(census, Of(root, cancellationToken)))
+            throw new InvalidOperationException("The shared-body census by module-declaration units differs from the ordinary walk's.");
+        return census;
+    }
+
+    private static bool TryOfComposition(Algorithm root, CompletedModuleViews.Attempt moduleViews, out SharedBodyCensus? census,
+        CancellationToken cancellationToken)
+    {
+        census = null;
+        var observations = moduleViews.Observations;
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance) { root };
+        var pending = new Stack<object>();
+        pending.Push(root);
+        HashSet<object>? shared = null;
+        // The edges every part holds to each module root, and the roots in discovery order (units add theirs as they are read).
+        Dictionary<Algorithm.User, long>? rootEdges = null;
+        List<Algorithm.User>? roots = null;
+        void CountRootEdges(Algorithm.User view, long edges)
+        {
+            rootEdges ??= new(ReferenceEqualityComparer.Instance);
+            if (rootEdges.TryGetValue(view, out var known))
+                rootEdges[view] = known + edges;
+            else
+            {
+                rootEdges[view] = edges;
+                (roots ??= []).Add(view);
+            }
+        }
+
+        while (pending.TryPop(out var node))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            observations?.RecordDeferredCensusExpansion();
+            for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
+            {
+                if (CompletedModuleViews.IsModuleView(child, out var view)) CountRootEdges(view, 1);
+                else if (seen.Add(child)) pending.Push(child);
+                else (shared ??= new(ReferenceEqualityComparer.Instance)).Add(child);
+            }
+        }
+
+        if (roots is not null)
+        {
+            // Each distinct root once: its unit's bodies, and the edges its own nodes hold to the roots it splices.
+            for (var next = 0; next < roots.Count; next++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var unit = moduleViews.CensusUnitOf(roots[next], cancellationToken);
+                if (unit.ReachesAliasModuleRoot) return false;
+                foreach (var body in unit.Bodies)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    (census ??= new())._bodies.Add(body);
+                }
+                foreach (var (nested, edges) in unit.Nested)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    CountRootEdges(nested, edges);
+                }
+            }
+
+            foreach (var view in roots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (rootEdges![view] > 1) (shared ??= new(ReferenceEqualityComparer.Instance)).Add(view);
+            }
+        }
+
+        census = MergeSharedNodes(shared, census, cancellationToken);
+        return true;
+    }
+
+    /// <summary>
+    /// The census unit of the module declaration <paramref name="view"/> (<see cref="CompletedModuleViews.CensusUnit"/>):
+    /// the census walk from the declaration, stopping at every other module root (whose edges it counts, never entering
+    /// it), with the walk's own cancellation checks.
+    /// </summary>
+    internal static CompletedModuleViews.CensusUnit ComputeUnit(Algorithm.User view, FrontEndTraversalObservations? observations,
+        CancellationToken cancellationToken)
+    {
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance) { view };
+        var pending = new Stack<object>();
+        pending.Push(view);
+        HashSet<object>? shared = null;
+        Dictionary<Algorithm.User, int>? nested = null;
+        List<Algorithm.User>? order = null;
+        var reachesAliasModuleRoot = false;
+        while (pending.TryPop(out var node))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            observations?.RecordDeferredCensusExpansion();
+            for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
+            {
+                if (CompletedModuleViews.IsModuleView(child, out var inner))
+                {
+                    nested ??= new(ReferenceEqualityComparer.Instance);
+                    if (nested.TryGetValue(inner, out var edges))
+                        nested[inner] = edges + 1;
+                    else
+                    {
+                        nested[inner] = 1;
+                        (order ??= []).Add(inner);
+                    }
+
+                    continue;
+                }
+
+                reachesAliasModuleRoot |= child is Algorithm.Alias { IsModuleElaborated: true };
+                if (seen.Add(child)) pending.Push(child);
+                else (shared ??= new(ReferenceEqualityComparer.Instance)).Add(child);
+            }
+        }
+
+        var bodies = MergeSharedNodes(shared, null, cancellationToken) is { } census ? census._bodies.ToArray() : [];
+        return new(bodies, order is null ? [] : [.. order.Select(inner => (inner, nested![inner]))], reachesAliasModuleRoot);
+    }
+
+    /// <summary>Whether two censuses mark the same bodies (both null when nothing is shared).</summary>
+    internal static bool SameBodies(SharedBodyCensus? left, SharedBodyCensus? right)
+        => left is null ? right is null : right is not null && left._bodies.SetEquals(right._bodies);
 
     /// <summary>
     /// Whether <paramref name="body"/> may be served across contexts: it is shared, and nothing below it is a deferred module

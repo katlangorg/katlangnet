@@ -1191,6 +1191,14 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         internal CompletedProviderSummaries.Attempt? CompletedProviders { get; init; }
 
+        /// <summary>Earlier successful exposure inputs of this loader, indexed by the exact resolved view.</summary>
+        internal ModuleUnitRegistry? PublishedModules { get; init; }
+
+        internal bool HasEmptyCompletedModuleOutput(Algorithm body)
+            => _providerWindow is null && CompletedProviders is not null
+                && body is Algorithm.User { IsModuleElaborated: true, Opens.Count: 0, Output.Count: 0 }
+                && PublishedModules?.HasCompleted(body) == true;
+
         /// <summary>The unsealed unit this resolution completes (a materialization's own facts); null without one.</summary>
         internal CompletedStaticStructures? CompletingUnit { get; init; }
 
@@ -1440,7 +1448,7 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         internal CompletedStructureContext SharedRegionContext(CompletedStructureContext context, Algorithm body)
         {
-            if (SharedBodies?.Holds(body) != true || body.IsModuleRoot) return context;
+            if (body.IsModuleRoot || SharedBodies?.Holds(body) != true) return context;
             // The representative depends on which contexts this resolution's input reached first: never kept.
             if (_providerWindow is not null) _providerWindowTaints++;
             _regionNames ??= new(new NameSetInterner());
@@ -2118,10 +2126,24 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CollectSharedAlgorithmSummarySeed(
         Algorithm algorithm,
         SummaryWalkMemos memos)
-        => algorithm is Algorithm.User { IsAssignmentDeconstructionSource: true } source
+    {
+        // CollectScopeBodySummary derives the output seed from the opens and output rows. With neither,
+        // no member can contribute a name, owner or reference to it. The member path is charged separately
+        // through the exact published provider. Leave every computation inside a provider keep window intact.
+        if (memos.SharedMemo.HasEmptyCompletedModuleOutput(algorithm))
+        {
+            memos.SharedMemo.ObserveCancellation();
+            // Skipping the members also skips their context reads. The enclosing walk must not infer
+            // context independence from their absence and reuse its own result under a different owner.
+            memos.SharedMemo.UseContext();
+            return new SummarySeed();
+        }
+
+        return algorithm is Algorithm.User { IsAssignmentDeconstructionSource: true } source
             ? CollectSummarySeed(source.Output, new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
                 CreateNameSet(), memos, inTransparentContext: false)
             : GetAlgorithmSummary(algorithm, memos).OutputSeed.Clone();
+    }
 
     /// <summary>
     /// The completed summary of a node (output seed and per-member seeds), computed at most

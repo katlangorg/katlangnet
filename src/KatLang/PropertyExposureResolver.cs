@@ -423,10 +423,15 @@ internal static class PropertyExposureResolver
         {
             Modules = modules ?? new(),
         };
-        run.SharedBodies = SharedBodyCensus.Of(root, cancellationToken);
+        // A deferred branch's materialization counts each module declaration its body splices as one census unit, published
+        // with the attempt and taken by later ones (CompletedModuleViews); every other resolution walks its whole input.
+        run.SharedBodies = deferred is not null
+            ? SharedBodyCensus.OfLoadedBody(root, modules?.CompletedViews, cancellationToken)
+            : SharedBodyCensus.Of(root, cancellationToken);
         var summaryMemo = new PropertyDependencyGraphBuilder.SummaryMemo(observations)
         {
             SharedBodies = run.SharedBodies,
+            PublishedModules = modules?.Registry,
             CancellationToken = cancellationToken,
             // A deferred branch's materialization is the one resolution that reads completed content an EARLIER
             // operation of the program published: it takes the summaries those operations kept for that content and

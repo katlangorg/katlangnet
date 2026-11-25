@@ -468,6 +468,11 @@ public class MaintainedDocumentationConsistencyTests
             @"\bspliced completed module's re-gates\b|\bre-gates, measure and signature analysis\b|\bsignature analysis still enters the module\b",
             "every deferred materialization re-walking a spliced completed module (superseded 2026-11-24 by completed module views)"
         },
+        // Completed declaration-only modules have an empty output requirement, and exposure composes their census.
+        {
+            @"\bshared-body census of the composed body\b.{0,80}\b330 bytes per module member\b",
+            "per-selection full exposure census of the wide completed-module splice (superseded 2026-11-25 by census units)"
+        },
         // Passive observations shown only from a concrete form the run built (superseded 2026-11-24, C#-only host
         // policy of issue #204): a list whose cardinality the run settled and whose every position's VALUE completed
         // is observed from those memoized values, however its positions were read, so no current text says an

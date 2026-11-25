@@ -1040,6 +1040,25 @@ internal sealed class FrontEndTraversalObservations
         => DeferredAdmissionEdges = checked(DeferredAdmissionEdges + 1);
 
     /// <summary>
+    /// Nodes the shared-body census of a deferred materialization's exposure input expanded itself
+    /// (<c>SharedBodyCensus.OfLoadedBody</c>: the body's own part and every module view whose census unit it computed); a
+    /// published unit adds its bodies and nested views without a node. The reference mode expands every node.
+    /// </summary>
+    public long DeferredCensusExpansions { get; private set; }
+
+    internal void RecordDeferredCensusExpansion()
+        => DeferredCensusExpansions = checked(DeferredCensusExpansions + 1);
+
+    /// <summary>
+    /// Published census units of a completed module declaration that a deferred materialization's exposure census took
+    /// instead of walking the declaration (<see cref="CompletedModuleViews"/>): one per distinct declaration and census.
+    /// </summary>
+    public long CompletedModuleCensusReuses { get; private set; }
+
+    internal void RecordCompletedModuleCensusReuse()
+        => CompletedModuleCensusReuses = checked(CompletedModuleCensusReuses + 1);
+
+    /// <summary>
     /// Completed conditional BRANCH-BODY summary computations in the builder's summary channel
     /// (<c>PropertyDependencyGraphBuilder.CollectBranchBodySummarySeed</c> misses of the
     /// completed branch-body memo, keyed by body reference and binder-name set). Like

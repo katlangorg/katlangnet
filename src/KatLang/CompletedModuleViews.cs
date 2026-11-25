@@ -26,15 +26,19 @@ namespace KatLang;
 /// view's and from the loading document's, because each view is its own parse's locationless import view and the loader
 /// splices it only by reference, so the measure of a composed body is exactly the sum of its own part and its distinct
 /// units (<see cref="StaticStructureAdmission.MeasureLoadedBody"/>). Beside them, the free reference names of each
-/// completed DETECTED module declaration (the resolution pass's input), kept as names and re-interned by each reader. The
-/// verifying test mode checks every reuse against the ordinary walk.</para>
+/// completed DETECTED module declaration (the resolution pass's input), kept as names and re-interned by each reader; and
+/// (2026-11-25) the <see cref="CensusUnit"/> of each completed RESOLVED declaration (the exposure pass's input), its own
+/// part of exposure's shared-body census: the bodies the census marks inside it and the edges it holds to the module
+/// roots it splices. The verifying test mode checks every reuse against the ordinary walk.</para>
 ///
 /// <para><b>How the facts are reused.</b> A gate meeting a view whose height fits at that occurrence does not walk it
 /// (a rejection replays the ordinary walk, so the diagnostic and its span are the established ones). The unresolved-load
 /// check does not enter a completed view: the operation that completed it checked it and published nothing it could have
 /// flagged. The admission measure adds the view's unit instead of walking it. The resolver re-interns a completed
-/// declaration's published free names instead of walking it. Signature analysis needs no fact of its own: a module an
-/// earlier operation resolved is not analyzed (<see cref="ModuleUnits.ReceivesEarlierResolution"/>), and its members'
+/// declaration's published free names instead of walking it. Exposure's census adds a resolved declaration's census unit
+/// instead of walking it, and counts the edges every part holds to each module root, so a root two parts splice is
+/// shared exactly as the ordinary walk finds it (<see cref="SharedBodyCensus.OfLoadedBody"/>). Signature analysis needs
+/// no fact of its own: a module an earlier operation resolved is not analyzed (<see cref="ModuleUnits.ReceivesEarlierResolution"/>), and its members'
 /// signatures are final, read from their published resolved views.</para>
 ///
 /// <para><b>Isolation.</b> An attempt reads what earlier successful materializations published and stages what it
@@ -43,8 +47,8 @@ namespace KatLang;
 /// the loader's materialization gate and the region's run lock), and only for views the registry then holds as
 /// completed units. An attempt that publishes nothing — a load or front-end error, a structural, admission or stack
 /// refusal, cancellation, abandonment — leaves nothing here, so a failed attempt never warms a later one. The facts hold
-/// counts, flags and references to completed views only: no body, region, attempt, diagnostic list, token or
-/// evaluation state. They are bounded by the program's distinct completed module views. Never static: one store belongs
+/// counts, flags, free names and references to completed module views and the marked bodies inside them.
+/// They are bounded by the program's distinct completed module graphs. Never static: one store belongs
 /// to one loader, which belongs to one parse of one document, and every access happens inside that loader's
 /// materialization gate.</para>
 /// </summary>
@@ -94,7 +98,35 @@ internal sealed class CompletedModuleViews
     /// <summary>The published facts of one completed view.</summary>
     internal sealed record Facts(int Height, AdmissionUnit Unit);
 
+    /// <summary>
+    /// A module declaration's own part of the shared-body census of a materialization's exposure input
+    /// (<see cref="SharedBodyCensus.OfLoadedBody"/>): the bodies the census marks inside the declaration (reached twice by
+    /// the declaration's own walk, which stops at the module roots it splices, or below a node it reaches twice, down to a
+    /// user body), and the module roots it splices with the number of edges its own nodes hold to each, in walk order;
+    /// and whether its walk met a module root elaborated to a callable alias, which no census composes
+    /// (<see cref="SharedBodyCensus.OfLoadedBody"/>).
+    /// </summary>
+    internal sealed record CensusUnit(IReadOnlyList<Algorithm> Bodies, IReadOnlyList<(Algorithm.User View, int Edges)> Nested,
+        bool ReachesAliasModuleRoot)
+    {
+        /// <summary>Whether two units hold the same bodies and the same nested roots and edge counts in walk order.</summary>
+        internal bool SameAs(CensusUnit other)
+        {
+            if (Nested.Count != other.Nested.Count || Bodies.Count != other.Bodies.Count || ReachesAliasModuleRoot != other.ReachesAliasModuleRoot)
+                return false;
+            for (var i = 0; i < Nested.Count; i++)
+                if (!ReferenceEquals(Nested[i].View, other.Nested[i].View) || Nested[i].Edges != other.Nested[i].Edges)
+                    return false;
+            return Bodies.ToHashSet(ReferenceEqualityComparer.Instance).SetEquals(other.Bodies);
+        }
+    }
+
     private readonly Dictionary<Algorithm.User, Facts> _published = new(ReferenceEqualityComparer.Instance);
+
+    // The CENSUS UNITS of completed RESOLVED module declarations (the exposure pass's input, a registry exposure key): what a
+    // materialization's shared-body census takes instead of walking a module its resolved body splices
+    // (SharedBodyCensus.OfLoadedBody), a pure function of the immutable declaration.
+    private readonly Dictionary<Algorithm.User, CensusUnit> _census = new(ReferenceEqualityComparer.Instance);
 
     // The FREE REFERENCE NAMES of completed DETECTED module declarations (the resolution pass's input, a registry
     // resolution key): what implicit-argument resolution's region keys read of a module reached through an open target or
@@ -132,6 +164,7 @@ internal sealed class CompletedModuleViews
         private Dictionary<Algorithm.User, int>? _heights;
         private Dictionary<Algorithm.User, AdmissionUnit>? _units;
         private Dictionary<Algorithm.User, string[]>? _freeNames;
+        private Dictionary<Algorithm.User, CensusUnit>? _censusUnits;
 
         internal Mode Mode => mode;
 
@@ -220,9 +253,34 @@ internal sealed class CompletedModuleViews
         }
 
         /// <summary>
+        /// The census unit of the module declaration <paramref name="module"/> (<see cref="CensusUnit"/>): published by an
+        /// earlier materialization, staged earlier in this attempt, or computed here and staged. The verifying mode
+        /// recomputes a published unit from its declaration and throws on a difference.
+        /// </summary>
+        internal CensusUnit CensusUnitOf(Algorithm.User module, CancellationToken cancellationToken)
+        {
+            if (Shares && store._census.TryGetValue(module, out var published))
+            {
+                observations?.RecordCompletedModuleCensusReuse();
+                if (Verifies && !SharedBodyCensus.ComputeUnit(module, observations: null, cancellationToken).SameAs(published))
+                    throw new InvalidOperationException("A completed module declaration's published census unit differs from the one its declaration gives.");
+                return published;
+            }
+
+            if (_censusUnits is not null && _censusUnits.TryGetValue(module, out var staged))
+                return staged;
+            var unit = SharedBodyCensus.ComputeUnit(module, observations, cancellationToken);
+            if (Shares)
+                (_censusUnits ??= new(ReferenceEqualityComparer.Instance))[module] = unit;
+            return unit;
+        }
+
+        /// <summary>
         /// Publishes the staged facts: call only where the attempt publishes its unit, after its module declarations are
-        /// published. A view is kept only when both facts were staged and the registry holds it as a completed unit; the
-        /// first facts of a view stay (every attempt computes the same facts of one immutable view).
+        /// published. A view is kept only when both facts were staged and the registry holds it as a completed unit, free
+        /// names only for a detected declaration whose resolved unit it holds, and a census unit only for a resolved
+        /// declaration whose classified unit it holds; the first facts of a view stay (every attempt computes the same
+        /// facts of one immutable view).
         /// </summary>
         internal void Publish()
         {
@@ -246,9 +304,20 @@ internal sealed class CompletedModuleViews
                 }
             }
 
+            if (_censusUnits is { } censusUnits)
+            {
+                // A resolved declaration is completed once the registry holds its classified unit.
+                foreach (var (module, unit) in censusUnits)
+                {
+                    if (registry.TryGet(ModuleUnitPass.Exposure, module, out _))
+                        store._census.TryAdd(module, unit);
+                }
+            }
+
             _heights = null;
             _units = null;
             _freeNames = null;
+            _censusUnits = null;
         }
     }
 }
