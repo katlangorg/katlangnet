@@ -69,6 +69,10 @@ internal static class RegenerationFlags
         Prefix + "PLANNED_LOOP_TEMP_FAMILY",
         "lean/CoreTests/PlannedLoopTempFamily.lean");
 
+    public static readonly RegenerationFlag TutorialPlaygroundLinks = new(
+        Prefix + "TUTORIAL_PLAYGROUND_LINKS",
+        "the Open in Playground link after every example in tutorial.md");
+
     // The three flags below regenerate Lean PROOF modules whose text is generated (tests/KatLang.Tests/LeanProofModules/).
 
     public static readonly RegenerationFlag MemberRereadInstances = new(
@@ -86,7 +90,7 @@ internal static class RegenerationFlags
     public static readonly IReadOnlyList<RegenerationFlag> All =
     [
         LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge, SemanticGenerated, FrontEndDecisions,
-        MayCaptureCalls, ModuleDifferential, PlannedLoopTempFamily,
+        MayCaptureCalls, ModuleDifferential, PlannedLoopTempFamily, TutorialPlaygroundLinks,
         MemberRereadInstances, PublishedCallableInstances, EvaluatorPublications,
     ];
 }

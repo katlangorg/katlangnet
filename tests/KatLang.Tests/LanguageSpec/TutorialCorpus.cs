@@ -35,7 +35,10 @@ public sealed record TutorialExample(
     string? ErrorClaimText,  // Error claims: the full label line
     int? MarkerLine,         // 1-based line of the spec/skip marker, when present
     string? SpecCaseId,      // <!-- spec:case-id --> linkage
-    string? SkipReason)      // <!-- spec:skip reason --> escape hatch
+    string? SkipReason,      // <!-- spec:skip reason --> escape hatch
+    int EndLine,             // 1-based line of the example's last line: its closing fence, or the end of its claim
+    string? PlaygroundLink,  // the URL of the [Open in Playground](...) line that follows the example, when present
+    int? PlaygroundLinkLine) // 1-based line of that link
 {
     /// <summary>True when the fence documents an executable outcome (value or error).</summary>
     public bool HasResultClaim => ClaimKind != TutorialClaimKind.None;
@@ -202,9 +205,21 @@ public static class TutorialCorpus
                         + "only result-bearing examples need (or may carry) a skip reason.");
                 }
 
+                // The playground link, when present, is the first non-blank line after the example. It is
+                // ordinary prose to the rest of the grammar, so the scan below simply passes over it.
+                var linkIndex = SkipBlanks(lines, i);
+                string? playgroundLink = null;
+                int? playgroundLinkLine = null;
+                if (linkIndex < lines.Length && TryReadPlaygroundLink(lines[linkIndex], out var link))
+                {
+                    playgroundLink = link;
+                    playgroundLinkLine = linkIndex + 1;
+                }
+
                 examples.Add(new TutorialExample(
                     examples.Count, fenceLine, section, source, claimKind,
-                    inlineValue, resultsFence, errorClaimText, markerLine, specCaseId, skipReason));
+                    inlineValue, resultsFence, errorClaimText, markerLine, specCaseId, skipReason,
+                    i, playgroundLink, playgroundLinkLine));
                 markerLine = null;
                 specCaseId = null;
                 skipReason = null;
@@ -288,6 +303,58 @@ public static class TutorialCorpus
         // mutable List behind IReadOnlyList would let one test cast it back,
         // alter the shared oracle, and change every later test's census.
         return examples.AsReadOnly();
+    }
+
+    /// <summary>The text of a playground link line up to its URL.</summary>
+    public const string PlaygroundLinkLabel = "[Open in Playground](";
+
+    /// <summary>
+    /// The line that follows an example in tutorial.md: a Markdown link to the code link of the
+    /// example's exact source, which opens it in the KatLang playground.
+    /// </summary>
+    public static string PlaygroundLinkLineFor(string source) => CodeLink.Encode(source) switch
+    {
+        CodeLinkEncoding.Link link => PlaygroundLinkLabel + link.Url + ")",
+        CodeLinkEncoding.EmptyProgram => throw new InvalidOperationException("A tutorial example is empty."),
+        CodeLinkEncoding.SourceTooLong or CodeLinkEncoding.PayloadTooLong => throw new InvalidOperationException(
+            $"A tutorial example is too long for a code link; keep examples short:\n{source}"),
+    };
+
+    private static bool TryReadPlaygroundLink(string line, out string url)
+    {
+        if (line.StartsWith(PlaygroundLinkLabel, StringComparison.Ordinal) && line.EndsWith(')'))
+        {
+            url = line[PlaygroundLinkLabel.Length..^1];
+            return true;
+        }
+
+        url = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// <paramref name="markdown"/> with the playground link of every example written after it: an
+    /// existing link line is replaced, and a missing one is added after a blank line. Line endings
+    /// come back as <c>\n</c>.
+    /// </summary>
+    public static string WithPlaygroundLinks(string markdown)
+    {
+        var lines = markdown.ReplaceLineEndings("\n").Split('\n').ToList();
+        foreach (var example in Parse(markdown).Reverse())
+        {
+            var linkLine = PlaygroundLinkLineFor(example.Source);
+            if (example.PlaygroundLinkLine is { } existing)
+            {
+                lines[existing - 1] = linkLine;
+            }
+            else
+            {
+                lines.Insert(example.EndLine, linkLine);
+                lines.Insert(example.EndLine, string.Empty);
+            }
+        }
+
+        return string.Join("\n", lines);
     }
 
     /// <summary>

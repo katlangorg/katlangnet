@@ -62,14 +62,6 @@ public class TutorialResultSweepTests
                     "**Result:** error — `sum` takes one collection, but three separate numbers were passed.",
                     KatLangErrorCode.ArityMismatch),
                 new(
-                    "[].reduce({x + total}, 1 / 0)",
-                    "**Result:** error — division by zero, in the initial accumulator.",
-                    KatLangErrorCode.DivisionByZero),
-                new(
-                    "Inc(y) = y + 1\nSame(x, x) = true\nSame(x, y) = false\n\nCheck(n) = Same(Inc, n)\nCheck(1)",
-                    "**Result:** error — `Inc` needs an argument, so it has no value to compare with `1`.",
-                    KatLangErrorCode.ArityMismatch),
-                new(
                     "Grade(1) = 'excellent'\nGrade(2) = 'good'\n\nGrade(3)",
                     "**Result:** error — no clause of `Grade` matches the argument `3`.",
                     KatLangErrorCode.NoMatchingBranch),
@@ -77,6 +69,10 @@ public class TutorialResultSweepTests
                     "Loan(principal, rate, years) = {\n    MonthlyRate = rate / 12\n    Months = years * 12\n    principal * MonthlyRate / (1 - (1 + MonthlyRate) ^ -Months)\n}\n\nLoan.MonthlyRate",
                     "**Result:** error — `MonthlyRate` depends on the parameter `rate` of `Loan`, so it can be used only inside `Loan`.",
                     KatLangErrorCode.LocalOnlyProperty),
+                new(
+                    "Square(x) = x * x\nCapture(meta operation) = operation\n\nCapture(Square(5))",
+                    "**Result:** error — a call reference cannot be a program result.",
+                    KatLangErrorCode.TypeMismatch),
             ]);
 
     private static readonly IReadOnlyList<TutorialExample> ResultBearing =
@@ -230,29 +226,25 @@ public class TutorialResultSweepTests
             new(
                 "Loading External Algorithms",
                 """
-                # Load and bind to property 'Lib':
-                Lib = load('https://katlang.org/algorithm.kat')
+                Vec = load('https://katlang.org/libraries/plane-vec.kat')
 
-                # Access a public property 'X' from the loaded algorithm:
-                Lib.X + 3
-
-                # Use the second output value of the loaded algorithm (index 1):
-                Lib[1] + 10
+                Vec.Add(Vec.Vector(1, 2), Vec.Vector(3, 4))
+                Vec.Magnitude(Vec.Vector(3, 4))
                 """,
                 TutorialClaimKind.FencedRows,
-                "23\n16",
-                "module loading needs a host-configured network downloader; the URL and its outputs are illustrative"),
+                "(4, 6)\n5",
+                "module loading needs a host-configured network downloader"),
             new(
                 "Loading External Algorithms",
                 """
-                open 'https://katlang.org/algorithm.kat'
+                open 'https://katlang.org/libraries/plane-vec.kat'
 
-                # X is now directly accessible:
-                X + 3
+                Add(Vector(1, 2), Vector(3, 4))
+                Vector(3, 4).Magnitude
                 """,
-                TutorialClaimKind.InlineValue,
-                "23",
-                "open 'url' needs a host-configured network downloader; the URL and its output are illustrative"),
+                TutorialClaimKind.FencedRows,
+                "(4, 6)\n5",
+                "open 'url' needs a host-configured network downloader"),
         ];
 
         var actual = Skipped

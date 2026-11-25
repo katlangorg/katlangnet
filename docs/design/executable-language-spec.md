@@ -64,6 +64,7 @@ summed into one total.
 | Lean model | generated `lean/LanguageSpecCases.lean`: one `#guard obs case_x == "<canonical neutral>"` per Lean-guarded case | `lake build LanguageSpecCases` failure |
 | tutorial.md (linked) | `<!-- spec:case-id -->` markers before fences; `TutorialSpecTests` verifies source + expected output against the case | test failure |
 | tutorial.md (all result claims) | `TutorialResultSweepTests` executes every fence followed by a `**Result(s):**` claim through `KatLangEngine.Run` and display-matches the claim (section 6a) | test failure |
+| tutorial.md (playground links) | `TutorialPlaygroundLinkTests` requires every fence to be followed by `[Open in Playground](https://katlang.org/#1/…)`, the code link of its exact source (section 6a) | test failure |
 | tutorial.md (semantic claims) | `TutorialSemanticContractTests` pins the ownership, binding, visibility, clause-arity, pattern-kind, call-boundary, and Grace-order FACTS behind the high-risk explanations through the elaborated AST, the semantic model, and structured codes (SYN-12B) — an output-only claim can print the right number for the wrong reason | test failure |
 | generator prompts | marker-delimited generated block in `.github/agents/katlang-generator.agent.md` AND `experimental/prompts/katlang-generator.txt`, rendered from cases flagged `IncludeInGeneratorPrompt` | staleness test failure |
 
@@ -392,6 +393,15 @@ automatically enters the sweep. The recognized claim forms (shared grammar in
   and checked through public `KatLangErrorCode` values (never rendered-message
   substrings) by
   `DetailedErrorClaims_MatchTheirReviewedStructuredErrors`.
+
+Every example, with or without a claim, is followed by one more line, its
+playground link: `[Open in Playground](https://katlang.org/#1/<payload>)`, the
+code link (`CodeLink.Encode`) of the fence's exact source, as the first
+non-blank line after the claim (after the fence when there is none). The
+grammar reads it as ordinary prose. `TutorialPlaygroundLinkTests` checks every
+link; after changing an example, run that class once with
+`KATLANG_REGENERATE_TUTORIAL_PLAYGROUND_LINKS=1`, which rewrites the links and
+then fails by design.
 
 The deliberately narrow fence contract is a column-zero, untagged, exactly
 three-backtick fence; tagged, indented/list/blockquote, longer, and trailing-
