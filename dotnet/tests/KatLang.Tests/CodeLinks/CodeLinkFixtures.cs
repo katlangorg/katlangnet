@@ -117,14 +117,5 @@ internal static class CodeLinkFixtures
 
     /// <summary>The path of a file in the fixtures directory of the repository this test assembly was built from.</summary>
     public static string FixturePath(string fileName)
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
-            directory = directory.Parent;
-
-        if (directory is null)
-            throw new DirectoryNotFoundException("The repository root (KatLang.slnx) was not found above the test assembly.");
-
-        return Path.Combine(directory.FullName, "dotnet", "tests", "KatLang.Tests", "CodeLinks", "Fixtures", fileName);
-    }
+        => Path.Combine(RepoRoot.Find(), "dotnet", "tests", "KatLang.Tests", "CodeLinks", "Fixtures", fileName);
 }

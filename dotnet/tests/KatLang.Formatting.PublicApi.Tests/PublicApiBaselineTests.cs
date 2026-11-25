@@ -17,7 +17,7 @@ namespace KatLang.Formatting.PublicApi.Tests;
 /// targeted run that writes it and then fails by design
 /// (<see cref="ArtifactRegeneration"/>):
 ///   $env:KATLANG_REGENERATE_PUBLIC_API = "1"
-///   dotnet test .\KatLang.slnx --filter PublicApiBaseline
+///   dotnet test .\dotnet\KatLang.slnx --filter PublicApiBaseline
 /// then review the diff (it IS the NuGet compatibility review), clear the flag,
 /// and rerun. Regenerating the baseline never changes the release version; that
 /// decision stays explicit in KatLangVersion.props.</para>

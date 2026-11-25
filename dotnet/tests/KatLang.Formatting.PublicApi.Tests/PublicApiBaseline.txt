@@ -1,7 +1,7 @@
 # Public API surface of assembly KatLang.
 # GENERATED FILE - DO NOT EDIT BY HAND. Rendered from the compiled assembly by
 # PublicApiSurfaceRenderer (dotnet/tests/KatLang.Formatting.PublicApi.Tests). Regenerate with
-#   $env:KATLANG_REGENERATE_PUBLIC_API = "1"; dotnet test .\KatLang.slnx --filter PublicApiBaseline
+#   $env:KATLANG_REGENERATE_PUBLIC_API = "1"; dotnet test .\dotnet\KatLang.slnx --filter PublicApiBaseline
 # (that run rewrites this file and then fails by design: review the diff, clear the flag, rerun).
 # One block per exported type in ordinal order of its heading; members sorted by kind, name,
 # then signature; enum members by numeric value. See the renderer for the exact policy.

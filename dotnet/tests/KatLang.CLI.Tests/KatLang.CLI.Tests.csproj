@@ -31,10 +31,12 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="KatLang.TestInfrastructure" />
   </ItemGroup>
 
-  <!-- Strict allocation measurements share KatLang.Tests' GC-isolated child-host helper as source. -->
+  <!-- Shared repository lookup and GC-isolated child-host helpers. -->
   <ItemGroup>
+    <Compile Include="..\KatLang.Tests\Infrastructure\RepoRoot.cs" Link="Infrastructure\RepoRoot.cs" />
     <Compile Include="..\KatLang.Tests\Infrastructure\GcIsolatedAllocation.cs" Link="Infrastructure\GcIsolatedAllocation.cs" />
     <Compile Include="..\KatLang.Tests\Infrastructure\SubprocessProbe.cs" Link="Infrastructure\SubprocessProbe.cs" />
   </ItemGroup>

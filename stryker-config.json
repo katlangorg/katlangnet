@@ -1,5 +1,6 @@
 {
   "stryker-config": {
+    "solution": "dotnet/KatLang.slnx",
     "project": "KatLang.csproj",
     "test-projects": [ "dotnet/tests/KatLang.Tests/KatLang.Tests.csproj" ],
     "mutate": [

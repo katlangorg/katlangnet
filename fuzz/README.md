@@ -37,7 +37,7 @@ libFuzzer engine via the `libfuzzer-dotnet` fork-server driver.
 ```
 fuzz/
   KatLang.ParserFuzz/
-    KatLang.ParserFuzz.csproj   # standalone harness; NOT in KatLang.slnx
+    KatLang.ParserFuzz.csproj   # standalone harness; NOT in dotnet/KatLang.slnx
     Program.cs                  # libFuzzer entry point + byte->source decoding
     FuzzInvariants.cs           # the three post-parse invariants
     Replay.cs                   # deterministic replay mode (no fuzzing loop)
@@ -61,7 +61,7 @@ scripts/
   fuzz-parser.ps1               # Windows-side orchestration (publish + instrument + run)
 ```
 
-The harness project stays outside `KatLang.slnx`, with two deliberate exceptions: the
+The harness project stays outside `dotnet/KatLang.slnx`, with two deliberate exceptions: the
 self-contained `Metamorphic/` and `Utf16/` folders are compiled into `dotnet/tests/KatLang.Tests` as
 shared source, so `MetamorphicFuzzHarnessTests` and `Utf16FuzzHarnessTests` exercise exactly the
 decoder, template, executor and replay driver the campaign runs instead of a second copy. `Utf16/`
@@ -1960,7 +1960,7 @@ format is unchanged.
 
 ### Commands
 
-Build the consumer once (it is outside `KatLang.slnx`), then:
+Build the consumer once (it is outside `dotnet/KatLang.slnx`), then:
 
 ```powershell
 dotnet build fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj

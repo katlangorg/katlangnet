@@ -239,7 +239,7 @@ named after a test to make a mismatch pass.
 checked-in artifact to refresh. Run:
 
 ```powershell
-dotnet test .\KatLang.slnx -p:UseSharedCompilation=false --filter FullyQualifiedName~ArityDifferential
+dotnet test .\dotnet\KatLang.slnx -p:UseSharedCompilation=false --filter FullyQualifiedName~ArityDifferential
 ```
 
 After changing the semantic explorer corpus (the stacked templates live
@@ -247,7 +247,7 @@ there), regenerate and rebuild the Lean artifact:
 
 ```powershell
 $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
-dotnet test .\KatLang.slnx --filter SemanticExplorerLeanArtifact
+dotnet test .\dotnet\KatLang.slnx --filter SemanticExplorerLeanArtifact
 Push-Location .\lean; lake build SemanticExplorerCases; Pop-Location
 ```
 

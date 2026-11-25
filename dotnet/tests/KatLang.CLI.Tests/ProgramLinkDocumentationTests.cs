@@ -171,7 +171,7 @@ public sealed class ProgramLinkDocumentationTests
     [Fact]
     public void CliGuide_DocumentsProgramLinks_AndEveryExactLine()
     {
-        var guide = File.ReadAllText(RepositoryFile("docs/cli.md"));
+        var guide = File.ReadAllText(Path.Combine(RepoRoot.Find(), "docs/cli.md"));
 
         // Both kinds of link, with their examples.
         Assert.Contains("katlang run \"https://katlang.org/#1/4MWjDBlNE4PH\"", guide, StringComparison.Ordinal);
@@ -199,15 +199,15 @@ public sealed class ProgramLinkDocumentationTests
         // guide names the one typed way a host does the same.
         Assert.Contains("a module may come from **any public HTTPS host**", guide, StringComparison.Ordinal);
         Assert.Contains("the system proxy settings are not used", guide, StringComparison.Ordinal);
-        Assert.Contains("`RunOptions.AllowAnyHost = true`", File.ReadAllText(RepositoryFile("docs/dotnet.md")), StringComparison.Ordinal);
+        Assert.Contains("`RunOptions.AllowAnyHost = true`", File.ReadAllText(Path.Combine(RepoRoot.Find(), "docs/dotnet.md")), StringComparison.Ordinal);
         foreach (var document in new[] { "README.md", "docs/cli.md", "docs/dotnet.md" })
-            Assert.DoesNotContain("on an allowed host (`katlang.org` and its subdomains)", File.ReadAllText(RepositoryFile(document)), StringComparison.Ordinal);
+            Assert.DoesNotContain("on an allowed host (`katlang.org` and its subdomains)", File.ReadAllText(Path.Combine(RepoRoot.Find(), document)), StringComparison.Ordinal);
     }
 
     [Fact]
     public void Tutorial_SaysThatRunTakesALink_AndWhereModulesMayComeFrom()
     {
-        var tutorial = File.ReadAllText(RepositoryFile("tutorial.md"));
+        var tutorial = File.ReadAllText(Path.Combine(RepoRoot.Find(), "tutorial.md"));
 
         Assert.Contains("use `katlang source \"<link>\"`", tutorial, StringComparison.Ordinal);
         Assert.Contains("`katlang run \"<link>\"` runs the program of a code link", tutorial, StringComparison.Ordinal);
@@ -272,15 +272,5 @@ public sealed class ProgramLinkDocumentationTests
         Assert.Equal(Enum.GetValues<DownloadFailure>().Order(), covered.Order());
         Assert.Equal(DownloadFailure.NameResolution, DownloadException.RequestFailed(new HttpRequestException(HttpRequestError.NameResolutionError)).Failure);
         Assert.Equal(DownloadFailure.ConnectionFailed, DownloadException.RequestFailed(new HttpRequestException(HttpRequestError.ConnectionError)).Failure);
-    }
-
-    private static string RepositoryFile(string relativePath)
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
-            directory = directory.Parent;
-        Assert.NotNull(directory);
-
-        return Path.Combine(directory.FullName, relativePath);
     }
 }

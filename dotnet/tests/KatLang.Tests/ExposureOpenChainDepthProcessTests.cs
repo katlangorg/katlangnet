@@ -17,7 +17,7 @@ namespace KatLang.Tests;
 /// (<see cref="AstStructuralDepthProcessTests.RunOnThreadWithStack(int, Action)"/>). Every
 /// case asserts the classification a short control of the same shape has
 /// (<see cref="ExposureOpenChainComplexityTests"/>), never mere survival. The child runs from whichever
-/// Debug/Release assembly is under test; <c>dotnet test -c Release --filter ExposureOpenChainDepthProcessTests</c>
+/// Debug/Release assembly is under test; <c>dotnet test ./dotnet/KatLang.slnx -c Release --filter ExposureOpenChainDepthProcessTests</c>
 /// is the Release invocation.
 /// </summary>
 public sealed class ExposureOpenChainDepthProcessTests

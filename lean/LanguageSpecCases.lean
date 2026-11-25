@@ -29,7 +29,7 @@ Partition (machine-checked by the `specCaseIds.length` guard below):
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
-  dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+  dotnet test .\dotnet\KatLang.slnx --filter LanguageSpecArtifacts
 -/
 
 namespace LanguageSpecCases

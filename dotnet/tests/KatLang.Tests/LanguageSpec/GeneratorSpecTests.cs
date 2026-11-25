@@ -12,7 +12,7 @@ namespace KatLang.Tests.LanguageSpec;
 /// every embedded expectation is engine- and Lean-verified through the
 /// corpus. A failure means the block is stale — regenerate with:
 ///   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
-///   dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+///   dotnet test .\dotnet\KatLang.slnx --filter LanguageSpecArtifacts
 /// (This class shares the LanguageSpecArtifacts regeneration filter; the
 /// regenerating run writes both files and then fails by design — see
 /// <see cref="ArtifactRegeneration"/>.)
@@ -392,7 +392,7 @@ public class LanguageSpecArtifactsGeneratorPromptTests
 
             Regenerate this block from the repo root with:
               $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
-              dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+              dotnet test .\dotnet\KatLang.slnx --filter LanguageSpecArtifacts
 
             """.ReplaceLineEndings("\n"));
 

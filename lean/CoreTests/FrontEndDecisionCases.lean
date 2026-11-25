@@ -118,7 +118,7 @@ Partition:
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_FRONT_END_DECISIONS = "1"
-  dotnet test .\KatLang.slnx --filter FrontEndDecisionLeanArtifact
+  dotnet test .\dotnet\KatLang.slnx --filter FrontEndDecisionLeanArtifact
 -/
 
 namespace FrontEndDecisionCases

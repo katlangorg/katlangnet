@@ -54,7 +54,7 @@ How the GitHub workflows validate and release the repository, and the rules for 
   x64 (whose Release frames and stack-probe behaviour differ), so it cannot
   guarantee detection of a Windows x64-only Release stack regression; a
   Windows x64 matrix leg is the open follow-up.
-- `KatLang.slnx` deliberately omits the standalone tool projects (today only the
+- `dotnet/KatLang.slnx` deliberately omits the standalone tool projects (today only the
   SharpFuzz harness `fuzz/KatLang.ParserFuzz`), so the .NET phase never compiles
   them. The fourth `validate.yml` job, `Standalone tool build`
   (`standalone-tool-build`, 15 minutes), runs

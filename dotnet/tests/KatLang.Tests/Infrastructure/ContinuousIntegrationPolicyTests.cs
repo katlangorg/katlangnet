@@ -522,7 +522,7 @@ public class ContinuousIntegrationPolicyTests
         // An inherited diagnostic flag must not silently change normal validation.
         const string fix = "Set-PlanModeVariable -Value $null";
         Assert.Single(Regex.Matches(source, Regex.Escape(fix)).Cast<Match>());
-        Assert.True(source.IndexOf(fix, StringComparison.Ordinal) < source.IndexOf("\"build\", \"./KatLang.slnx\"", StringComparison.Ordinal));
+        Assert.True(source.IndexOf(fix, StringComparison.Ordinal) < source.IndexOf("\"build\", \"./dotnet/KatLang.slnx\"", StringComparison.Ordinal));
         Assert.Contains("Set-PlanModeVariable -Value $inheritedPlanMode", source, StringComparison.Ordinal);
         // Removal goes through the Env: drive: PowerShell would pass $null to SetEnvironmentVariable as "".
         Assert.Contains("Remove-Item -LiteralPath \"Env:$planModeVariable\"", source, StringComparison.Ordinal);
@@ -555,8 +555,8 @@ public class ContinuousIntegrationPolicyTests
     {
         var source = Text("scripts/validate-all.ps1");
         // The full test invocation is unchanged apart from its result output.
-        Assert.Single(Regex.Matches(source, Regex.Escape("\"test\", \"./KatLang.slnx\", \"-p:UseSharedCompilation=false\", \"--no-build\",")).Cast<Match>());
-        Assert.Single(Regex.Matches(source, Regex.Escape("\"build\", \"./KatLang.slnx\", \"-p:UseSharedCompilation=false\")")).Cast<Match>());
+        Assert.Single(Regex.Matches(source, Regex.Escape("\"test\", \"./dotnet/KatLang.slnx\", \"-p:UseSharedCompilation=false\", \"--no-build\",")).Cast<Match>());
+        Assert.Single(Regex.Matches(source, Regex.Escape("\"build\", \"./dotnet/KatLang.slnx\", \"-p:UseSharedCompilation=false\")")).Cast<Match>());
         // A prefix gets a reserved, collision-free file per project; a fixed LogFileName would be overwritten.
         Assert.Contains("\"--logger\", \"trx;LogFilePrefix=katlang\", \"--results-directory\", $testResults", source, StringComparison.Ordinal);
         Assert.DoesNotContain("LogFileName", source, StringComparison.Ordinal);
@@ -919,7 +919,7 @@ public class ContinuousIntegrationPolicyTests
     private const string StandaloneBuildJob = "standalone-tool-build";
     private const string StandaloneBuildInvocation = "pwsh -NoProfile -File ./scripts/build-standalone-tools.ps1";
 
-    // Every tracked project KatLang.slnx omits; the build-only job compiles each of them.
+    // Every tracked project dotnet/KatLang.slnx omits; the build-only job compiles each of them.
     private static readonly string[] StandaloneProjects =
     [
         "fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj",
@@ -1162,8 +1162,11 @@ public class ContinuousIntegrationPolicyTests
     public async Task StandaloneProjects_AreExactlyTheProjectsTheSolutionOmits()
     {
         var root = RepoRoot.Find();
-        var inSolution = Regex.Matches(Text("KatLang.slnx"), "Path=\"(?<path>[^\"]+)\"")
-            .Select(match => match.Groups["path"].Value.Replace('\\', '/'))
+        var solution = Absolute("dotnet/KatLang.slnx");
+        var solutionDirectory = Path.GetDirectoryName(solution)!;
+        var inSolution = XDocument.Load(solution).Descendants("Project")
+            .Select(project => Path.GetFullPath(project.Attribute("Path")!.Value, solutionDirectory))
+            .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/'))
             .ToHashSet(StringComparer.Ordinal);
         // Use the script's tracked inventory: ignored copies may live anywhere, including Backup*/.
         // Filtering after a recursive filesystem scan would also traverse every scratch worktree.

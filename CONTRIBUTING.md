@@ -14,6 +14,9 @@ workflows provision the baseline SDK from the same file. The projects target
 `net11.0`, and running the framework-dependent builds or tests requires the
 .NET 11 runtime.
 
+Open [the .NET solution](dotnet/KatLang.slnx) in your IDE, or build it from the
+repository root with `dotnet build ./dotnet/KatLang.slnx`.
+
 ## License of Contributions
 
 By submitting a contribution (including but not limited to code,

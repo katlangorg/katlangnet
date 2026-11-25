@@ -80,7 +80,7 @@ public class MathMetadataOwnershipTests
     [Fact]
     public void NoConsumerReJoinsTheQualifiedName_OrReSpellsTheModuleName()
     {
-        var sourceRoot = Path.Combine(FindRepoRoot(), "dotnet", "src", "KatLang");
+        var sourceRoot = Path.Combine(RepoRoot.Find(), "dotnet", "src", "KatLang");
         var offenders = new List<string>();
 
         foreach (var path in ProductionSources(sourceRoot))
@@ -121,14 +121,4 @@ public class MathMetadataOwnershipTests
                 !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                 && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                 && !path.Contains($"{Path.DirectorySeparatorChar}artifacts{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
-
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
-            directory = directory.Parent;
-
-        Assert.True(directory is not null, "Could not locate the repository root (KatLang.slnx).");
-        return directory!.FullName;
-    }
 }

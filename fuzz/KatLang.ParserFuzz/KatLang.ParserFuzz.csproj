@@ -2,8 +2,8 @@
 
   <!--
     Standalone coverage-guided fuzzing harness for the raw KatLang parser
-    (Parser.ParseSyntax). This project is intentionally NOT part of KatLang.slnx
-    so that normal repository validation (dotnet test .\KatLang.slnx and
+    (Parser.ParseSyntax). This project is intentionally NOT part of dotnet/KatLang.slnx
+    so that normal repository validation (dotnet test .\dotnet\KatLang.slnx and
     scripts/validate-all.ps1) is completely unaffected by it.
 
     Build/run flow lives in scripts/fuzz-parser.ps1 and fuzz/README.md.

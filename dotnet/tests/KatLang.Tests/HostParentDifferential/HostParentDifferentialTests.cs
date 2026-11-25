@@ -21,7 +21,7 @@ namespace KatLang.Tests;
 ///
 /// Regenerate with:
 ///   $env:KATLANG_REGENERATE_HOST_PARENT_DIFFERENTIAL = "1"
-///   dotnet test --filter HostParentDifferential
+///   dotnet test ./dotnet/KatLang.slnx --filter HostParentDifferential
 /// That run writes the artifact and then fails by design (see <see cref="ArtifactRegeneration"/>);
 /// review the diff, clear the flag, rerun, and run <c>lake build CoreTests</c>.
 /// </summary>
@@ -654,7 +654,7 @@ public class HostParentDifferentialTests
 
             Regenerate from the repo root with:
               $env:KATLANG_REGENERATE_HOST_PARENT_DIFFERENTIAL = "1"
-              dotnet test .\KatLang.slnx --filter HostParentDifferential
+              dotnet test .\dotnet\KatLang.slnx --filter HostParentDifferential
             -/
 
             namespace HostParentDifferential

@@ -22,7 +22,7 @@ Partition (machine-checked by the `*CaseIds.length` guards below):
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
-  dotnet test .\KatLang.slnx --filter SemanticExplorerLeanArtifact
+  dotnet test .\dotnet\KatLang.slnx --filter SemanticExplorerLeanArtifact
 -/
 
 namespace SemanticExplorerCases

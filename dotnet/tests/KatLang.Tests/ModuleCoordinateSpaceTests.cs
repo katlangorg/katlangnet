@@ -609,7 +609,7 @@ public class ModuleCoordinateSpaceTests
     public void NoProductionCodeKeysSourceSpansByReferenceIdentity()
     {
         var sources = Directory.EnumerateFiles(
-            Path.Combine(RepositoryRoot(), "dotnet", "src", "KatLang"), "*.cs", SearchOption.AllDirectories)
+            Path.Combine(RepoRoot.Find(), "dotnet", "src", "KatLang"), "*.cs", SearchOption.AllDirectories)
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                 && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
         var offenders = new List<string>();
@@ -632,14 +632,6 @@ public class ModuleCoordinateSpaceTests
         while (error is EvalError.WithContext withContext)
             error = withContext.Inner;
         return error;
-    }
-
-    private static string RepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
-            directory = directory.Parent;
-        return directory?.FullName ?? throw new InvalidOperationException("Repository root not found.");
     }
 
     // ── 12. Module-local parse outcomes are caller-local load failures ──────

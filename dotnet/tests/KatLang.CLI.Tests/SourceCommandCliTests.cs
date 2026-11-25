@@ -505,7 +505,7 @@ public sealed class SourceCommandCliTests
     [Fact]
     public void CliGuide_DocumentsTheSourceCommandAndItsExactLines()
     {
-        var guide = File.ReadAllText(RepositoryFile("docs/cli.md"));
+        var guide = File.ReadAllText(Path.Combine(RepoRoot.Find(), "docs/cli.md"));
 
         Assert.Contains("katlang source \"<link>\" > program.kat", guide, StringComparison.Ordinal);
         Assert.Contains("katlang: invalid code link: <reason>", guide, StringComparison.Ordinal);
@@ -533,16 +533,6 @@ public sealed class SourceCommandCliTests
         }
 
         return true;
-    }
-
-    private static string RepositoryFile(string relativePath)
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
-            directory = directory.Parent;
-        Assert.NotNull(directory);
-
-        return Path.Combine(directory.FullName, relativePath);
     }
 
     /// <summary>Program output that cannot be written: every write throws.</summary>

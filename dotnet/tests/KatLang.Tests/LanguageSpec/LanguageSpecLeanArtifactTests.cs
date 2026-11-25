@@ -13,7 +13,7 @@ namespace KatLang.Tests.LanguageSpec;
 ///
 /// Regenerate with:
 ///   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
-///   dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+///   dotnet test .\dotnet\KatLang.slnx --filter LanguageSpecArtifacts
 /// That run writes the artifact and then fails by design (see
 /// <see cref="ArtifactRegeneration"/>); review the diff, clear the flag, rerun.
 /// </summary>
@@ -114,7 +114,7 @@ public class LanguageSpecArtifactsTests
 
             Regenerate from the repo root with:
               $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
-              dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+              dotnet test .\dotnet\KatLang.slnx --filter LanguageSpecArtifacts
             -/
 
             namespace LanguageSpecCases

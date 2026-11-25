@@ -1234,7 +1234,7 @@ language behaviors they demonstrate.
 
 Regenerate this block from the repo root with:
   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
-  dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+  dotnet test .\dotnet\KatLang.slnx --filter LanguageSpecArtifacts
 
 [boolean-values-and-equality] Booleans are a distinct scalar kind. Equality is total and symmetric across kinds, with no Boolean/number conversion; lists, sequences, and distinct preserve that distinction.
 

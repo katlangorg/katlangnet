@@ -31,6 +31,7 @@
     project for one helper file.
   -->
   <ItemGroup>
+    <Compile Include="..\KatLang.Tests\Infrastructure\RepoRoot.cs" Link="Infrastructure\RepoRoot.cs" />
     <Compile Include="..\KatLang.Tests\Infrastructure\ArtifactRegeneration.cs" Link="Infrastructure\ArtifactRegeneration.cs" />
     <Compile Include="..\KatLang.Tests\Infrastructure\CheckoutText.cs" Link="Infrastructure\CheckoutText.cs" />
   </ItemGroup>

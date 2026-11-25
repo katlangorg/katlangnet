@@ -14,7 +14,7 @@ namespace KatLang.Tests;
 ///
 /// Regenerate with:
 ///   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
-///   dotnet test --filter SemanticExplorerLeanArtifact
+///   dotnet test ./dotnet/KatLang.slnx --filter SemanticExplorerLeanArtifact
 /// That run writes the artifact and then fails by design (see
 /// <see cref="ArtifactRegeneration"/>); review the diff, clear the flag, rerun.
 /// </summary>
@@ -327,7 +327,7 @@ public class SemanticExplorerLeanArtifactTests
 
             Regenerate from the repo root with:
               $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
-              dotnet test .\KatLang.slnx --filter SemanticExplorerLeanArtifact
+              dotnet test .\dotnet\KatLang.slnx --filter SemanticExplorerLeanArtifact
             -/
 
             namespace SemanticExplorerCases

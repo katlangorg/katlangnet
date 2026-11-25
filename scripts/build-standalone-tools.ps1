@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param()
 
-# Build-only backstop for the standalone tool projects that KatLang.slnx deliberately omits.
+# Build-only backstop for the standalone tool projects that dotnet/KatLang.slnx deliberately omits.
 # `validate-all.ps1 -Phase DotNet` builds the full solution, so a compile break in a project outside
 # it (FrontEndStageProbe.cs called a removed resolver overload on 2026-11-08) goes unnoticed until
 # someone runs the tool. This script compiles each listed project in Debug (`dotnet run --project`,
@@ -15,8 +15,8 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$solution = "./KatLang.slnx"
-# Every tracked project that KatLang.slnx omits, and why it stays outside:
+$solution = "./dotnet/KatLang.slnx"
+# Every tracked project that dotnet/KatLang.slnx omits, and why it stays outside:
 # - fuzz/KatLang.ParserFuzz: the SharpFuzz harness; kept out so solution validation never depends
 #   on it (see the csproj comment and fuzz/README.md "Layout").
 $standaloneProjects = @(
@@ -56,8 +56,12 @@ function Test-StandaloneInventory {
         return @("git ls-files exited with $LASTEXITCODE")
     }
 
-    $inSolution = @((Select-String -LiteralPath $solution -Pattern 'Path="(?<path>[^"]+)"' -AllMatches).Matches |
-        ForEach-Object { $_.Groups["path"].Value.Replace('\', '/') })
+    $solutionDirectory = Split-Path -Parent (Resolve-Path -LiteralPath $solution).Path
+    [xml]$solutionDocument = Get-Content -LiteralPath $solution -Raw
+    $inSolution = @(foreach ($entry in $solutionDocument.SelectNodes('//Project/@Path')) {
+        $projectPath = [System.IO.Path]::GetFullPath($entry.Value, $solutionDirectory)
+        [System.IO.Path]::GetRelativePath($repoRoot.Path, $projectPath).Replace('\', '/')
+    })
     $problems = @()
     foreach ($project in $tracked) {
         if ($project -notin $inSolution -and $project -notin $standaloneProjects) {

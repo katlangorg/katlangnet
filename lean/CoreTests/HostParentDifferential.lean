@@ -21,7 +21,7 @@ Partition (machine-checked by the `*CaseIds.length` guards below):
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_HOST_PARENT_DIFFERENTIAL = "1"
-  dotnet test .\KatLang.slnx --filter HostParentDifferential
+  dotnet test .\dotnet\KatLang.slnx --filter HostParentDifferential
 -/
 
 namespace HostParentDifferential

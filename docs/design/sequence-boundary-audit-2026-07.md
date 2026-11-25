@@ -410,9 +410,9 @@ parse-level set) is enforced by
 | Generated Lean case guards | 2,827 | 2,808 surface + 19 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 19 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
 | Parser/elaboration reachability sweep | 2,821 attempted, 2,808 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 13 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
-| Containment test invocations | 68 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins (13 rows) and their async-twin theory (13), the spread-leaf written-form agreement theory (6), difference facts, the two lone-builtin-argument facts, and the call-function `NotAnAlgorithm` payload pin (recounted October 2026: 44 at `a366f888`, where the row still said 42 because string interpolation had added two surface forms without updating it; the spread-leaf fix adds 24) | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
-| Explorer-related test invocations | 44 | 37 explorer/anchor pins + four artifact freshness/comparability/partition/accounting facts + three cross-harness/containment/formatting guards matched by the filter | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
-| Full .NET solution | 6,338 (6,330 main-suite + 8 formatting public-API invocations, as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
+| Containment test invocations | 68 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins (13 rows) and their async-twin theory (13), the spread-leaf written-form agreement theory (6), difference facts, the two lone-builtin-argument facts, and the call-function `NotAnAlgorithm` payload pin (recounted October 2026: 44 at `a366f888`, where the row still said 42 because string interpolation had added two surface forms without updating it; the spread-leaf fix adds 24) | explorer/anchor tests (counted separately) | `dotnet test ./dotnet/KatLang.slnx --filter FullyQualifiedName~SequenceConstructContainmentTests` |
+| Explorer-related test invocations | 44 | 37 explorer/anchor pins + four artifact freshness/comparability/partition/accounting facts + three cross-harness/containment/formatting guards matched by the filter | — | `dotnet test ./dotnet/KatLang.slnx --filter FullyQualifiedName~SemanticExplorer` |
+| Full .NET solution | 6,338 (6,330 main-suite + 8 formatting public-API invocations, as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\dotnet\KatLang.slnx -p:UseSharedCompilation=false` |
 
 Historical accounting note: the original audit's **931 vs 912** and
 **925 vs 924** discrepancies came from counting a header comment that mentioned
@@ -667,11 +667,11 @@ same change.
 
 ## 8. Running the validator
 
-- C# invariants + JSON report: `dotnet test .\KatLang.slnx --filter SemanticExplorer`
+- C# invariants + JSON report: `dotnet test .\dotnet\KatLang.slnx --filter SemanticExplorer`
   (also runs in the full suite; report at
   `dotnet/tests/KatLang.Tests/bin/<cfg>/net10.0/SemanticExplorerReport.json`).
 - Lean differential: `lake build SemanticExplorerCases` (wired into
   `scripts/validate-all.ps1`).
 - Regenerate after intentional semantics changes:
-  `$env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"; dotnet test .\KatLang.slnx --filter SemanticExplorerLeanArtifact`,
+  `$env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"; dotnet test .\dotnet\KatLang.slnx --filter SemanticExplorerLeanArtifact`,
   review the artifact diff, then rebuild the Lean target.

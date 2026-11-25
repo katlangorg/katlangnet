@@ -143,7 +143,7 @@ public class LoopEntryBackstopTests
     [Fact]
     public void TheLoopSetup_OpensWithTheHopAndTheAdmission_BeforeTheStepIsProjected()
     {
-        var source = File.ReadAllText(Path.Combine(FindRepoRoot(), "dotnet", "src", "KatLang", "Evaluator.Needs.cs")).ReplaceLineEndings("\n");
+        var source = File.ReadAllText(Path.Combine(RepoRoot.Find(), "dotnet", "src", "KatLang", "Evaluator.Needs.cs")).ReplaceLineEndings("\n");
         var declaration = source.IndexOf("ValueTask<EvalResult<CountedResult>> EvalNeedLoop(", StringComparison.Ordinal);
         Assert.True(declaration >= 0, "EvalNeedLoop not found");
         var setup = source.IndexOf("if (!repeat || remaining > 0)", declaration, StringComparison.Ordinal);
@@ -169,13 +169,5 @@ public class LoopEntryBackstopTests
         for (var at = text.IndexOf(value, StringComparison.Ordinal); at >= 0; at = text.IndexOf(value, at + value.Length, StringComparison.Ordinal))
             count++;
         return count;
-    }
-
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
-            directory = directory.Parent;
-        return directory?.FullName ?? throw new InvalidOperationException("The repository root was not found.");
     }
 }

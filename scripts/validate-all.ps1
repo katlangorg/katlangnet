@@ -616,13 +616,13 @@ try {
             # independent compile gate.
             Write-Section "Full solution build"
             Invoke-Native -FilePath "dotnet" -Arguments @(
-                "build", "./KatLang.slnx", "-p:UseSharedCompilation=false")
+                "build", "./dotnet/KatLang.slnx", "-p:UseSharedCompilation=false")
 
             Write-Section "C# test suite ($Tier tier)"
             # One TRX per test project: the logger reserves each prefix_framework_timestamp file
             # with CreateNew and moves to the next free name, so projects never overwrite each other.
             $testResults = Join-Path $diagnosticsDirectory "test-results"
-            $testProjects = (Select-String -LiteralPath "./KatLang.slnx" -Pattern 'Path="dotnet/tests/' -AllMatches).Matches.Count
+            $testProjects = (Select-String -LiteralPath "./dotnet/KatLang.slnx" -Pattern 'Path="tests/' -AllMatches).Matches.Count
             $tierFilter = switch ($Tier) {
                 "Fast" { "Tier!=Slow" }
                 "Slow" { "Tier=Slow" }
@@ -634,7 +634,7 @@ try {
             [Environment]::SetEnvironmentVariable($testDiagnosticsVariable, $diagnosticsDirectory)
             try {
                 Invoke-Native -FilePath "dotnet" -Arguments (@(
-                    "test", "./KatLang.slnx", "-p:UseSharedCompilation=false", "--no-build",
+                    "test", "./dotnet/KatLang.slnx", "-p:UseSharedCompilation=false", "--no-build",
                     "--logger", "trx;LogFilePrefix=katlang", "--results-directory", $testResults) + $tierArguments)
             }
             finally {

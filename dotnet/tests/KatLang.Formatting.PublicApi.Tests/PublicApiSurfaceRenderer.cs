@@ -132,7 +132,7 @@ internal static class PublicApiSurfaceRenderer
         => $"# Public API surface of assembly {assemblyName}.\n" +
            "# GENERATED FILE - DO NOT EDIT BY HAND. Rendered from the compiled assembly by\n" +
            "# PublicApiSurfaceRenderer (dotnet/tests/KatLang.Formatting.PublicApi.Tests). Regenerate with\n" +
-           $"#   $env:{RegenerationFlags.PublicApi.Variable} = \"1\"; dotnet test .\\KatLang.slnx --filter PublicApiBaseline\n" +
+           $"#   $env:{RegenerationFlags.PublicApi.Variable} = \"1\"; dotnet test .\\dotnet\\KatLang.slnx --filter PublicApiBaseline\n" +
            "# (that run rewrites this file and then fails by design: review the diff, clear the flag, rerun).\n" +
            "# One block per exported type in ordinal order of its heading; members sorted by kind, name,\n" +
            "# then signature; enum members by numeric value. See the renderer for the exact policy.\n";

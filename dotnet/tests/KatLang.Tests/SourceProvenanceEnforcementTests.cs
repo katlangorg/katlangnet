@@ -88,7 +88,7 @@ public class SourceProvenanceEnforcementTests
 
     private static IReadOnlyList<string> TestSourceFiles()
     {
-        var root = FindRepoRoot();
+        var root = RepoRoot.Find();
         return Directory
             .EnumerateFiles(Path.Combine(root, "dotnet", "tests"), "*.cs", SearchOption.AllDirectories)
             .Concat(Directory.Exists(Path.Combine(root, "fuzz"))
@@ -98,16 +98,6 @@ public class SourceProvenanceEnforcementTests
                 && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .OrderBy(static path => path, StringComparer.Ordinal)
             .ToList();
-    }
-
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
-            directory = directory.Parent;
-
-        Assert.True(directory is not null, "Could not locate the repository root (KatLang.slnx).");
-        return directory!.FullName;
     }
 
     /// <summary>

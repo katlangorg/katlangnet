@@ -125,7 +125,7 @@ public class StructuralNestingStackBackstopTests
         // low too; removing the hop would bring back the twin's early stack verdict.
         const string probe = "if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())";
         const string hop = "if (StackHop.HostStackIsLow()) await new StackHop();";
-        var sourceRoot = Path.Combine(FindRepoRoot(), "dotnet", "src", "KatLang");
+        var sourceRoot = Path.Combine(RepoRoot.Find(), "dotnet", "src", "KatLang");
         foreach (var (file, method, opening) in new[]
         {
             ("Evaluator.PatternMatching.cs", "EvalOutputRowsPreparedCore", new[] { probe }),
@@ -159,15 +159,5 @@ public class StructuralNestingStackBackstopTests
         var pending = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache()).AsTask();
         Assert.True(pending.Wait(TimeSpan.FromSeconds(120)), "the twin run did not complete");
         return pending.Result;
-    }
-
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
-            directory = directory.Parent;
-
-        Assert.True(directory is not null, "Could not locate the repository root (KatLang.slnx).");
-        return directory!.FullName;
     }
 }

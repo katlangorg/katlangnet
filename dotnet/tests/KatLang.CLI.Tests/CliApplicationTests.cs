@@ -48,7 +48,7 @@ public sealed class CliApplicationTests
     [Fact]
     public void CliGuide_ReportsTheShippedTransportBounds()
     {
-        var guide = File.ReadAllText(RepositoryFile("docs/cli.md"));
+        var guide = File.ReadAllText(Path.Combine(RepoRoot.Find(), "docs/cli.md"));
         Assert.Contains($"1 MiB ({HttpSourceDownloader.MaxResponseBodyBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} content bytes)", guide);
         Assert.Contains($"{HttpSourceDownloader.DownloadTimeout.TotalSeconds:0}-second cancellation deadline", guide);
     }
@@ -73,19 +73,9 @@ public sealed class CliApplicationTests
     [InlineData("dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md")]
     public void MaintainedDocs_NeverNameTheRemovedSeedSpelling(string relativePath)
     {
-        var text = File.ReadAllText(RepositoryFile(relativePath));
+        var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
 
         Assert.DoesNotContain("--seed", text, StringComparison.Ordinal);
-    }
-
-    private static string RepositoryFile(string relativePath)
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
-            directory = directory.Parent;
-        Assert.NotNull(directory);
-
-        return Path.Combine(directory.FullName, relativePath);
     }
 
     [Fact]

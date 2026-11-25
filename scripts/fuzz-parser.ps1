@@ -22,7 +22,7 @@
 
     Seeds (fuzz/KatLang.ParserFuzz/Testcases) are read-only during the run. New
     coverage-increasing inputs and crash artifacts are written under fuzz/artifacts/
-    (gitignored). This project is NOT part of KatLang.slnx, so normal validation is
+    (gitignored). This project is NOT part of dotnet/KatLang.slnx, so normal validation is
     unaffected.
 
 .NOTES
