@@ -597,6 +597,50 @@ public sealed class DownloadGuardrailTests
         Assert.Equal("the download did not complete within 0.4 seconds.", error.Message);
     }
 
+    [Theory]
+    [InlineData(399, false)]
+    [InlineData(400, true)]
+    [InlineData(800, true)]
+    public void AConnectTimeout_IsClassifiedByElapsedDownloadTime(int elapsedMilliseconds, bool deadlineExceeded)
+    {
+        var timeout = new TaskCanceledException("connect timed out", new TimeoutException());
+
+        var error = HttpSourceDownloader.ClassifyConnectTimeout(
+            TimeSpan.FromMilliseconds(400), TimeSpan.FromMilliseconds(elapsedMilliseconds), timeout);
+
+        Assert.Equal(deadlineExceeded ? DownloadFailure.DeadlineExceeded : DownloadFailure.ConnectionFailed, error.Failure);
+        Assert.Same(timeout, error.InnerException);
+    }
+
+    [Fact]
+    public async Task AnEarlierConnectTimeout_IsAFailedConnection()
+    {
+        var handler = new StubHttpHandler(() => throw new TaskCanceledException("connect timed out", new TimeoutException()));
+        using var transport = handler.Transport(Deadline);
+
+        var error = await Assert.ThrowsAsync<DownloadException>(
+            () => Guarded(transport.DownloadAsync("https://example.com/module.kat", CancellationToken.None).AsTask()));
+
+        Assert.Equal(DownloadFailure.ConnectionFailed, error.Failure);
+    }
+
+    [Fact]
+    public async Task CallerCancellation_TakesPrecedenceOverConnectTimeout()
+    {
+        using var caller = new CancellationTokenSource();
+        var handler = new StubHttpHandler(() =>
+        {
+            caller.Cancel();
+            throw new TaskCanceledException("connect timed out", new TimeoutException());
+        });
+        using var transport = handler.Transport(Deadline);
+
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => Guarded(transport.DownloadAsync("https://example.com/module.kat", caller.Token).AsTask()));
+
+        Assert.Equal(caller.Token, error.CancellationToken);
+    }
+
     [Fact]
     public async Task CallerCancellation_DuringNameResolution_CarriesTheCallersToken()
     {
