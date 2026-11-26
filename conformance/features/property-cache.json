@@ -260,5 +260,19 @@
     "expectedRaw": "S[S[3, 30], 4]",
     "expectedEmittedCount": 2,
     "explanation": "Each of the three continuing rounds establishes its own `A` when it evaluates `acc + A(n)`. At `n = 3` the flag is false, so the loop returns its entering state and the next `tick()` is 4."
+  },
+  {
+    "id": "callback-invocation-establishes-no-cache-entry",
+    "category": "access-boundaries",
+    "source": "Only(*xs) = tick()\nmap([5], Only)[0], Only, Only",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "1\n2\n2"
+      }
+    ],
+    "expectedRaw": "S[1, 2, 2]",
+    "expectedEmittedCount": 3,
+    "explanation": "Reading position 0 makes `map` invoke its callback before anything reads `Only`: the callback call `Only(5)` is fresh and ticks 1, and a callback slot's own invocation never establishes a property entry. The bare `Only` that follows is therefore the property's first read: it ticks 2 and publishes, and the last `Only` reuses that entry. Had the callback call established the entry, both reads would be 1."
   }
 ]

@@ -3,8 +3,9 @@ namespace KatLang.Tests;
 /// <summary>
 /// SELECTIVE OBSERVATION OF A RETAINED COLLECTOR (NEED-07, November 2026): <c>count</c>, <c>first</c>,
 /// <c>last</c>, <c>take</c> and postfix selection read a collecting parameter's exact slice of need cells
-/// and demand only the elements their result needs; a genuine whole VALUE, an ordinary list and every
-/// computed carrier stay eager. Every expectation is written from the contract and runs on the six
+/// and demand only the elements their result needs. Reading the collector's whole VALUE demands every
+/// item, including when a list literal opens its spread. Ordinary list positions are read on demand.
+/// Every expectation is written from the contract and runs on the six
 /// routes (<see cref="SixRouteAgreement"/>), which compare values, the ordered host-call log and every
 /// structured error. <c>trace</c> suspends on the twin routes, so a demanded element genuinely suspends
 /// and an undemanded one is never entered. Lean: <c>retainedCollectorBuiltin</c>,
@@ -62,7 +63,7 @@ public sealed class SelectiveCollectorReadTests
     [InlineData("xs.take(2)", "F(10, 1 / 0)", "DivisionByZero")]
     public Task AcceptanceTable_Failures(string body, string call, string code) => Fails(F(body, call), code);
 
-    // ── A whole VALUE, ordinary data and carriers stay eager ────────────────────────────────────
+    // ── Collector VALUE, written lists and computed carriers ────────────────────────────────────
 
     [Theory]
     [InlineData("xs")]
@@ -87,8 +88,7 @@ public sealed class SelectiveCollectorReadTests
     [InlineData("(10, 1 / 0).count")]
     public Task WrittenSequences_StayEager(string source) => Fails(source, "DivisionByZero");
 
-    // A written LIST defers its elements, exactly like a retained collector: a selective reader
-    // runs only the positions it reads (lazy collections, issue #204).
+    // A list literal defers its ordinary elements. These readers leave the failing position untouched.
     [Theory]
     [InlineData("[10, 1 / 0][0]", "10")]
     [InlineData("[1 / 0].count", "1")]

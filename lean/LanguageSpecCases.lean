@@ -14,16 +14,16 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 809
+- specification surface cases: 810
 - excluded parse-level cases (Lean has no surface parser): 89
 - other shared cases outside the Lean model (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 696
+- Lean-guarded cases: 697
 - probe observations (checked by surface runners): 1692
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
-  the other 692 programs have no cache observation, which is not an empty cache;
+  the other 693 programs have no cache observation, which is not an empty cache;
   each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
   C# runner requires the same entries of C#
 
@@ -3189,6 +3189,11 @@ def case_hunt_runtime_alias_cell_lifetime_per_loop_round : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.num 0])])])]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["n"]) (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "n") (.num 0)))]) "Algorithm" none)))) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.call (.resolve "A") [.param "n"])), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
 #guard obs case_hunt_runtime_alias_cell_lifetime_per_loop_round == "ok raw=S[S[3, 30], 4] n=2"
 
+-- callback-invocation-establishes-no-cache-entry [access-boundaries]: Only(*xs) = tick() \n map([5], Only)[0], Only, Only
+def case_callback_invocation_establishes_no_cache_entry : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "tick") [])])] [(.index (.call (.resolve "map") [(.listLiteral [.num 5]), .resolve "Only"]) [.num 0]), .resolve "Only", .resolve "Only"])
+#guard obs case_callback_invocation_establishes_no_cache_entry == "ok raw=S[1, 2, 2] n=3"
+
 -- hunt-need-spread-formed-before-ordinary-cells [variadic-calls]: F(*xs) = xs \n F(tick(), (tick(), tick())*)
 def case_hunt_need_spread_formed_before_ordinary_cells : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "F") [(.call (.resolve "tick") []), (.sequenceSpread (.capture [(.call (.resolve "tick") []), (.call (.resolve "tick") [])]))])])
@@ -3744,7 +3749,7 @@ def case_decon_target_calls_reuse_the_shared_source : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.call (.resolve "tick") []), .num 20]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.call (.resolve "a") []), (.call (.resolve "a") []), .resolve "b"])
 #guard obs case_decon_target_calls_reuse_the_shared_source == "ok raw=S[1, 1, 20] n=3"
 
--- 696 canonical Lean-guarded specification cases.
+-- 697 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -4337,6 +4342,7 @@ def specCaseIds : List String := [
   "hunt-runtime-alias-cell-lifetime-exported",
   "hunt-runtime-alias-cell-lifetime-local",
   "hunt-runtime-alias-cell-lifetime-per-loop-round",
+  "callback-invocation-establishes-no-cache-entry",
   "hunt-need-spread-formed-before-ordinary-cells",
   "hunt-need-collector-selection-demands-one-cell-once",
   "hunt-need-repeated-name-value-contribution-anchors",
@@ -4449,7 +4455,7 @@ def specCaseIds : List String := [
   "selective-collector-take-count-error-precedes-elements",
   "decon-target-calls-reuse-the-shared-source"
 ]
-#guard specCaseIds.length == 696
+#guard specCaseIds.length == 697
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards

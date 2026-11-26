@@ -23,10 +23,10 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 4609
-- guarded: 4471 (664 may capture calls, 3807 cannot)
+- corpus programs: 4610
+- guarded: 4472 (664 may capture calls, 3808 cannot)
 - excluded: 138
-  language-spec: 809 programs, 696 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
+  language-spec: 810 programs, 697 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2821 programs, 2808 guarded (131 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
   generated: 744 programs, 735 guarded (365 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
@@ -633,6 +633,7 @@ open KatLang
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_exported == true
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_local == true
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_per_loop_round == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_callback_invocation_establishes_no_cache_entry == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_need_spread_formed_before_ordinary_cells == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_need_collector_selection_demands_one_cell_once == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_need_repeated_name_value_contribution_anchors == false
@@ -1333,6 +1334,7 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_exported,
   LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_local,
   LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_per_loop_round,
+  LanguageSpecCases.case_callback_invocation_establishes_no_cache_entry,
   LanguageSpecCases.case_hunt_need_spread_formed_before_ordinary_cells,
   LanguageSpecCases.case_hunt_need_collector_selection_demands_one_cell_once,
   LanguageSpecCases.case_hunt_need_repeated_name_value_contribution_anchors,
@@ -1445,7 +1447,7 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_selective_collector_take_count_error_precedes_elements,
   LanguageSpecCases.case_decon_target_calls_reuse_the_shared_source
 ]
-#guard languageSpecPrograms.length == 696
+#guard languageSpecPrograms.length == 697
 #guard (languageSpecPrograms.filter Expr.mayCaptureCalls).length == 89
 
 /-! ## explorer -/
@@ -9058,5 +9060,5 @@ def plannedLoopTempPrograms : List Expr := [
 #guard plannedLoopTempPrograms.length == 36
 #guard (plannedLoopTempPrograms.filter Expr.mayCaptureCalls).length == 36
 
--- 4471 gate guards over 4609 corpus programs.
+-- 4472 gate guards over 4610 corpus programs.
 end KatLang.MayCaptureCallsCorpus

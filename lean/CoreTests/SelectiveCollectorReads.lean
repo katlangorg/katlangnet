@@ -6,8 +6,9 @@ import CoreTests.Common
 
 A collecting parameter retains an exact slice of its original need cells. `count`, `first`, `last`,
 `take` and postfix selection read that slice as positions, so an element no result needs stays
-undemanded; a genuine whole VALUE, an ordinary list and every computed carrier stay eager. Every guard
-runs a whole program through the production evaluator. `tick()` shows exactly which elements executed
+undemanded. A read of the collector's VALUE demands every item, including when a list literal opens
+its spread. Ordinary list positions are read on demand. Every guard runs a whole program through the
+production evaluator. `tick()` shows exactly which elements executed
 and in which first-demand order, and a failing `1 / 0` element shows which stayed dormant.
 C# twin: `SelectiveCollectorReadTests`.
 -/
@@ -142,10 +143,10 @@ private def takeHelper : PropDef := privateProp "Head" (alg ["v"] [] [] [.index 
 -- A chain of reference arguments through two activations is one loop over cells.
 private def relay : PropDef := privateProp "Relay" (alg ["w"] [] [reference "B" (.param "w") "w"] [.call (.resolve "Size") [.resolve "B"]])
 #guard isOk (n 1) (program [countHelper, relay, fWith oneHop [.call (.resolve "Relay") [A]]] (callF [bad]))
--- A list handed to a helper is ordinary data.
+-- Forming `[xs*]` demands the collector's VALUE before the helper can count the list.
 #guard isDiv (program [countHelper, fWith [] [.call (.resolve "Size") [.listLiteral [.sequenceSpread xs]]]] (callF [bad]))
 
--- A whole VALUE is read whole; a list literal defers its elements (issue #204) -------------
+-- Collector VALUE, ordinary list positions and explicit spreads (issue #204) ---------------
 #guard isDiv (run [xs] [bad])
 -- `[10, 1 / 0][0]` is `10`: selection reads only the position it names.
 #guard isOk (n 10) (runResult (.index (.listLiteral [.num 10, bad]) [.num 0]))

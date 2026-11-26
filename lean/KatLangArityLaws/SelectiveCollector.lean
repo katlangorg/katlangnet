@@ -62,7 +62,7 @@ theorem ready_cell_retains_nothing (rec : EvalRec) (fuel address : Nat) (s : Eva
 
 /-- **Only a reference can be retained.** A receiver that is no parameter and no static reference, a
     list, capture, call, selection or calculation among them, has no slice, for every recursive
-    answer: the ordinary eager path decides it. -/
+    answer. The consumer evaluates the receiver under its own VALUE rule. -/
 theorem calculated_receiver_retains_nothing (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx)
     (hparam : ∀ name, receiver ≠ .param name) (hpath : Expr.staticAliasPath? receiver = none) :
     EvalBody.writtenCollectorSlice? rec receiver ctx = pure none := by

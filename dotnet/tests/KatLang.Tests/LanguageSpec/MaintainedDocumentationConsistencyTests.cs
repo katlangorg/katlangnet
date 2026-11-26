@@ -68,6 +68,9 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bexport(?:ed|s)?\s+(?:\w+\s+){0,3}(?:through|via|by)\s+`?open\b", "public visibility called 'exported'" },
         { @"\bproviders?\s+exports?\b", "public visibility called 'exported'" },
         { @"\bexported\s+(?:clause-style\s+)?APIs?\b", "public visibility called 'exported'" },
+        // An ordinary list position can stay undemanded even when the list is selected from.
+        { @"`\[10, 1 / 0\]\[0\]` still fails", "selection forcing an unread list position" },
+        { @"(?:capture/list reconstruction uses the established eager value boundaries|a capture or list, if demanded, evaluates its elements eagerly)", "eager reconstruction of ordinary list positions" },
         // Indexing is zero-based (source line/column coordinates are 1-based, a different thing).
         { @"\b(?:one|1)-based\s+(?:index|indexing|selection)\b", "one-based indexing" },
         // Q-03: implicit lifting follows zero-argument acceptance. A callable that works with no

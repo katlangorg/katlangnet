@@ -301,7 +301,7 @@
     "source": "F(*xs) = [xs*][0]\nF(10, 1 / 0)",
     "outcome": "EvalError",
     "expectedErrorCategory": "div0",
-    "explanation": "A written list is ordinary eager data, even when it holds a collector's items and its selection needs only one of them."
+    "explanation": "The selection's receiver is a list literal, not the collector, so no retained slice is read. The spread `xs*` is formed while the list is built, and spreading the collector there demands its whole value, so `1 / 0` fails before `[0]` selects anything. Only the literal's ordinary elements wait to be read: `[10, 1 / 0][0]` is `10`."
   },
   {
     "id": "selective-collector-carrier-stays-eager",
