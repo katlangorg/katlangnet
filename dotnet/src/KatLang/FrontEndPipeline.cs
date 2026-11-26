@@ -388,13 +388,15 @@ internal static class FrontEndPipeline
         // ParameterDetector.RewriteParams — so trees between the raw-syntax cap and
         // the evaluation ceiling are rejected HERE, on both the module and non-module
         // paths, with one structured diagnostic instead of being walked at
-        // machine-dependent risk. Anything this gate passes is also within the
-        // evaluator's own structural ceiling. This is the pipeline's ONE common gate:
-        // the passes below run through their prevalidated cores, so the modest
-        // depth growth elaboration itself adds (parameter lifting wraps calls) is
-        // absorbed by the ceiling's measured ≥2x margin rather than re-gated
-        // mid-pipeline.
-        if (RejectOverDeepElaboration(input) is { } rejected)
+        // machine-dependent risk. This is the pipeline's ONE elaboration gate, and it
+        // judges two trees: the one elaboration receives (here) and the one it
+        // publishes (again after implicit-argument resolution, CompleteBeforeExposure).
+        // Elaboration itself adds depth in proportion to the input — formula lifting and
+        // bare forwarding write calls whose argument rebuilds the callee's nested
+        // parameter pattern, and output spreading inserts a spread per marked call — so
+        // no margin absorbs it, and the published root that every consumer of a parse
+        // result takes as gated (SemanticModelBuilder.Build) is judged like written source.
+        if (RejectOverDeepElaboration(input, cancellationToken) is { } rejected)
             return rejected;
 
         var diagnostics = input.Diagnostics;
@@ -499,6 +501,14 @@ internal static class FrontEndPipeline
         if (passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
             return RecoverAfterSelfDependentInference(input, input.Diagnostics, passDiagnostics, operation, hasDeferredModuleRegions, cancellationToken);
 
+        // THE ELABORATED TREE IS GATED TOO: resolution writes the calls of formula lifting and bare forwarding and the
+        // spreads of output spreading, so the tree it returns can be deeper than the one the elaboration gate admitted.
+        // The same gate judges it before any later pass walks it, with the written tree's refusal: AstDepthLimitExceeded
+        // into the operation's bag (a provisional elaboration included) and the placeholder root, so a marked program is
+        // refused exactly as its explicit-`*` counterpart is, and no consumer of the result meets a deeper tree.
+        if (RejectOverDeepElaboration(input, cancellationToken) is { } overDeep)
+            return overDeep;
+
         // The parameter/property collision rule, the open PROVIDER rule, and the output rule
         // need completed signatures (an inferred parameter list is final only now) and nothing
         // from exposure, so they run here: an algorithm with inferred parameters and no output is
@@ -518,19 +528,26 @@ internal static class FrontEndPipeline
     // those live for the whole method, which kept the raw syntax tree, the detected tree, and a
     // finished validator's memo alive through every later pass.
 
-    private static FrontEndResult? RejectOverDeepElaboration(ElaborationInput input)
+    /// <summary>
+    /// THE ONE ELABORATION GATE (<see cref="EvaluationLimits.MaxSupportedAstDepth"/>, fully recursive profile), applied to
+    /// the tree elaboration receives (decided by the raw gate's measurement while that tree is unchanged) and to every tree
+    /// elaboration publishes: after implicit-argument resolution, and on the recovery after self-dependent inference. A
+    /// refusal reports the structural diagnostic into the operation's bag — never a provisional stage, which nothing
+    /// commits — and returns the established placeholder root, so no pass after the gate and no consumer of a parse result
+    /// walks a tree beyond the ceiling.
+    /// </summary>
+    private static FrontEndResult? RejectOverDeepElaboration(ElaborationInput input, CancellationToken cancellationToken)
     {
         if (input.ConsumeRawGateMeasurement(EvaluationLimits.MaxSupportedAstDepth))
             return null;
 
-        if (AstStructuralPreflight.Check(
-                input.Current,
-                EvaluationLimits.MaxSupportedAstDepth,
-                AstConsumerProfile.FullyRecursive) is not { } elaborationRejection)
+        var rejection = AstStructuralPreflight.CheckSourceElaboration(input.Current, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (rejection is null)
             return null;
 
         input.Diagnostics.Add(AstStructuralPreflight.ToParseDiagnostic(
-            elaborationRejection, EvaluationLimits.MaxSupportedAstDepth));
+            rejection, EvaluationLimits.MaxSupportedAstDepth));
         return new FrontEndResult(new Algorithm.User(null, [], [], [], []), input.Diagnostics);
     }
 
@@ -592,6 +609,11 @@ internal static class FrontEndPipeline
     private static FrontEndResult RecoverAfterSelfDependentInference(ElaborationInput input, DiagnosticBag diagnostics,
         DiagnosticBag passDiagnostics, StaticStructureOperation operation, bool hasDeferredModuleRegions, CancellationToken cancellationToken)
     {
+        // The recovery publishes the detected tree, which detection can deepen (a marked extension edge becomes a call with
+        // a spread receiver), so the elaboration gate judges it before anything walks or publishes it.
+        if (RejectOverDeepElaboration(input, cancellationToken) is { } overDeep)
+            return overDeep;
+
         operation.CompleteLookups(input.Current);
         input.Current.CompletedStructure!.Facts.Seal(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();

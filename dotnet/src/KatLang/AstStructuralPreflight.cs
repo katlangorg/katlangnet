@@ -95,7 +95,8 @@ internal enum AstConsumerProfile
 /// <para><b>Ceilings.</b> Every FAT-FRAME consumer enforces
 /// <see cref="EvaluationLimits.MaxSupportedAstDepth"/> (see its documentation for the
 /// safety invariant and calibration): the evaluator entry points, front-end
-/// ELABORATION (<c>FrontEndPipeline.FinalizeElaboration</c> plus the standalone
+/// ELABORATION (<c>FrontEndPipeline.FinalizeElaboration</c>, whose one gate judges the
+/// tree elaboration receives and every tree it publishes, plus the standalone
 /// <c>ParameterDetector.Detect</c> and <c>ImplicitArgumentResolver.Resolve</c>
 /// boundaries), and semantic-model building.
 /// <see cref="EvaluationLimits.MaxAstDepth"/> can only request a lower limit, so no
@@ -294,6 +295,13 @@ internal static class AstStructuralPreflight
         AstConsumerProfile profile,
         FrontEndTraversalObservations? observations = null)
         => CheckCore(root, maxDepth, profile, observations, detectCallCapture: false, deferredMemo: null, out _, out _);
+
+    /// <summary>The source pipeline's elaboration gate. A module held directly by a property has no
+    /// wrapper expression carrying its import site, so a refusal also inspects the property edge.</summary>
+    internal static AstStructuralRejection? CheckSourceElaboration(Algorithm root, CancellationToken cancellationToken)
+        => CheckCore(root, EvaluationLimits.MaxSupportedAstDepth, AstConsumerProfile.FullyRecursive,
+            observations: null, detectCallCapture: false, deferredMemo: null, out _, out _,
+            locatePropertyImports: true, cancellationToken: cancellationToken);
 
     /// <summary>
     /// <see cref="Check"/>, also reporting the root's exact weighted height under <paramref name="profile"/> (-1 on a
@@ -506,6 +514,7 @@ internal static class AstStructuralPreflight
         int nodeCountHint = 0,
         PreEvaluationTables? tables = null,
         CompletedModuleViews.Attempt? moduleViews = null,
+        bool locatePropertyImports = false,
         FrontEndCancellationCheckpoint checkpoint = FrontEndCancellationCheckpoint.EvaluatorPreflight,
         CancellationToken cancellationToken = default)
     {
@@ -513,9 +522,7 @@ internal static class AstStructuralPreflight
         if (moduleViews is not null && profile != AstConsumerProfile.FullyRecursive)
             throw new ArgumentException("Completed module-view heights are fully recursive heights.", nameof(moduleViews));
 
-        // Only an evaluator run hands in a cancellable token (CheckAdmittedProgram, and a deferred-body admission during
-        // evaluation, which reports under its own checkpoint kind): every other caller's walk observes nothing and records
-        // no checkpoint, exactly as before.
+        // Evaluation and source elaboration poll their own operation's token. Source elaboration passes no observer.
         var observesCancellation = cancellationToken.CanBeCanceled;
         if (observesCancellation)
             FrontEndTraversalObservations.ObserveCancellation(observations, checkpoint, cancellationToken);
@@ -661,16 +668,16 @@ internal static class AstStructuralPreflight
                 if (deferredMemo is null && (child is OutputBundle or ImplicitSignatureTemplate)
                     && (childHeight == OnStack || pathWeight + transitionWeight + childHeight > maxDepth))
                     return RejectWithinGroupingNode(child, heights, pathWeight + transitionWeight, maxDepth, frames, frameCount,
-                        observations, checkpoint, cancellationToken);
+                        observations, checkpoint, locatePropertyImports, cancellationToken);
 
                 if (childHeight == OnStack)
-                    return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(child, frames, frameCount, cancellationToken));
+                    return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(child, frames, frameCount, locatePropertyImports, cancellationToken));
 
                 // Completed shared node: the deepest path through THIS occurrence is the
                 // current weighted path plus the memoized weighted height — judged
                 // without re-walking the shared subtree.
                 if (pathWeight + transitionWeight + childHeight > maxDepth)
-                    return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount, cancellationToken));
+                    return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount, locatePropertyImports, cancellationToken));
 
                 var childHeightAtParent = transitionWeight + childHeight;
                 if (childHeightAtParent > frame.MaxChildHeight)
@@ -682,7 +689,7 @@ internal static class AstStructuralPreflight
 
             var childWeight = NodeWeight(child, profile);
             if (pathWeight + transitionWeight + childWeight > maxDepth)
-                return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount, cancellationToken));
+                return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount, locatePropertyImports, cancellationToken));
 
             heights[child] = OnStack;
             if (detectCallCapture)
@@ -819,6 +826,7 @@ internal static class AstStructuralPreflight
         int frameCount,
         FrontEndTraversalObservations? observations,
         FrontEndCancellationCheckpoint checkpoint,
+        bool locatePropertyImports,
         CancellationToken cancellationToken)
     {
         // A grouping node (an argument bundle, a shared signature template) is weightless, so its
@@ -836,10 +844,10 @@ internal static class AstStructuralPreflight
             // The first offending child; a nested grouping node holds the offending slot itself.
             if (slot is OutputBundle or ImplicitSignatureTemplate)
                 return RejectWithinGroupingNode(slot, heights, pathWeight, maxDepth, frames, frameCount, observations, checkpoint,
-                    cancellationToken);
+                    locatePropertyImports, cancellationToken);
             return new AstStructuralRejection(
                 onPath ? AstStructuralViolation.CycleDetected : AstStructuralViolation.DepthExceeded,
-                SpanOf(slot, frames, frameCount, cancellationToken));
+                SpanOf(slot, frames, frameCount, locatePropertyImports, cancellationToken));
         }
 
         throw new InvalidOperationException(
@@ -1064,7 +1072,8 @@ internal static class AstStructuralPreflight
     /// nearest positioned ancestor is the load site or an expression of the current
     /// document that reaches it, never a foreign coordinate.
     /// </summary>
-    private static SourceSpan? SpanOf(object node, Frame[] frames, int frameCount, CancellationToken cancellationToken)
+    private static SourceSpan? SpanOf(object node, Frame[] frames, int frameCount, bool locatePropertyImports,
+        CancellationToken cancellationToken)
     {
         if (SpanOf(node) is { } own)
             return own;
@@ -1073,7 +1082,14 @@ internal static class AstStructuralPreflight
         {
             if (cancellationToken.CanBeCanceled && index % CancellationCheckpointEdges == 0)
                 cancellationToken.ThrowIfCancellationRequested();
-            if (SpanOf(frames[index].Node) is { } enclosing)
+            ref readonly var frame = ref frames[index];
+            if (locatePropertyImports && node is Algorithm { IsModuleRoot: true }
+                && TryGetChildEdge(frame.Node, frame.NextChildIndex - 1, out _, out var property)
+                && property is not null && ImportSite.OfProperty(property) is { } importSite)
+                return importSite;
+
+            node = frame.Node;
+            if (SpanOf(node) is { } enclosing)
                 return enclosing;
         }
 
@@ -1091,7 +1107,13 @@ internal static class AstStructuralPreflight
     /// children would let a future AST variant smuggle unmeasured depth past this guard.
     /// </summary>
     internal static bool TryGetChild(object node, int index, out object child)
+        => TryGetChildEdge(node, index, out child, out _);
+
+    // The property, when present, is the precise incoming edge. On refusal the active frames can
+    // replay that edge without searching siblings or retaining a source span per visited node.
+    private static bool TryGetChildEdge(object node, int index, out object child, out Property? property)
     {
+        property = null;
         switch (node)
         {
             case Expr expr:
@@ -1129,7 +1151,8 @@ internal static class AstStructuralPreflight
                 var properties = algorithm.Properties;
                 if (index < properties.Count)
                 {
-                    child = properties[index].Value;
+                    property = properties[index];
+                    child = property.Value;
                     return true;
                 }
 
@@ -1256,7 +1279,8 @@ internal static class AstStructuralPreflight
                 var properties = scope.Properties;
                 if (index < properties.Count)
                 {
-                    child = properties[index].Value;
+                    property = properties[index];
+                    child = property.Value;
                     return true;
                 }
 

@@ -501,6 +501,12 @@ public class MaintainedDocumentationConsistencyTests
             @"\bopen`?-provided\s+(?:local-only\s+)?(?:name|member)\b[^.;]{0,120}\b(?:is|are)\s+not\s+(?:recorded|noted)\b",
             "an open-provided member's access as unrecorded on a retained cell (before the open route was recorded, 2026-11-26)"
         },
+        // The elaborated tree is gated too (2026-11-26): elaboration deepens a tree in proportion to its input, so the
+        // front end judges every tree it publishes with the elaboration gate; no margin of the ceiling absorbs the growth.
+        {
+            @"\bgrowth\b[^.;]{0,120}\babsorbed\b",
+            "elaboration depth growth absorbed by the structural ceiling's margin instead of gated (superseded 2026-11-26)"
+        },
     };
 
     [Theory]

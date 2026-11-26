@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Tracing;
 using KatLang.ParserFuzz;
 using KatLang.TestInfrastructure;
 
@@ -1830,29 +1831,124 @@ public class DiagnosticBudgetTests(Xunit.Abstractions.ITestOutputHelper output)
 
     // The front end's allocation for a source making two equal reports with a two-diagnostic list, minus that with a
     // one-diagnostic list, which stores only the first: the cost of building ONE stored message (both runs warmed first).
-    // On the 10,000-leaf lifted-pattern workload, changing JIT tiers between the windows displaced one difference
-    // by about 800 KB on both 7de84650 and the exposure candidate. The historical 217,208-byte first-leaf measurement
-    // did not reproduce on either build. Record three adjacent pairs in execution order and use their median so a
-    // single displaced pair in either direction cannot decide whether the message meets its allocation bound.
+    //
+    // FreezeParameters rents int[16384], int[32768] and int[1024] to freeze 10,000 names. SummaryReference.KeyParts
+    // also rents char[131072] four times for the lifted pattern. Trimming the pool on just one side of a pair
+    // reproduced the displacement seen before the depth gate (217208 bytes) and after it (217368, 12280, 218328).
+    // Other recorded differences include -193224 bytes and 475 KB on the lifted pattern.
+    //
+    // A fresh thread gives each window an empty thread-local pool cache. The shared pool can still supply an array,
+    // and a trim between rents can force another allocation. Compare the large (pool, length) allocations in full
+    // before accepting a pair. Smaller refills stay in the measurement within the workloads' existing allowance.
+    //
+    // On the 10,000-leaf lifted-pattern workload, changing JIT tiers between the windows displaced one difference by
+    // about 800 KB (7de84650). Three comparable adjacent pairs are recorded in execution order and their median decides,
+    // so a single displaced pair in either direction cannot decide whether the message meets its allocation bound.
     private long OneStoredMessage(string source)
     {
-        long Allocated(int limit)
+        (long Bytes, long[] PoolAllocations) Allocated(int limit)
         {
-            var before = GC.GetAllocatedBytesForCurrentThread();
-            var (diagnostics, _) = Elaborate(source, limit);
-            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-            Assert.Equal((2, Math.Min(2, limit)), (diagnostics.ReportedCount, diagnostics.Count - (diagnostics.IsTruncated ? 1 : 0)));
-            return allocated;
+            var allocated = 0L;
+            long[]? poolAllocations = null;
+            DiagnosticBag? diagnostics = null;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo? failure = null;
+            var window = new Thread(() =>
+            {
+                try
+                {
+                    PooledArrayAllocations.Begin();
+                    var before = GC.GetAllocatedBytesForCurrentThread();
+                    (diagnostics, _) = Elaborate(source, limit);
+                    allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                    poolAllocations = PooledArrayAllocations.End();
+                }
+                catch (Exception exception)
+                {
+                    failure = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exception);
+                }
+            });
+            window.Start();
+            window.Join();
+            failure?.Throw();
+            Assert.Equal((2, Math.Min(2, limit)), (diagnostics!.ReportedCount, diagnostics.Count - (diagnostics.IsTruncated ? 1 : 0)));
+            return (allocated, poolAllocations!);
         }
 
+        using var pool = new PooledArrayAllocations();
         _ = Elaborate(source, 2);
         _ = Elaborate(source, 1);
-        Span<long> differences = stackalloc long[3];
-        for (var pair = 0; pair < differences.Length; pair++)
-            differences[pair] = Allocated(2) - Allocated(1);
+        const int MaxPairs = 9;
+        var differences = new List<long>(3);
+        var windows = new List<string>();
+        for (var pair = 0; pair < MaxPairs && differences.Count < 3; pair++)
+        {
+            var two = Allocated(2);
+            var one = Allocated(1);
+            var comparable = two.PoolAllocations.AsSpan().SequenceEqual(one.PoolAllocations);
+            if (comparable)
+                differences.Add(two.Bytes - one.Bytes);
+            windows.Add(comparable
+                ? $"{two.Bytes} - {one.Bytes}"
+                : $"{two.Bytes} - {one.Bytes} excluded, the pool allocated [{PooledArrayAllocations.Show(two.PoolAllocations)}] "
+                    + $"against [{PooledArrayAllocations.Show(one.PoolAllocations)}]");
+        }
+        output.WriteLine($"Stored-message windows, two-diagnostic minus one-diagnostic in execution order (bytes): {string.Join("; ", windows)}");
+        Assert.True(differences.Count == 3,
+            $"the shared ArrayPool allocated different arrays in the two windows of {windows.Count - differences.Count} of {windows.Count} pairs: {string.Join("; ", windows)}");
         output.WriteLine($"Stored-message allocation differences (bytes): {differences[0]}, {differences[1]}, {differences[2]}");
         differences.Sort();
         return differences[1];
+    }
+
+    /// <summary>
+    /// The large arrays (<see cref="LargeLength"/> elements or more) a shared ArrayPool had to allocate (its
+    /// BufferAllocated event) on the window thread between <see cref="Begin"/> and <see cref="End"/>, recorded by pool
+    /// and length without allocating. The event is raised synchronously on the renting thread; other threads record nothing.
+    /// </summary>
+    private sealed class PooledArrayAllocations : EventListener
+    {
+        private const int LargeLength = 4096;
+        [ThreadStatic] private static long[]? t_allocations;
+        [ThreadStatic] private static int t_count;
+
+        internal static void Begin()
+        {
+            t_allocations = new long[256];
+            t_count = 0;
+        }
+
+        /// <summary>The complete multiset of large (pool, length) allocations, sorted after the window closes.</summary>
+        internal static long[] End()
+        {
+            var allocations = t_allocations!;
+            t_allocations = null;
+            Assert.True(t_count <= allocations.Length,
+                $"Recorded {allocations.Length} of {t_count} large pool allocations. The measurement is incomplete.");
+            var recorded = allocations[..t_count];
+            Array.Sort(recorded);
+            return recorded;
+        }
+
+        internal static string Show(long[] allocations)
+            => string.Join(", ", allocations.Select(static key => $"pool {key >> 32}: {(int)key}"));
+
+        protected override void OnEventSourceCreated(EventSource eventSource)
+        {
+            if (eventSource.Name == "System.Buffers.ArrayPoolEventSource")
+                EnableEvents(eventSource, EventLevel.Informational);
+        }
+
+        protected override void OnEventWritten(EventWrittenEventArgs eventData)
+        {
+            if (t_allocations is not { } allocations || eventData.EventName != "BufferAllocated" || eventData.Payload is not { Count: > 2 } payload)
+                return;
+            var length = (int)payload[1]!;
+            if (length < LargeLength)
+                return;
+            if (t_count < allocations.Length)
+                allocations[t_count] = ((long)(int)payload[2]! << 32) | (uint)length;
+            t_count++;
+        }
     }
 
     [Fact]

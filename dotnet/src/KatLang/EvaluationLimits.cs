@@ -177,7 +177,10 @@ public sealed record EvaluationLimits
     /// consumers. This same ceiling also gates front-end ELABORATION (parameter
     /// detection, implicit-argument and exposure resolution) and semantic-model
     /// building, whose recursive passes measure in the same fat-frame class as
-    /// evaluation; only the small-framed walker-class consumers (post-parse
+    /// evaluation — the tree elaboration receives and every tree it publishes, since
+    /// formula lifting, bare forwarding and output spreading deepen a tree in
+    /// proportion to it, so no parse result exceeds the ceiling its semantic model
+    /// applies; only the small-framed walker-class consumers (post-parse
     /// validation walk, module-composition load-invariant walk) run under the larger
     /// raw-syntax gate (<c>AstStructuralPreflight.RawSyntaxMaxAstDepth</c>).
     ///

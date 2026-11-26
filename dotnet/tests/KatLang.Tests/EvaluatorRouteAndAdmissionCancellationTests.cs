@@ -291,6 +291,23 @@ public sealed class EvaluatorRouteAndAdmissionCancellationTests
     }
 
     [Fact]
+    public void SourceElaborationPreflight_ObservesCancellationDuringTheWalk()
+    {
+        // The source gate shares this walk with the evaluator. Cancel on a list read so the entry
+        // poll has already passed and a final check after a complete walk cannot satisfy the bound.
+        var members = new CancellingList<Property>([.. SharedMembers(4 * Block)]);
+        using var cancellation = members.Source;
+        var root = new Algorithm.User(null, [], [], members, []);
+        members.CancelAt = members.Reads + 10;
+
+        var error = Assert.Throws<OperationCanceledException>(
+            () => AstStructuralPreflight.CheckSourceElaboration(root, cancellation.Token));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.Equal(members.CancelAt, members.ReadsAtCancel);
+        Assert.InRange(members.Reads - members.ReadsAtCancel, 0, 2 * Block + 4);
+    }
+
+    [Fact]
     public void CancellationDuringAliasReachInOneWideBodyIsBounded()
     {
         var properties = new CancellingList<Property>([.. SharedMembers(8 * Block),

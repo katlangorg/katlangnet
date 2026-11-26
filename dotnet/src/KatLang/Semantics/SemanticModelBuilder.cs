@@ -163,7 +163,8 @@ public static class SemanticModelBuilder
         // 640-node spine overflows a 512 KiB thread; a 300-node one completes within
         // it), so semantic modeling shares the evaluation/elaboration structural
         // ceiling. Roots from Parser.Parse are already elaboration-gated to the same
-        // bound and pass unchanged.
+        // bound — the front end judges every tree it publishes, after the passes that
+        // deepen it (FrontEndPipeline.RejectOverDeepElaboration) — and pass unchanged.
         if (AstStructuralPreflight.Check(
                 elaboratedRoot,
                 EvaluationLimits.MaxSupportedAstDepth,
