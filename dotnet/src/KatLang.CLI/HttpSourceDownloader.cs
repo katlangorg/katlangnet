@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 
@@ -218,7 +219,7 @@ internal sealed class HttpSourceDownloader : IDisposable
         // The handler opens a connection apart from the request that asked for it, so the
         // request's deadline alone would leave a stalled resolution or connection attempt
         // running behind a download that has already failed. This bound ends it; it is longer
-        // than the deadline, so the deadline is always the one a download reports.
+        // than the deadline, though its timer can race the download's cancellation callback.
         ConnectTimeout = ConfiguredDownloadTimeout + ConfiguredDownloadTimeout,
     };
 
@@ -242,6 +243,7 @@ internal sealed class HttpSourceDownloader : IDisposable
 
         // One absolute deadline for the whole download, linked to the caller's token and
         // never restarted: a trickling peer runs out of time exactly like a silent one.
+        var started = Stopwatch.GetTimestamp();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(ConfiguredDownloadTimeout);
 
@@ -319,6 +321,10 @@ internal sealed class HttpSourceDownloader : IDisposable
             // failed download, not a cancellation.
             throw DownloadException.DeadlineExceeded(ConfiguredDownloadTimeout, ex);
         }
+        catch (OperationCanceledException ex) when (ex.InnerException is TimeoutException)
+        {
+            throw ClassifyConnectTimeout(ConfiguredDownloadTimeout, Stopwatch.GetElapsedTime(started), ex);
+        }
         catch (HttpRequestException ex)
         {
             // The handler wraps what the connect callback threw; the refusal itself is inside.
@@ -329,6 +335,11 @@ internal sealed class HttpSourceDownloader : IDisposable
                     : DownloadException.RequestFailed(ex));
         }
     }
+
+    internal static DownloadException ClassifyConnectTimeout(TimeSpan deadline, TimeSpan elapsed, Exception error)
+        => elapsed >= deadline
+            ? DownloadException.DeadlineExceeded(deadline, error)
+            : DownloadException.ConnectionFailed(error);
 
     /// <summary>
     /// The address checks that need no network: an absolute URL, HTTPS, no user information,
