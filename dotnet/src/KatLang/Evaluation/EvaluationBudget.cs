@@ -447,17 +447,30 @@ internal sealed class EvaluationBudget
     /// (<c>Evaluator.AliasCellInputs.Note</c>): the same read demanded after that evaluation returned
     /// belongs to an attached reader, which may use its own inputs.
     /// </summary>
-    internal long ServingDetached => Volatile.Read(ref _servingDetached);
+    internal long ServingDetached
+    {
+        get
+        {
+            var current = Volatile.Read(ref _servingDetached);
+            return NeedCell.CurrentObservation is { } observation
+                ? Math.Max(current, observation.ServingDetached(this))
+                : current;
+        }
+    }
 
     /// <summary>
     /// Serves <paramref name="watermark"/> until the matching <see cref="ExitServing"/> (Lean
     /// <c>servingDetached</c>): the served watermark rises to it, never falls, and the entry watermark is
-    /// kept here — so a bracket holds nothing in its caller's frame or across an await. A run is one
-    /// logical flow: a bracket's two halves run in order, though a continuation may resume on another
-    /// thread.
+    /// kept on the run for a computation or on its observation scope for a synchronous probe.
+    /// A continuation may resume the computation on another thread.
     /// </summary>
     internal void EnterServing(long watermark)
     {
+        if (NeedCell.CurrentObservation is { } observation)
+        {
+            observation.EnterServing(this, watermark);
+            return;
+        }
         var entered = _servingDetached;
         if (_servingDepth == _servingEntries.Length)
             Array.Resize(ref _servingEntries, Math.Max(4, _servingDepth * 2));
@@ -468,7 +481,12 @@ internal sealed class EvaluationBudget
 
     /// <summary>Ends the innermost <see cref="EnterServing"/>: the watermark it found is served again.</summary>
     internal void ExitServing()
-        => Volatile.Write(ref _servingDetached, _servingEntries[--_servingDepth]);
+    {
+        if (NeedCell.CurrentObservation is { } observation)
+            observation.ExitServing();
+        else
+            Volatile.Write(ref _servingDetached, _servingEntries[--_servingDepth]);
+    }
 
     /// <summary>
     /// ONE execution of the <c>tick()</c> primitive: increments the run's counter and returns the new

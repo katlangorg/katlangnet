@@ -70,15 +70,12 @@ public static partial class Evaluator
                 throw new System.Diagnostics.UnreachableException(
                     $"META-S3-0b: asynchronous resolution made no progress ({scope.PendingChannel} step reported pending after its outcome was recorded).");
             budget.NoteResolutionRetry();
-            budget.EnterServing(scope.PendingWatermark);
-            try
-            {
-                if (scope.PendingChannel == NeedCell.Channel.Value)
-                    record.RecordValue(cell, await cell.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext));
-                else
-                    record.RecordCallable(cell, await cell.ProjectCallableAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext));
-            }
-            finally { budget.ExitServing(); }
+            // Only the observer that starts the computation serves its watermark. A second
+            // observer can join the flight while the first is suspended.
+            if (scope.PendingChannel == NeedCell.Channel.Value)
+                record.RecordValue(cell, await cell.DemandAsync(scope.PendingWatermark).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
+            else
+                record.RecordCallable(cell, await cell.ProjectCallableAsync(scope.PendingWatermark).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         }
     }
 

@@ -29,6 +29,7 @@ It outputs `5`, `4` and `2`: the mean, the variance and the standard deviation o
 ## Try it
 
 - **In your browser:** try KatLang in the [online playground][playground], with nothing to install.
+- Install the [KatLang AI skill][skill] to run calculations with your AI assistant.
 - **On the command line:** download the archive for Windows, Linux or macOS from the [latest release][releases], extract `katlang` and put it on your `PATH`. It is a single executable and needs no .NET installation.
 
   ```text
@@ -106,6 +107,7 @@ Jesus is Lord.
 [about]: https://katlang.org/about
 [tutorial]: https://katlang.org/tutorial
 [playground]: https://katlang.org
+[skill]: https://katlang.org/skill
 [releases]: https://github.com/katlangorg/katlangnet/releases/latest
 [nuget]: https://www.nuget.org/packages/KatLang
 [cli]: https://github.com/katlangorg/katlangnet/blob/main/docs/cli.md

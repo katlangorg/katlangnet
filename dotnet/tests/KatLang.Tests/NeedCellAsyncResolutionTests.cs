@@ -405,6 +405,81 @@ public sealed class NeedCellAsyncResolutionTests
 
     // ── ResolveAsync: progress and outcome replay (R2 p-* units) ────────────────────────────
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JoiningAPendingStep_LeavesTheComputingReadersWatermarkInPlace(bool callable)
+    {
+        var budget = NewBudget(asynchronous: true);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var computations = 0;
+
+        async Task Suspend()
+        {
+            Interlocked.Increment(ref computations);
+            Assert.Equal(3, budget.ServingDetached);
+            started.SetResult();
+            await release.Task.WaitAsync(WaitLimit);
+            Assert.Equal(3, budget.ServingDetached);
+        }
+        var cell = NeedCell.WithRuntimeProjection(
+            () => One, async () => { await Suspend(); return One; },
+            Identity, async () => { await Suspend(); return Identity(); }, budget: budget);
+
+        Task<EvalResult<Algorithm?>> Observe(long watermark) => ResolveAsync(budget, () =>
+        {
+            budget.EnterServing(watermark);
+            try { return callable ? cell.ProjectCallable() : ThenIdentity(cell.Demand(), Identity()); }
+            finally { budget.ExitServing(); }
+        }).AsTask();
+
+        var computing = Observe(3);
+        await started.Task.WaitAsync(WaitLimit);
+        var joining = Observe(8);
+        try
+        {
+            Assert.True(callable ? cell.HasJoinedProjectionFlight : cell.HasJoinedValueFlight);
+            Assert.Equal(3, budget.ServingDetached);
+        }
+        finally
+        {
+            release.SetResult();
+            var results = await Task.WhenAll(computing, joining).WaitAsync(WaitLimit);
+            Assert.All(results, result => Assert.Same(IdentityAlgorithm, result.Value));
+        }
+        Assert.Equal(1, computations);
+        Assert.Equal(0, budget.ServingDetached);
+    }
+
+    [Fact]
+    public async Task ASynchronousResolutionProbe_KeepsItsWatermarkPrivateUntilItStartsWork()
+    {
+        var budget = NewBudget(asynchronous: true);
+        _ = Runtime(budget, Identity);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var probe = Task.Run(async () => await ResolveAsync(budget, () =>
+        {
+            budget.EnterServing(8);
+            try
+            {
+                Assert.Equal(8, budget.ServingDetached);
+                entered.SetResult();
+                Assert.True(release.Wait(WaitLimit));
+                return Identity();
+            }
+            finally { budget.ExitServing(); }
+        }));
+        try
+        {
+            await entered.Task.WaitAsync(WaitLimit);
+            Assert.Equal(0, budget.ServingDetached);
+        }
+        finally { release.Set(); }
+        Assert.Same(IdentityAlgorithm, (await probe.WaitAsync(WaitLimit)).Value);
+    }
+
     [Fact]
     public async Task WithoutRuntimeProjections_TheResolverRunsOnceWithNoObservation()
     {

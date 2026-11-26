@@ -513,6 +513,30 @@ internal sealed class NeedCell : NeedNode
         internal Channel PendingChannel => _pendingWatermark < 0 ? Channel.Callable : Channel.Value;
         internal long PendingWatermark => _pendingWatermark < 0 ? ~_pendingWatermark : _pendingWatermark;
 
+        // Identity resolution is synchronous and non-initiating. Keep the brackets it enters
+        // here until it records a pending operation or returns, even when another thread is
+        // observing the same run. Nested observations inherit the enclosing reader's watermark.
+        private Stack<(EvaluationBudget Budget, long Watermark)>? _serving;
+
+        internal long ServingDetached(EvaluationBudget budget)
+        {
+            for (var scope = this; scope is not null; scope = scope.Outer)
+            {
+                if (scope._serving is not { } entries) continue;
+                foreach (var entry in entries)
+                {
+                    if (ReferenceEquals(entry.Budget, budget))
+                        return entry.Watermark;
+                }
+            }
+            return 0;
+        }
+
+        internal void EnterServing(EvaluationBudget budget, long watermark)
+            => (_serving ??= new()).Push((budget, Math.Max(ServingDetached(budget), watermark)));
+
+        internal void ExitServing() => _serving!.Pop();
+
         internal EvalResult<Evaluator.CountedResult> ObserveValue(NeedCell cell)
         {
             if (Record is not null && Record.TryGetValue(cell, out var recorded)) return recorded;
@@ -964,8 +988,22 @@ internal sealed class NeedCell : NeedNode
     /// (its flight is the one <see cref="ProjectCallable"/> joins); an identity-only projection
     /// evaluates nothing, so it is the synchronous projection.
     /// </summary>
-    internal ValueTask<EvalResult<Algorithm?>> ProjectCallableAsync()
-        => _projection is ProjectionNode node ? ProjectRuntimeAsync(node) : new(ProjectCallable());
+    internal ValueTask<EvalResult<Algorithm?>> ProjectCallableAsync(long servingWatermark = 0)
+        => _projection is ProjectionNode node ? ProjectRuntimeAsync(node, servingWatermark) : new(ProjectCallable());
+
+    // A positive watermark came from this cell's budget in ObservationScope.MarkPending.
+    // Both channels restore it before making the outcome available to a waiter.
+    private ValueTask<EvalResult<T>> ComputeObservedStepAsync<TState, T>(
+        long watermark, TState state, Func<TState, ValueTask<EvalResult<T>>> compute)
+        => watermark == 0 ? compute(state) : ComputeDetachedStepAsync(watermark, state, compute);
+
+    private async ValueTask<EvalResult<T>> ComputeDetachedStepAsync<TState, T>(
+        long watermark, TState state, Func<TState, ValueTask<EvalResult<T>>> compute)
+    {
+        _budget!.EnterServing(watermark);
+        try { return await compute(state).ConfigureAwait(FoldTrampoline.CaptureFoldContext); }
+        finally { _budget.ExitServing(); }
+    }
 
     // Observation entry of a runtime projection, VALUE's order: a terminal run answers first
     // (a completed projection's own resource failure keeps its provenance), then a stored
@@ -1028,7 +1066,7 @@ internal sealed class NeedCell : NeedNode
         finally { node.RemoveDependency(parent); }
     }
 
-    private async ValueTask<EvalResult<Algorithm?>> ProjectRuntimeAsync(ProjectionNode node)
+    private async ValueTask<EvalResult<Algorithm?>> ProjectRuntimeAsync(ProjectionNode node, long servingWatermark)
     {
         if (ObserveProjected(node, ObserveRun()) is { } known) return known;
         ThrowIfInitiatingWhileObserving();
@@ -1046,7 +1084,7 @@ internal sealed class NeedCell : NeedNode
             }
             if (task is null)
             {
-                await ProjectRuntimeComputationAsync(node).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+                await ProjectRuntimeComputationAsync(node, servingWatermark).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 return ProjectionStarterOutcome(node);
             }
             // A joined flight suspends this flow: its frames post their resumptions in an inline pump.
@@ -1061,18 +1099,22 @@ internal sealed class NeedCell : NeedNode
         finally { node.RemoveDependency(parent); }
     }
 
-    private async ValueTask ProjectRuntimeComputationAsync(ProjectionNode node)
+    private async ValueTask ProjectRuntimeComputationAsync(ProjectionNode node, long servingWatermark)
     {
         // TWIN-ONLY (intentional difference from the synchronous ProjectRuntime): see StackHop.
         // The second condition is the flow rule, as in EvaluateAsync.
         if (StackHop.HostStackIsLow() || EvaluationFlow.IsSuppressed) await new StackHop();
         var previous = Current.Value;
         var outer = EnterComputation(node, out var inner);
-        try { CompleteProjection(node, RuntimeHelpers.TryEnsureSufficientExecutionStack()
-            ? _suspension is not null
-                ? await Evaluator.ProjectSuspendedCallableAsync(this, Source!, _suspension).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
-                : await node.ProjectAsync!().ConfigureAwait(FoldTrampoline.CaptureFoldContext)
-            : new EvalError.EvaluationStackExhausted { Span = Span }); }
+        try
+        {
+            CompleteProjection(node, RuntimeHelpers.TryEnsureSufficientExecutionStack()
+                ? await ComputeObservedStepAsync(servingWatermark, (Cell: this, Node: node), static state =>
+                    state.Cell._suspension is { } suspension
+                        ? Evaluator.ProjectSuspendedCallableAsync(state.Cell, state.Cell.Source!, suspension)
+                        : state.Node.ProjectAsync!()).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                : new EvalError.EvaluationStackExhausted { Span = Span });
+        }
         catch (Exception error) { CompleteProjectionException(node, error); }
         finally { LeaveComputation(previous, outer, inner); }
     }
@@ -1217,7 +1259,7 @@ internal sealed class NeedCell : NeedNode
         finally { RemoveDependency(parent); }
     }
 
-    internal async ValueTask<EvalResult<Evaluator.CountedResult>> DemandAsync()
+    internal async ValueTask<EvalResult<Evaluator.CountedResult>> DemandAsync(long servingWatermark = 0)
     {
         var terminal = ObserveRun();
         lock (this)
@@ -1243,7 +1285,7 @@ internal sealed class NeedCell : NeedNode
             }
             if (task is null)
             {
-                await EvaluateAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+                await EvaluateAsync(servingWatermark).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 return StarterOutcome();
             }
             // A joined flight suspends this flow: its frames post their resumptions in an inline pump.
@@ -1258,7 +1300,7 @@ internal sealed class NeedCell : NeedNode
         finally { RemoveDependency(parent); }
     }
 
-    private async ValueTask EvaluateAsync()
+    private async ValueTask EvaluateAsync(long servingWatermark)
     {
         // TWIN-ONLY (intentional difference from the synchronous Demand): see StackHop.
         // The second condition is the flow rule (EvaluationFlow): this computation can suspend, and
@@ -1269,11 +1311,15 @@ internal sealed class NeedCell : NeedNode
         if (StackHop.HostStackIsLow() || EvaluationFlow.IsSuppressed) await new StackHop();
         var previous = Current.Value;
         var outer = EnterComputation(this, out var inner);
-        try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
-            ? _suspension is not null
-                ? await Evaluator.EvalSuspendedValueAsync(this, _suspension).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
-                : await ComputeAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext)
-            : new EvalError.EvaluationStackExhausted { Span = Span }); }
+        try
+        {
+            Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
+                ? await ComputeObservedStepAsync(servingWatermark, this, static cell =>
+                    cell._suspension is { } suspension
+                        ? Evaluator.EvalSuspendedValueAsync(cell, suspension)
+                        : cell.ComputeAsync()).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                : new EvalError.EvaluationStackExhausted { Span = Span });
+        }
         catch (Exception error) { CompleteException(error); }
         finally { LeaveComputation(previous, outer, inner); }
     }
