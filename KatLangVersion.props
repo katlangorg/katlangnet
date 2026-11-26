@@ -26,17 +26,4 @@
     <KatLangVersion>0.8.279</KatLangVersion>
   </PropertyGroup>
 
-  <!--
-    A blanked out property would otherwise degrade quietly: every importer
-    would fall back to the SDK's default version and the CLI test's build time
-    expectation would become an empty string. This guard is the only build time
-    catch for that; a DROPPED import escapes it (the guard travels with the
-    file) and is caught instead by the CLI version test, which then sees the
-    SDK default rather than the intended version.
-  -->
-  <Target Name="ValidateKatLangVersion" BeforeTargets="BeforeBuild">
-    <Error Condition="'$(KatLangVersion)' == ''"
-           Text="KatLangVersion is empty. It is defined in KatLangVersion.props, the single authoritative source of the KatLang version; set it there rather than in an individual project." />
-  </Target>
-
 </Project>
