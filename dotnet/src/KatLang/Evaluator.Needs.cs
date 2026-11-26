@@ -1837,19 +1837,30 @@ public static partial class Evaluator
         return EvalNeedUserSupplyCounted(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false);
     }
 
-    /// <summary>MIRROR OF <see cref="EvalNeedCallbackSupplyCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalNeedCallbackSupplyAsync(
+    /// <summary>
+    /// MIRROR OF <see cref="EvalNeedCallbackSupplyCounted"/> — keep in lock-step. Not an async method
+    /// (C# implementation only, November 2026): a user algorithm's or a clause family's invocation is
+    /// returned as the driver's own pending computation, so a <c>reduce</c> step suspended while its
+    /// accumulator is evaluated holds no frame of this dispatch. Only a builtin callee's result is
+    /// finished after it completes (<see cref="NestMissingOutputAsync"/>).
+    /// </summary>
+    private static ValueTask<EvalResult<CountedResult>> EvalNeedCallbackSupplyAsync(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, string name)
     {
         if (callee is Algorithm.Builtin builtin)
         {
             var resolved = ResolvedSupply(supply);
-            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
+            return NestMissingOutputAsync(ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values));
         }
         if (callee is Algorithm.Conditional)
-            return await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
-        return await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+            return EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name));
+        return EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false);
     }
+
+    // NestMissingOutput applied once `pending` completes: the result-finishing step of a dispatch that
+    // returns a pending computation instead of awaiting it in a frame of its own.
+    private static async ValueTask<EvalResult<CountedResult>> NestMissingOutputAsync(ValueTask<EvalResult<CountedResult>> pending)
+        => NestMissingOutput(await pending.ConfigureAwait(FoldTrampoline.CaptureFoldContext));
 
     // One Ready cell per already-evaluated value, in order (a callback's supply).
     private static NeedCell[] ReadyCells(IReadOnlyList<CountedResult> values)

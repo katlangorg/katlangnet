@@ -1102,7 +1102,7 @@ internal sealed class NeedCell : NeedNode
     private async ValueTask ProjectRuntimeComputationAsync(ProjectionNode node, long servingWatermark)
     {
         // TWIN-ONLY (intentional difference from the synchronous ProjectRuntime): see StackHop.
-        // The second condition is the flow rule, as in EvaluateAsync.
+        // The second condition is the flow rule, as in DemandAsync.
         if (StackHop.HostStackIsLow() || EvaluationFlow.IsSuppressed) await new StackHop();
         var previous = Current.Value;
         var outer = EnterComputation(node, out var inner);
@@ -1259,6 +1259,13 @@ internal sealed class NeedCell : NeedNode
         finally { RemoveDependency(parent); }
     }
 
+    /// <summary>
+    /// The asynchronous VALUE demand: <see cref="Demand"/>'s protocol, with the computation awaited and a
+    /// joined flight's completion awaited instead of blocked on. The demand that starts the flight runs the
+    /// computation in THIS frame (C# implementation only, November 2026), so a computation that suspends keeps
+    /// one suspended frame of its demand on the heap, not a second one below it; a <c>reduce</c> step waiting
+    /// for its accumulator holds two such demands.
+    /// </summary>
     internal async ValueTask<EvalResult<Evaluator.CountedResult>> DemandAsync(long servingWatermark = 0)
     {
         var terminal = ObserveRun();
@@ -1285,7 +1292,26 @@ internal sealed class NeedCell : NeedNode
             }
             if (task is null)
             {
-                await EvaluateAsync(servingWatermark).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+                // TWIN-ONLY (intentional difference from the synchronous Demand): see StackHop.
+                // The second condition is the flow rule (EvaluationFlow): this computation can suspend, and
+                // a method that suspends while the host has suppressed flow captures no context, so its
+                // continuation would not know the node installed below and a demand cycle would join its
+                // own flight. The computation therefore first continues on the thread pool, where the
+                // context flows; the hop hands the caller's node over, so `previous` is unchanged.
+                if (StackHop.HostStackIsLow() || EvaluationFlow.IsSuppressed) await new StackHop();
+                var previous = Current.Value;
+                var outer = EnterComputation(this, out var inner);
+                try
+                {
+                    Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
+                        ? await ComputeObservedStepAsync(servingWatermark, this, static cell =>
+                            cell._suspension is { } suspension
+                                ? Evaluator.EvalSuspendedValueAsync(cell, suspension)
+                                : cell.ComputeAsync()).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                        : new EvalError.EvaluationStackExhausted { Span = Span });
+                }
+                catch (Exception error) { CompleteException(error); }
+                finally { LeaveComputation(previous, outer, inner); }
                 return StarterOutcome();
             }
             // A joined flight suspends this flow: its frames post their resumptions in an inline pump.
@@ -1298,30 +1324,6 @@ internal sealed class NeedCell : NeedNode
             }
         }
         finally { RemoveDependency(parent); }
-    }
-
-    private async ValueTask EvaluateAsync(long servingWatermark)
-    {
-        // TWIN-ONLY (intentional difference from the synchronous Demand): see StackHop.
-        // The second condition is the flow rule (EvaluationFlow): this computation can suspend, and
-        // a method that suspends while the host has suppressed flow captures no context, so its
-        // continuation would not know the node installed below and a demand cycle would join its
-        // own flight. The computation therefore first continues on the thread pool, where the
-        // context flows; the hop hands the caller's node over, so `previous` is unchanged.
-        if (StackHop.HostStackIsLow() || EvaluationFlow.IsSuppressed) await new StackHop();
-        var previous = Current.Value;
-        var outer = EnterComputation(this, out var inner);
-        try
-        {
-            Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
-                ? await ComputeObservedStepAsync(servingWatermark, this, static cell =>
-                    cell._suspension is { } suspension
-                        ? Evaluator.EvalSuspendedValueAsync(cell, suspension)
-                        : cell.ComputeAsync()).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
-                : new EvalError.EvaluationStackExhausted { Span = Span });
-        }
-        catch (Exception error) { CompleteException(error); }
-        finally { LeaveComputation(previous, outer, inner); }
     }
 
     // Under the gate, with no outcome yet: starts the VALUE flight (null: the caller computes) or

@@ -37,6 +37,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.MetaCallBindingContextTests.AnEmptyMintedNeedTier_CostsNoExtraAllocation_GcIsolatedChild",
                 "KatLang.Tests.NeedCellContextAndRecordTests.ARecordsFirstPair_AllocatesNoTable_GcIsolatedChild",
                 "KatLang.Tests.NeedCellDemandScaffoldingTests.AMathNativeCall_AllocatesExactlyItsReadsAndItsResult_GcIsolatedChild",
+                "KatLang.Tests.NeedCellDemandScaffoldingTests.ASuspendedAsynchronousDemand_HoldsOneFrame_GcIsolatedChild",
                 "KatLang.Tests.NeedCellDemandScaffoldingTests.AnUnjoinedAsynchronousDemand_AllocatesOnlyItsContextAndStateMachines_GcIsolatedChild",
                 "KatLang.Tests.NeedCellDemandScaffoldingTests.AnUnjoinedSynchronousDemand_AllocatesOnlyItsContext_GcIsolatedChild",
                 "KatLang.Tests.NeedCellDemandScaffoldingTests.DemandAndMathWorkloads_StayBelowTheirMeasuredBounds_GcIsolatedChild",

@@ -362,8 +362,8 @@ public class NeedCellDemandScaffoldingTests
         NeedCell Fresh() => new(static () => Seven, static () => new(Seven), budget: budget);
         _ = CompleteSynchronously(Fresh().DemandAsync()); // warm-up
 
-        var demand = StateMachineBytes(typeof(NeedCell), "DemandAsync")
-            + StateMachineBytes(typeof(NeedCell), "EvaluateAsync");
+        // The demand that starts the flight runs the computation in its own frame: one state machine.
+        var demand = StateMachineBytes(typeof(NeedCell), "DemandAsync");
 
         var cell = Fresh();
         var allocated = Bytes(() => _ = CompleteSynchronously(cell.DemandAsync()));
@@ -391,6 +391,63 @@ public class NeedCellDemandScaffoldingTests
         Assert.Equal(0, projecting.ActiveDependencyCount);
         Assert.False(NeedNode.HasCurrentNode);
         GcIsolatedAllocation.Complete();
+    }
+
+    /// <summary>
+    /// The demand that starts a VALUE flight runs its computation in its own frame (C# implementation only,
+    /// November 2026): a computation that suspends leaves ONE suspended frame for the demand — the box of its
+    /// state machine — and no second one for the computation below it, so a <c>reduce</c> step waiting for its
+    /// accumulator, which holds two such demands, keeps two frames fewer on the heap. From the demand's start to its
+    /// suspension the window holds exactly that box, the state machine itself in a Debug build, and the context of
+    /// the installed node; the computation's own awaitable is a completion source's task, which adds no frame. The
+    /// suspended demand leaves its caller's context as it was, and the completion finishes it with the computation's
+    /// outcome.
+    /// </summary>
+    [Fact]
+    public async Task ASuspendedAsynchronousDemand_HoldsOneFrame_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var budget = EvaluationBudget.Create(null);
+        NeedCell Suspending(TaskCompletionSource<EvalResult<Evaluator.CountedResult>> gate)
+            => new(static () => Seven, () => new(gate.Task), budget: budget);
+
+        // Warm-up: the same suspension and completion, so that first-call initialization stays outside the window.
+        var warmGate = new TaskCompletionSource<EvalResult<Evaluator.CountedResult>>();
+        var warm = Suspending(warmGate).DemandAsync();
+        warmGate.SetResult(Seven);
+        await warm.AsTask().WaitAsync(WaitLimit);
+
+        // The window is one synchronous call on the measuring thread: the demand up to its suspension.
+        var gate = new TaskCompletionSource<EvalResult<Evaluator.CountedResult>>();
+        var cell = Suspending(gate);
+        var pending = default(ValueTask<EvalResult<Evaluator.CountedResult>>);
+        var allocated = Bytes(() => pending = cell.DemandAsync());
+        Assert.False(pending.IsCompleted);
+        Assert.True(cell.HasValueInFlight);
+        Assert.False(NeedNode.HasCurrentNode);
+        var oneFrame = StateMachineBytes(typeof(NeedCell), "DemandAsync") + BoxBytes<EvalResult<Evaluator.CountedResult>>(typeof(NeedCell), "DemandAsync");
+        Assert.Equal(oneFrame + ContextBytes(), allocated);
+
+        gate.SetResult(Seven);
+        var outcome = await pending.AsTask().WaitAsync(WaitLimit);
+        Assert.Same(Seven.Value.Value, outcome.Value.Value);
+        Assert.True(cell.HasCompletedValue);
+        Assert.False(cell.HasValueInFlight);
+        GcIsolatedAllocation.Complete();
+    }
+
+    // The heap box an async method's state machine moves into when the method first suspends: one object per
+    // suspended frame (the runtime's AsyncTaskMethodBuilder<TResult>.AsyncStateMachineBox<TStateMachine>, which
+    // also serves the ValueTask-returning methods).
+    private static long BoxBytes<TResult>(Type owner, string method)
+    {
+        var stateMachine = owner.GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)!
+            .GetCustomAttribute<AsyncStateMachineAttribute>()!.StateMachineType;
+        var box = typeof(AsyncTaskMethodBuilder<>).GetNestedType("AsyncStateMachineBox`1", BindingFlags.NonPublic)!
+            .MakeGenericType(typeof(TResult), stateMachine);
+        return InstanceSize.Of(box);
     }
 
     private delegate EvalResult<Result> NativeCall(string fnName, IReadOnlyList<string> argNames, Evaluator.EvalCtx ctx,

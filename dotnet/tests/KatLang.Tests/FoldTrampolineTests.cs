@@ -399,6 +399,10 @@ public sealed class FoldTrampolineTests
         long twice = 0;
         for (var item = 1; item <= Elements; item++)
             twice = item + 2 * twice;
+        // The clause family from 0: a(1) = 1 (the literal clause), a(n) = a(n - 1) + 2 n + 100 (the general one).
+        var familyValue = (1 + Enumerable.Range(2, Elements - 1).Sum(static item => 2 * item + 100)).ToString();
+        var familyCalls = string.Join(",", Enumerable.Range(2, Elements - 1)
+            .SelectMany(static item => new[] { $"trace({item})", $"trace({100 + item})" }).Prepend("trace(1)"));
         return new()
         {
             // An effect on both sides of the accumulator read: every step's first call on the way down, last
@@ -412,7 +416,32 @@ public sealed class FoldTrampolineTests
             },
             // An accumulator read twice is evaluated once: each step runs once, its effect once.
             { "R(item, acc) = trace(item) + acc + acc", "0", twice.ToString(), descent },
+            // A clause family as the reducer: each step's dispatch tests the accumulator against the literal clause
+            // before the step's own calls, so the descent has no effect and the ascent makes every call; only the
+            // step for 1 meets the initial 0.
+            { "R(item, 0) = trace(item)\nR(item, acc) = trace(item) + acc + trace(100 + item)", "0", familyValue, familyCalls },
         };
+    }
+
+    /// <summary>
+    /// A builtin reducer (<c>contains</c>) over a long fold: each step is the builtin's ordinary call,
+    /// which demands the accumulator as its item, so every step waits for the one before it, and the traced initial
+    /// value is evaluated once, at the bottom of the chain — where the genuinely suspending routes suspend every step
+    /// at once. The value alternates with each step; every route agrees with the explicitly nested builtin calls.
+    /// </summary>
+    [Fact]
+    public async Task LongFoldWithABuiltinReducer_IsTheNestedCalls_OnEveryRoute()
+    {
+        var call = "trace(false)";
+        for (var item = 1; item <= Elements; item++)
+            call = $"contains([{item}, false], {call})";
+        var nested = await SixRouteAgreement.OnEveryRouteAsync(call);
+        var fold = await SixRouteAgreement.OnEveryRouteAsync(
+            $"E(i) = [i, false]\nreduce(map(range(1, {Elements}), E), contains, trace(false))");
+
+        // contains([k, false], false) is true and contains([k, false], true) is false: step k's value is k odd.
+        Assert.Equal(("ok", Elements % 2 == 1 ? "true" : "false", "trace(false)"), (fold.Kind, fold.Value, string.Join(",", fold.HostCalls)));
+        Assert.Equal((nested.Kind, nested.Value, string.Join(",", nested.HostCalls)), (fold.Kind, fold.Value, string.Join(",", fold.HostCalls)));
     }
 
     [Theory]

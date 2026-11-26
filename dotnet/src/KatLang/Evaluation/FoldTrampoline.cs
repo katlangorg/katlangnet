@@ -52,7 +52,7 @@ namespace KatLang.Evaluation;
 /// the execution context.</para>
 ///
 /// <para><b>Inline resumptions</b> (the cost of a heap step, November 2026). A suspended step is a chain of
-/// suspended state machines, one per evaluator frame between the step and its accumulator read (about twenty
+/// suspended state machines, one per evaluator frame between the step and its accumulator read (about eighteen
 /// for a reducer such as <c>if(item &gt; acc, item, acc)</c>), and each one waits for the frame below it. A
 /// pump resumes them INLINE where it safely can: the frames register their continuations directly (no
 /// synchronization context captured, so no continuation object or delegate per frame), and when the step's

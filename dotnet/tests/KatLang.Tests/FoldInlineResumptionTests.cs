@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using KatLang.Evaluation;
 
 namespace KatLang.Tests;
@@ -24,7 +26,7 @@ public sealed class FoldInlineResumptionTests
     // Every bounded wait in this file is a hang guard, never a latency claim.
     private static readonly TimeSpan WaitLimit = TimeSpan.FromMinutes(5);
 
-    // The issue's program A: a maximum through a conditional, about twenty suspended frames per step.
+    // The issue's program A: a maximum through a conditional, about eighteen suspended frames per step.
     private static string ProgramA(int count) => $"R(item, acc) = if(item > acc, item, acc)\nreduce(range(1, {count}), R, 0)";
 
     // A host call on both sides of the accumulator read.
@@ -34,6 +36,14 @@ public sealed class FoldInlineResumptionTests
     // inline byte allowance above its demand.
     private static string DeepRead(int count)
         => $"D(k, a) = if(k == 0, a, D(k - 1, a))\nR(item, acc) = mark(item) + D(5, acc) + 0 * mark(0 - item)\nreduce(range(1, {count}), R, 0)";
+
+    // A clause family as the reducer, whose dispatch tests the accumulator against its literal clause first.
+    private static string FamilyReducer(int count)
+        => $"R(item, 0) = mark(item)\nR(item, acc) = mark(item) + acc + 0 * mark(0 - item)\nreduce(range(1, {count}), R, 0)";
+
+    // A builtin reducer: `contains` over the lists `[i, false]`, whose item is the accumulator, from a traced `false`.
+    private static string BuiltinReducer(int count)
+        => $"E(i) = [i, false]\nreduce(map(range(1, {count}), E), contains, mark(0) > 0)";
 
     private static string Sum(long count) => (count * (count + 1) / 2).ToString();
 
@@ -132,7 +142,7 @@ public sealed class FoldInlineResumptionTests
 
     /// <summary>
     /// What inline resumptions save: a posted resumption costs each suspended frame a continuation object and a
-    /// delegate (about a hundred bytes on x64), and program A suspends about twenty frames per heap step. The same
+    /// delegate (about a hundred bytes on x64), and program A suspends about eighteen frames per heap step. The same
     /// fold with inline resumptions withheld allocates at least 1 KiB more per heap step, on the same thread, with the
     /// same value and the same heap segments.
     /// </summary>
@@ -220,6 +230,59 @@ public sealed class FoldInlineResumptionTests
         Assert.All(run.Calls, call => Assert.Equal(run.Thread, call.Thread));
         Assert.InRange(run.Budget.HeapFoldSegments, Long - FoldTrampoline.HostStackAllowance, Long);
         Assert.Equal(0, run.Budget.InlineFoldUnwindings);
+    }
+
+    /// <summary>
+    /// Reducers whose steps are not a user algorithm's call — a clause family and a builtin — take the general route
+    /// like program A, and their heap steps suspend through the same callback dispatch, which hands the step the
+    /// family's or the builtin's own pending invocation. At 10,000 elements, on a 1 MiB thread with inline resumptions
+    /// and with them withheld, and on a 512 KiB thread whose pump posts every resumption, each fold produces the nested
+    /// evaluation's value and host calls on the calling thread, with the same heap segments, steps and checkpoints.
+    /// </summary>
+    [Theory]
+    [InlineData("family", OneMiB)]
+    [InlineData("family", OneMiB / 2)]
+    [InlineData("builtin", OneMiB)]
+    [InlineData("builtin", OneMiB / 2)]
+    public void FamilyAndBuiltinReducers_SuspendThroughTheCallbackDispatch_OnEveryPump(string reducer, int stackBytes)
+    {
+        var family = reducer == "family";
+        var source = family ? FamilyReducer(Long) : BuiltinReducer(Long);
+        var run = Run(source, stackBytes);
+        var withheld = Run(source, stackBytes, withholdInline: true);
+
+        // The family: the dispatch reads every accumulator before its step's own calls, so the calls are the ascent's
+        // alone; the step for 1 meets the initial 0. The builtin: contains([k, false], false) is true and
+        // contains([k, false], true) is false, so step k's value is k odd, and the initial's call is the only one.
+        Assert.Equal(family ? Sum(Long) : (Long % 2 == 1 ? "true" : "false"), run.Value);
+        IEnumerable<int> calls = family ? Enumerable.Range(2, Long - 1).SelectMany(static item => new[] { item, -item }).Prepend(1) : [0];
+        Assert.Equal(calls, run.Calls.Select(static call => call.Item));
+        Assert.Equal(withheld.Value, run.Value);
+        Assert.Equal(withheld.Calls.Select(static call => call.Item), run.Calls.Select(static call => call.Item));
+        Assert.All(run.Calls, call => Assert.Equal(run.Thread, call.Thread));
+        Assert.All(withheld.Calls, call => Assert.Equal(withheld.Thread, call.Thread));
+        Assert.InRange(run.Budget.HeapFoldSegments, Long - FoldTrampoline.HostStackAllowance, Long);
+        Assert.Equal(withheld.Budget.HeapFoldSegments, run.Budget.HeapFoldSegments);
+        Assert.Equal(withheld.Budget.ConsumedSteps, run.Budget.ConsumedSteps);
+        Assert.Equal(withheld.Budget.ConsumedExpressionCheckpoints, run.Budget.ConsumedExpressionCheckpoints);
+        Assert.Equal(0, withheld.Budget.InlineFoldUnwindings);
+        Assert.Equal(stackBytes == OneMiB ? run.Budget.HeapFoldSegments - 1 : 0, run.Budget.InlineFoldUnwindings);
+        Assert.Equal(0, run.Budget.ActiveFoldContinuations);
+    }
+
+    /// <summary>
+    /// The callback dispatch of a formed supply adds no frame to a suspended heap step: its asynchronous twin is not
+    /// an async method, so a user algorithm's or a clause family's invocation is the step's own awaited computation,
+    /// and only a builtin callee's result is finished in a frame of its own, once it has completed.
+    /// </summary>
+    [Fact]
+    public void TheCallbackDispatchTwin_AddsNoFrameToASuspendedStep()
+    {
+        const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Static;
+        var twin = typeof(Evaluator).GetMethod("EvalNeedCallbackSupplyAsync", flags)!;
+        Assert.Equal(typeof(ValueTask<EvalResult<Evaluator.CountedResult>>), twin.ReturnType);
+        Assert.Null(twin.GetCustomAttribute<AsyncStateMachineAttribute>());
+        Assert.NotNull(typeof(Evaluator).GetMethod("NestMissingOutputAsync", flags)!.GetCustomAttribute<AsyncStateMachineAttribute>());
     }
 
     // A segment whose computation is the given asynchronous method.
