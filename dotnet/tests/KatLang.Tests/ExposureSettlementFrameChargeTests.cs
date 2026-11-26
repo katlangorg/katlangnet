@@ -137,8 +137,8 @@ public sealed class ExposureSettlementFrameChargeTests
     /// The ledger's work rises by exactly <see cref="PropertyExposureResolver.SettlementFrameWork"/> at every frame,
     /// before the frame is counted, whatever the shape: the residual chains the share cannot serve, a chain it serves
     /// in linear frames, a captured terminal, and the reuse shapes of November 2026. Besides its frames, settlement charges
-    /// only what it counts as reuse work (2026-11-25): one unit per live summary a kept settlement's reuse compares
-    /// (<see cref="FrontEndTraversalObservations.SettlementLiveReadChecks"/>), one per name snapshotted, one per seed part
+    /// only what it counts as reuse work (2026-11-25): one unit per summary change or name a kept live settlement's reuse
+    /// tests (<see cref="FrontEndTraversalObservations.SettlementLiveReadChecks"/>, LIVE REVISIONS), one per seed part
     /// examined or name a kept part set is built from (<see cref="FrontEndTraversalObservations.SettlementSeedPartWork"/>),
     /// and one per entry a live-read name interner creates
     /// (<see cref="FrontEndTraversalObservations.SettlementLiveNameEntries"/>). So the work at every frame, and at the last
@@ -180,8 +180,7 @@ public sealed class ExposureSettlementFrameChargeTests
         var observations = new FrontEndTraversalObservations();
         long seen = 0;
         long firstMismatch = 0;
-        long Reuse() => observations.SettlementLiveReadChecks + observations.SettlementSnapshotNames + observations.SettlementSeedPartWork
-            + observations.SettlementLiveNameEntries;
+        long Reuse() => observations.SettlementLiveReadChecks + observations.SettlementSeedPartWork + observations.SettlementLiveNameEntries;
         observations.RequiredAncestorSettlementObserver = _ =>
         {
             seen++;
@@ -198,8 +197,9 @@ public sealed class ExposureSettlementFrameChargeTests
             Assert.True(observations.SettlementLiveNameEntries > 0);
         if (shape is "live-open-walks" or "live-member")
         {
+            // Each reuse after another reader's summary changed tests that change (LIVE REVISIONS).
             Assert.True(observations.SettlementLiveReadChecks > 0);
-            Assert.True(observations.SettlementSnapshotNames > 0);
+            Assert.True(observations.SettlementLiveChangeChecks > 0);
         }
         if (shape == "seed-parts")
             Assert.True(observations.SettlementSeedPartWork > 0);

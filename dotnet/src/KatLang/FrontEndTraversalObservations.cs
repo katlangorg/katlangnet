@@ -902,26 +902,48 @@ internal sealed class FrontEndTraversalObservations
         => SettlementFootprintWork = checked(SettlementFootprintWork + memberships);
 
     /// <summary>
-    /// Summaries of the level in progress checked when a kept nested settlement is reused
-    /// (<c>PropertyExposureResolver.PendingResolution</c>): one per summary the kept
-    /// settlement read, each also one unit of static work, counted and charged before the check runs (also when it
-    /// then finds one changed and the settlement is computed again).
+    /// The validation work of reusing a kept live settlement after the summaries of the level in progress changed
+    /// (<c>PropertyExposureResolver.PendingResolution</c>, LIVE REVISIONS): one per change since the revision it last stood
+    /// at tested against the names it read (<see cref="SettlementLiveChangeChecks"/>), or one per name it read when that
+    /// is fewer or its live-read interner is released. Each is one unit of static work, counted and charged before the
+    /// test runs (also when it then finds one changed and the settlement is computed again). A reuse at the revision it
+    /// stood at tests nothing (<see cref="SettlementLiveRevisionHits"/>).
     /// </summary>
     public long SettlementLiveReadChecks { get; private set; }
 
-    internal void RecordSettlementLiveReadChecks(long names)
-        => SettlementLiveReadChecks = checked(SettlementLiveReadChecks + names);
+    internal void RecordSettlementLiveReadChecks(long units)
+        => SettlementLiveReadChecks = checked(SettlementLiveReadChecks + units);
 
-    /// <summary>Names copied into admitted live snapshots, including the level's own open walks.</summary>
-    public long SettlementSnapshotNames { get; private set; }
+    /// <summary>The part of <see cref="SettlementLiveReadChecks"/> that tested a summary change against a kept settlement's names.</summary>
+    public long SettlementLiveChangeChecks { get; private set; }
 
-    internal void RecordSettlementSnapshotNames(int names)
-        => SettlementSnapshotNames = checked(SettlementSnapshotNames + names);
+    internal void RecordSettlementLiveChangeChecks(long changes)
+        => SettlementLiveChangeChecks = checked(SettlementLiveChangeChecks + changes);
+
+    /// <summary>Validations of a kept live settlement answered by its revision alone: no summary of the level changed since it last stood.</summary>
+    public long SettlementLiveRevisionHits { get; private set; }
+
+    internal void RecordSettlementLiveRevisionHit()
+        => SettlementLiveRevisionHits = checked(SettlementLiveRevisionHits + 1);
+
+    /// <summary>
+    /// Summary changes recorded after a level's first live keep, including changes after its history wraps or is released.
+    /// </summary>
+    public long SettlementLiveSummaryChanges { get; private set; }
+
+    /// <summary>The largest number of change names held at once by one level.</summary>
+    public int SettlementLiveChangePeakNames { get; private set; }
+
+    internal void RecordSettlementLiveSummaryChange(int held)
+    {
+        SettlementLiveSummaryChanges = checked(SettlementLiveSummaryChanges + 1);
+        SettlementLiveChangePeakNames = Math.Max(SettlementLiveChangePeakNames, held);
+    }
 
     /// <summary>
     /// Entries the live-read name interners of exposure settlement created (<c>PropertyExposureResolver.PendingResolution</c>,
     /// LIVE READS): names, canonical branches and memoized unions, each one unit of static work. A completed insertion
-    /// or union charges its new entries before handing its result to a frame, whether or not a snapshot is kept.
+    /// or union charges its new entries before handing its result to a frame, whether or not a settlement is kept.
     /// </summary>
     public long SettlementLiveNameEntries { get; private set; }
 
@@ -943,11 +965,11 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordSettlementLiveNameSaturation()
         => SettlementLiveNameSaturations = checked(SettlementLiveNameSaturations + 1);
 
-    /// <summary>Observe the identity of a live member snapshot first kept while its solve had room.</summary>
-    internal Action<object>? LiveSnapshotStoredBeforeSaturation { get; init; }
+    /// <summary>Observe the identity of a live member settlement kept while its solve's live-read interner had room.</summary>
+    internal Action<object>? LiveSettlementStoredBeforeSaturation { get; init; }
 
-    /// <summary>Observe the identity of a kept snapshot whose live summary changed and whose solve is saturated.</summary>
-    internal Action<object>? LiveSnapshotStaleAfterSaturation { get; init; }
+    /// <summary>Observe the identity of a kept live settlement found stale after its solve's live-read interner was released.</summary>
+    internal Action<object>? LiveSettlementStaleAfterSaturation { get; init; }
 
     /// <summary>
     /// Whole settlements that read summaries of the level in progress kept for the rest of that level's solve

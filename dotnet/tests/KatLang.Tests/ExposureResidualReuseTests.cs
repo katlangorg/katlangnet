@@ -18,6 +18,11 @@ using Mode = PropertyExposureResolver.SettlementShareMode;
 /// <item>LIVE SETTLEMENTS (that finding's broader shapes): any other whole settlement that read a live summary, a member
 /// seed listing the level's properties above all, was reused only inside its Run (K × W frames). It is now kept for the
 /// rest of the level's solve while every summary it read stands, under the share's footprint, site and view rules.</item>
+/// <item>LIVE REVISIONS (2026-11-26): a kept live settlement copied the names and summaries it read into a snapshot, and
+/// each reuse compared them all (the <c>liveb</c> witness at width 400: 2,003 frames, 159,600 comparisons, 161,600 snapshot
+/// names; distinct read sets paid snapshots nothing took again). It now holds the level's summary revision and copies
+/// nothing; a reuse tests only the changes since, against the names it read, or each name's last change when that is
+/// fewer or the interner is released.</item>
 /// <item>SEED PARTS (<c>exposure-summary-seed-logical-width</c>): a navigated member's seed was folded and its names
 /// canonicalized whole at every settlement, and copied at every parameterless level between its declaration and the
 /// reader (K² / 2 elements; depth × K² / 2 copies). A part holding required names only is now resolved once per
@@ -74,7 +79,11 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
         var former = With(formerWalk, () => Parse(source));
         Assert.Equal(former.Diagnostics, production.Diagnostics);
         Assert.Equal(former.Metadata, production.Metadata);
-        var unshared = InMode(Mode.Unshared, () => Parse(source));
+        // Unshared alone still permits the level's kept unbound open walk. Exercise the independent walk for both
+        // kinds of live keep when comparing live-settlement behavior.
+        var unshared = InMode(Mode.Unshared, () => formerWalk == PropertyExposureResolver.SeedPartsFoldedForTesting
+            ? Parse(source)
+            : With(PropertyExposureResolver.OpenWalksPerReaderForTesting, () => Parse(source)));
         Assert.Equal(unshared.Diagnostics, production.Diagnostics);
         Assert.Equal(unshared.Metadata, production.Metadata);
         return (production.Observations, former.Observations);
@@ -137,6 +146,19 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
     /// </summary>
     internal const string StaleSummaryWitness = "G(w) = {\n  F(y) = {\n    Lib = {\n      public V = [Cap]\n    }\n"
         + "    Cap = K + 0\n    K = w + A0(1) + A1(1)\n    A0(z) = Lib.V[0] + z\n    A1(z) = Lib.V[0] + z\n    0\n  }\n  F(5)\n}\nG(7)\n";
+
+    /// <summary>
+    /// <see cref="StaleSummaryWitness"/> whose <c>Lib.V</c> also lists <paramref name="constants"/> constant properties
+    /// <c>C{j} = j</c>: with one or more, the kept settlement reads at least as many names as summaries change before it
+    /// is met again (<c>K</c>'s and <c>Cap</c>'s), so each change is tested against its names (LIVE REVISIONS).
+    /// </summary>
+    internal static string StaleSummaryWitnessReading(int constants)
+        => constants == 0
+            ? StaleSummaryWitness
+            : "G(w) = {\n  F(y) = {\n    Lib = {\n      public V = ["
+                + string.Join(", ", new[] { "Cap" }.Concat(Enumerable.Range(0, constants).Select(j => $"C{j}"))) + "]\n    }\n"
+                + "    Cap = K + 0\n" + string.Concat(Enumerable.Range(0, constants).Select(j => $"    C{j} = {j}\n"))
+                + "    K = w + A0(1) + A1(1)\n    A0(z) = Lib.V[0] + z\n    A1(z) = Lib.V[0] + z\n    0\n  }\n  F(5)\n}\nG(7)\n";
 
     /// <summary>
     /// Readers whose live read sets are DISTINCT AND OVERLAPPING: <c>F</c> opens <c>M.N</c>, whose member <c>X{i}</c> lists
@@ -233,8 +255,10 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
     /// Readers with bound owners take the level's ONE unbound open-walk settlement however many summaries of the level in
     /// progress it read: seventeen or more, the former cap, too. Formerly every reader settled it again, M² + 6M + 1 frames
     /// at M readers of M caps (10,601 / 41,201 / 162,401 at 100 / 200 / 400), and 22 frames per reader once the walks read
-    /// seventeen. Each reuse compares every summary the walks read (one unit of static work each). The per-reader settlement
-    /// (C1 off) and the unshared one publish the same metadata, and every reader requires <c>y</c>.
+    /// seventeen. Each reuse tests the one summary that changed since the last (the previous reader's, which the walks did
+    /// not read: LIVE REVISIONS), M − 1 units of static work in all where comparing every summary the walks read took
+    /// M × (M − 1). The per-reader settlement (C1 off) and the unshared one publish the same metadata, and every reader
+    /// requires <c>y</c>.
     /// </summary>
     [Fact]
     public void OpenWalksReadingManyLiveSummaries_AreSettledOnceForEveryReader()
@@ -247,7 +271,9 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
             var (production, perReader) = AssertSameAsFormerWalk(source, PropertyExposureResolver.OpenWalksPerReaderForTesting);
             Assert.Equal(1, Assert.Single(production.OpenWalksSettlements.Values));
             Assert.Equal(0, production.OpenWalksSettlementsWithBoundOwners);
-            Assert.True(production.SettlementLiveReadChecks >= (long)(sizes[k] - 1) * sizes[k]);
+            Assert.Equal(sizes[k] - 1, production.SettlementLiveReadChecks);
+            Assert.Equal(sizes[k] - 1, production.SettlementLiveChangeChecks);
+            Assert.Equal(0, production.SettlementShareStaleViews);
             var root = Root(source);
             for (var i = 0; i < sizes[k]; i++)
                 ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", $"A{i}"), ("y", 0));
@@ -257,6 +283,56 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
 
         AssertLinear(frames, "frames");
         Assert.Equal("0", Value(LiveOpenFamily(20, 20)));
+    }
+
+    [Fact]
+    public void RecentChangesWrapAtCapacityWhileReadersKeepUsingTheSameSettlement()
+    {
+        const int Capacity = 16, Readers = 64;
+        var source = LiveOpenFamily(Readers, 2);
+        var previous = PropertyExposureResolver.ResidualCacheCapacityForTesting.Value;
+        PropertyExposureResolver.ResidualCacheCapacityForTesting.Value = Capacity;
+        try
+        {
+            var (limited, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.OpenWalksPerReaderForTesting);
+            Assert.Equal(Readers, limited.SettlementLiveSummaryChanges);
+            Assert.Equal(Capacity, limited.SettlementLiveChangePeakNames);
+            Assert.Equal(Readers - 1, limited.SettlementLiveChangeChecks);
+            Assert.Equal(0, limited.SettlementLiveNameSaturations);
+            Assert.Equal(1, Assert.Single(limited.OpenWalksSettlements.Values));
+        }
+        finally
+        {
+            PropertyExposureResolver.ResidualCacheCapacityForTesting.Value = previous;
+        }
+    }
+
+    [Fact]
+    public void ADependencyChangingAfterTheHistoryWrapsInvalidatesItsReaders()
+    {
+        const int Capacity = 48;
+        var readers = string.Concat(Enumerable.Range(0, 64).Select(i => $"    R{i}(z) = Lib.V[0] + z + w\n"));
+        var source = StaleSummaryWitnessReading(3).Replace("    Cap = K", readers + "    Cap = K", StringComparison.Ordinal);
+        var uncapped = Parse(source).Observations;
+        var previous = PropertyExposureResolver.ResidualCacheCapacityForTesting.Value;
+        PropertyExposureResolver.ResidualCacheCapacityForTesting.Value = Capacity;
+        try
+        {
+            var (limited, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+            Assert.Equal(Capacity, limited.SettlementLiveChangePeakNames);
+            Assert.True(limited.SettlementLiveSummaryChanges > Capacity);
+            Assert.Equal(0, limited.SettlementLiveNameSaturations);
+            Assert.True(limited.SettlementShareStaleViews > 0);
+            Assert.Equal(uncapped.SettlementShareStaleViews, limited.SettlementShareStaleViews);
+            Assert.Equal(uncapped.RequiredAncestorSettlementFrames, limited.RequiredAncestorSettlementFrames);
+            var root = Root(source);
+            foreach (var reader in new[] { "A0", "A1" })
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "G", "F", reader), ("w", 1));
+        }
+        finally
+        {
+            PropertyExposureResolver.ResidualCacheCapacityForTesting.Value = previous;
+        }
     }
 
     /// <summary>The former cliff at sixteen live reads: one more summary adds a constant number of frames, not 22 per reader.</summary>
@@ -269,17 +345,41 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
         Assert.Equal(1, Assert.Single(seventeen.OpenWalksSettlements.Values));
     }
 
+    /// <summary>
+    /// DISTINCT READ SETS (LIVE REVISIONS). Readers whose members read distinct, overlapping windows of the level's
+    /// properties (half of them, all of them in rotated order, three of them) keep live settlements no later reader takes.
+    /// Keeping one copies and charges nothing, so the operation's ledger work, the frames and the live-name entries are
+    /// exactly the per-run walk's (<see cref="PropertyExposureResolver.LiveSettlementsPerRunForTesting"/>) at every size,
+    /// and the metadata is its and the unshared settlement's. Formerly each kept settlement copied and charged the names
+    /// it read: 15,000 snapshot names, and 32,488 units of work against 17,488, for the half windows at K = 100.
+    /// </summary>
     [Fact]
-    public void DeclinedLiveMemberSettlements_DoNotCopySummarySnapshots()
+    public void LiveSettlementsNoReaderTakesAgain_ChargeExactlyWhatThePerRunWalkCharges()
     {
-        var source = LiveMemberFamily(20, 20);
-        var kept = Parse(source);
-        var declined = InMode(Mode.Unshared, () => Parse(source));
-        Assert.Empty(kept.Diagnostics);
-        Assert.Equal(kept.Diagnostics, declined.Diagnostics);
-        Assert.Equal(kept.Metadata, declined.Metadata);
-        Assert.True(kept.Observations.SettlementSnapshotNames >= 20);
-        Assert.Equal(0, declined.Observations.SettlementSnapshotNames);
+        static long ExposureWork(string source)
+        {
+            var (resolved, ledger, _) = ExposureSettlementFrameChargeTests.Resolved(source);
+            var before = ledger.WorkCharged;
+            _ = PropertyExposureResolver.Resolve(resolved, new FrontEndTraversalObservations());
+            return ledger.WorkCharged - before;
+        }
+
+        foreach (var size in new[] { 16, 32, 64 })
+        foreach (var window in new[] { size / 2, size, 3 })
+        {
+            var source = OverlappingLiveReads(size, window);
+            var (production, perRun) = AssertSameAsFormerWalk(source, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+            Assert.True(production.SettlementLiveStores >= size);
+            Assert.Equal(0, perRun.SettlementLiveStores);
+            Assert.Equal(0, production.SettlementLiveHits);
+            Assert.Equal(0, production.SettlementLiveReadChecks);
+            Assert.Equal(perRun.RequiredAncestorSettlementFrames, production.RequiredAncestorSettlementFrames);
+            Assert.Equal(perRun.SettlementLiveNameEntries, production.SettlementLiveNameEntries);
+            var work = ExposureWork(source);
+            Assert.Equal(With(PropertyExposureResolver.LiveSettlementsPerRunForTesting, () => ExposureWork(source)), work);
+            output.WriteLine($"K = {size}, window {window}: {production.SettlementLiveStores} kept, none taken; "
+                + $"{production.RequiredAncestorSettlementFrames} frames, {work} units of work, as the per-run walk");
+        }
     }
 
     [Theory]
@@ -306,7 +406,7 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
                 Assert.Equal(normal.Metadata, limited.Metadata);
                 if (capacity == 0 && kind == "live")
                 {
-                    Assert.True(limited.Observations.SettlementSnapshotNames < normal.Observations.SettlementSnapshotNames);
+                    Assert.True(limited.Observations.SettlementLiveStores < normal.Observations.SettlementLiveStores);
                     Assert.True(limited.Observations.RequiredAncestorSettlementFrames > normal.Observations.RequiredAncestorSettlementFrames);
                 }
                 if (kind == "names")
@@ -333,7 +433,7 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
     /// THE INTERNER'S BOUND (2026-11-25). Readers whose members read distinct, overlapping windows of the level's
     /// properties make the live-read interner build a different set for every member, path by path, and memoize the
     /// unions of nested sets, whether or not any settlement is then kept: its entries grow faster than the readers. Every
-    /// entry it creates is one unit of static work, counted apart from the names copied into kept snapshots (and charged:
+    /// entry it creates is one unit of static work, counted apart from the validation of kept settlements (and charged:
     /// <see cref="ExposureSettlementFrameChargeTests"/>), also with no live settlement admitted (the per-run walk). Under a
     /// capacity it never holds more than that capacity plus the entries of the one operation that crossed it; it then
     /// saturates, the level's later settlements record their live reads as unknown and are reused only inside their Run,
@@ -353,7 +453,7 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
             Assert.Equal(0, production.SettlementLiveNameSaturations);
             Assert.InRange(production.SettlementLiveNamePeakEntries, sizes[k], production.SettlementLiveNameEntries);
             Assert.True(perRun.SettlementLiveNameEntries >= sizes[k]);
-            Assert.True(perRun.SettlementSnapshotNames < production.SettlementSnapshotNames);
+            Assert.Equal(perRun.SettlementLiveNameEntries, production.SettlementLiveNameEntries);
             peaks[k] = production.SettlementLiveNamePeakEntries;
             var root = Root(source);
             for (var i = 0; i < sizes[k]; i++)
@@ -371,7 +471,7 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
                 Assert.InRange(limited.Observations.SettlementLiveNamePeakEntries, 1, Capacity + 8L * sizes[k] + 64);
                 Assert.Equal(peaks[k] > Capacity ? 1 : 0, limited.Observations.SettlementLiveNameSaturations);
                 output.WriteLine($"K = {sizes[k]}, window {sizes[k] / 2}: peak {peaks[k]} entries, {production.SettlementLiveNameEntries} created "
-                    + $"({perRun.SettlementLiveNameEntries} with none admitted), {production.SettlementSnapshotNames} snapshot names; "
+                    + $"({perRun.SettlementLiveNameEntries} with none admitted), {production.SettlementLiveStores} kept settlements; "
                     + $"capped at {Capacity}: peak {limited.Observations.SettlementLiveNamePeakEntries}, "
                     + $"{limited.Observations.SettlementLiveNameSaturations} saturated, {limited.Observations.RequiredAncestorSettlementFrames} frames "
                     + $"(uncapped {production.RequiredAncestorSettlementFrames})");
@@ -389,13 +489,15 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
     /// the metadata is the uncapped one. The witnesses: the live open walks, the live member, distinct overlapping read
     /// sets, and a summary that changes after a reader took a kept settlement (<see cref="StaleSummaryWitness"/>), whose
     /// readers all still require <c>w</c>: the level's record of what its readers read never depends on the interner.
-    /// Over the sweep, some capacity keeps a live settlement, saturates later, and finds that settlement stale.
+    /// Over the sweep, some capacity keeps a live settlement, saturates later, and finds that settlement stale; with the
+    /// interner released, a settlement kept before is validated by each name's last change (LIVE REVISIONS).
     /// </summary>
     [Fact]
     public void SaturatingTheLiveNameInterner_AtAnyPoint_KeepsTheSameExposure()
     {
         var seam = PropertyExposureResolver.ResidualCacheCapacityForTesting;
         var keptSaturatedAndStale = false;
+        var scannedAfterSaturation = false;
         foreach (var source in new[] { LiveOpenFamily(20, 24), LiveMemberFamily(20, 24), OverlappingLiveReads(16, 8), StaleSummaryWitness })
         {
             var normal = Parse(source);
@@ -408,12 +510,12 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
                 seam.Value = capacity;
                 try
                 {
-                    var snapshots = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                    var kept = new HashSet<object>(ReferenceEqualityComparer.Instance);
                     var trace = new FrontEndTraversalObservations
                     {
-                        LiveSnapshotStoredBeforeSaturation = snapshot => snapshots.Add(snapshot),
-                        LiveSnapshotStaleAfterSaturation = snapshot => keptSaturatedAndStale |=
-                            source == StaleSummaryWitness && snapshots.Contains(snapshot),
+                        LiveSettlementStoredBeforeSaturation = settlement => kept.Add(settlement),
+                        LiveSettlementStaleAfterSaturation = settlement => keptSaturatedAndStale |=
+                            source == StaleSummaryWitness && kept.Contains(settlement),
                     };
                     var limited = Parse(source, trace);
                     Assert.Equal(normal.Diagnostics, limited.Diagnostics);
@@ -423,6 +525,7 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
                     {
                         saturated++;
                         Assert.True(observed.SettlementLiveNamePeakEntries > capacity);
+                        scannedAfterSaturation |= observed.SettlementLiveReadChecks > observed.SettlementLiveChangeChecks;
                     }
                     else
                     {
@@ -436,6 +539,7 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
         }
 
         Assert.True(keptSaturatedAndStale);
+        Assert.True(scannedAfterSaturation);
         var root = Root(StaleSummaryWitness);
         var previous = seam.Value;
         seam.Value = 1;
@@ -542,6 +646,9 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
             var (production, perRun) = AssertSameAsFormerWalk(source, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
             Assert.True(production.SettlementLiveHits >= sizes[k] - 1);
             Assert.Equal(0, perRun.SettlementLiveHits);
+            // LIVE REVISIONS: each reuse tests the previous reader's change only (formerly K × W − W comparisons).
+            Assert.Equal(sizes[k] - 1, production.SettlementLiveReadChecks);
+            Assert.Equal(0, production.SettlementShareStaleViews);
             var root = Root(source);
             for (var i = 0; i < sizes[k]; i++)
                 ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", $"A{i}"), ("y", 0));
@@ -561,18 +668,108 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
     /// while <c>Cap</c>'s summary is still empty: <c>A0</c> settles <c>Lib.V</c> and <c>A1</c> takes it, which records
     /// <c>A1</c>'s read of <c>Cap</c>. <c>Cap</c> then gains <c>w</c> through <c>K</c>, both readers are evaluated again,
     /// and the kept settlement no longer stands: it is dropped and settled again, and only then does each reader require
-    /// <c>w</c>. Taken unchecked, or without recording its read, it leaves a reader without <c>w</c>.
+    /// <c>w</c>. Taken unchecked, or without recording its read, it leaves a reader without <c>w</c>. LIVE REVISIONS find
+    /// the change both ways: reading <c>Cap</c> alone, the two changes since (<c>K</c>'s and <c>Cap</c>'s) outnumber its
+    /// one name, whose last change is tested; reading a constant too, each change is tested against its names.
     /// </summary>
-    [Fact]
-    public void AKeptLiveSettlement_IsSettledAgainWhenASummaryItReadChanges()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void AKeptLiveSettlement_IsSettledAgainWhenASummaryItReadChanges(int constants)
     {
-        const string Source = StaleSummaryWitness;
-        var (production, _) = AssertSameAsFormerWalk(Source, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+        var source = StaleSummaryWitnessReading(constants);
+        var (production, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
         Assert.True(production.SettlementLiveHits > 0);
         Assert.True(production.SettlementShareStaleViews > 0);
-        var root = Root(Source);
+        if (constants == 0)
+            Assert.True(production.SettlementLiveReadChecks > production.SettlementLiveChangeChecks);
+        else
+            Assert.True(production.SettlementLiveChangeChecks > 0);
+        var root = Root(source);
         foreach (var reader in new[] { "A0", "A1", "Cap", "K" })
             ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "G", "F", reader), ("w", 1));
+    }
+
+    /// <summary>
+    /// LIVE REVISIONS TAKE WHAT THE FORMER COMPARISON TOOK (random witnesses of a scratch generator over levels whose members
+    /// read the level's properties, kept verbatim; 17,171 of its 30,000 programs show the same effect). <c>Lib.V0</c> lists a
+    /// property that reads <c>Lib.V0</c> back, itself or through another property, so the kept settlement of <c>V0</c> goes
+    /// stale when that property's summary
+    /// changes and is kept again at the revision of that very change. Two unrelated summaries change next (the readers'),
+    /// which outnumber its one name, so the next reuse tests that name's last change: it made the revision the settlement
+    /// holds, so the settlement stands. The frames, live hits and stale drops are exactly those of the former comparison of
+    /// every summary read (<c>5777c440</c>); taking a change AT the held revision as stale costs a frame and two more stale
+    /// drops (19, 0 and 5).
+    /// </summary>
+    [Theory]
+    [InlineData("F(y, w) = {\n  Lib = {\n    public V0 = [Q0]\n  }\n  Q0 = Q1 + 1\n  Q1 = y + Lib.V0[0]\n  A0(z) = Lib.V0[0] + z\n  A1(z) = Q0 + z\n  Q1\n}\nF(5, 7)\n")]
+    [InlineData("F(y, w) = {\n  Lib = {\n    public V0 = [Q1]\n  }\n  Q0 = w + w\n  Q1 = Q0 + Lib.V0[0]\n  A0(z) = Lib.V0[0] + z\n  A1(z) = Q0 + z\n  Q1\n}\nF(5, 7)\n")]
+    public void ASettlementKeptAtTheRevisionOfAChangeItRead_StandsAsTheFormerComparisonFoundIt(string source)
+    {
+        var (production, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+        Assert.Equal(18, production.RequiredAncestorSettlementFrames);
+        Assert.Equal(1, production.SettlementLiveHits);
+        Assert.Equal(3, production.SettlementShareStaleViews);
+        Assert.True(production.SettlementLiveReadChecks > production.SettlementLiveChangeChecks);
+    }
+
+    /// <summary>
+    /// LIVE REVISIONS, A CHANGED UNRELATED SUMMARY. <c>Lib.V</c> lists <paramref name="width"/> of the level's constant
+    /// properties, and reader <c>A{i}</c> reads it and <c>B{i} = A{i-1}(1) + y</c>, so between two readers exactly two
+    /// summaries the kept settlement did not read change (<c>A{i-1}</c>'s and <c>B{i}</c>'s, each gaining <c>y</c>). Every
+    /// later reader takes it: with one name read, the two changes outnumber it and its one name's last change is tested;
+    /// with two, both changes are tested against its names. Nothing is stale, the metadata is the per-run walk's and the
+    /// unshared one's, and every reader requires <c>y</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void AKeptLiveSettlement_StandsWhileOnlySummariesItDidNotReadChange(int width)
+    {
+        const int Readers = 8;
+        var caps = string.Join(", ", Enumerable.Range(0, width).Select(j => $"Cap{j}"));
+        var source = new StringBuilder($"F(y) = {{\n  Lib = {{\n    public V = [{caps}]\n  }}\n");
+        for (var j = 0; j < width; j++) source.Append($"  Cap{j} = {j}\n");
+        source.Append("  A0(z) = Lib.V[0] + z + y\n");
+        for (var i = 1; i < Readers; i++) source.Append($"  B{i} = A{i - 1}(1) + y\n  A{i}(z) = Lib.V[0] + z + B{i}\n");
+        source.Append("  A0(1)\n}\nF(5)\n");
+        var text = source.ToString();
+        var (production, _) = AssertSameAsFormerWalk(text, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+        Assert.Equal(Readers - 1, production.SettlementLiveHits);
+        Assert.Equal(0, production.SettlementShareStaleViews);
+        Assert.Equal(0, production.SettlementLiveRevisionHits);
+        Assert.Equal((Readers - 1) * Math.Min(width, 2), production.SettlementLiveReadChecks);
+        Assert.Equal(width == 1 ? 0 : 2 * (Readers - 1), production.SettlementLiveChangeChecks);
+        var root = Root(text);
+        for (var i = 0; i < Readers; i++)
+            ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", $"A{i}"), ("y", 0));
+        Assert.Equal("6", Value(text));
+    }
+
+    /// <summary>
+    /// LIVE REVISIONS, THE SAME READ SET USED REPEATEDLY. Readers that require nothing change no summary, so the level's
+    /// revision never moves: every later reader takes the kept settlement by its revision alone, testing nothing, where
+    /// each formerly compared every summary it read.
+    /// </summary>
+    [Fact]
+    public void AReadSetUsedRepeatedlyWithNoChangeInBetween_IsTakenByItsRevisionAlone()
+    {
+        const int Readers = 16, Width = 24;
+        var caps = string.Join(", ", Enumerable.Range(0, Width).Select(j => $"Cap{j}"));
+        var source = new StringBuilder($"F(y) = {{\n  Lib = {{\n    public V = [{caps}]\n  }}\n");
+        for (var j = 0; j < Width; j++) source.Append($"  Cap{j} = {j}\n");
+        for (var i = 0; i < Readers; i++) source.Append($"  A{i}(z) = Lib.V[0] + z\n");
+        source.Append("  A0(1) + y\n}\nF(5)\n");
+        var text = source.ToString();
+        var (production, _) = AssertSameAsFormerWalk(text, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+        Assert.Equal(Readers - 1, production.SettlementLiveHits);
+        Assert.Equal(Readers - 1, production.SettlementLiveRevisionHits);
+        Assert.Equal(0, production.SettlementLiveReadChecks);
+        Assert.Equal(0, production.SettlementLiveSummaryChanges);
+        var root = Root(text);
+        for (var i = 0; i < Readers; i++)
+            ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", $"A{i}"));
+        Assert.Equal("6", Value(text));
     }
 
     /// <summary>

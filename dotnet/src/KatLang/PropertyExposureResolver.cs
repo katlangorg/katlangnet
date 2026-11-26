@@ -1105,27 +1105,25 @@ internal static class PropertyExposureResolver
         public void Solve()
         {
             var properties = graph.Properties;
-            var equationOf = new Dictionary<string, int>(StringComparer.Ordinal);
-            for (var i = 0; i < properties.Count; i++)
-                equationOf[properties[i].Name] = i;
+            var equationOf = resolution.IndexEquations(properties);
 
             // Statically read equations: sibling edges, and level-local names a reference reads directly.
             IEnumerable<int> StaticReads(int index)
             {
                 var node = graph[index];
                 foreach (var dependencyIndex in node.SummarySiblingDependencyIndices)
-                    yield return equationOf[properties[dependencyIndex].Name];
+                    yield return equationOf[properties[dependencyIndex].Name].Index;
                 foreach (var name in node.SummaryVisiblePropertyDependencyNames)
                     if (equationOf.TryGetValue(name, out var read))
-                        yield return read;
+                        yield return read.Index;
                 foreach (var (_, pending) in node.ReferenceInputs)
                     if (pending.Selection == PendingSelection.Lexical && equationOf.TryGetValue(pending.Head, out var read))
-                        yield return read;
+                        yield return read.Index;
             }
 
             var queue = new Queue<int>();
             var queued = new bool[properties.Count];
-            foreach (var index in DependencyFirstOrder.Of(properties.Count, i => equationOf[properties[i].Name] == i, StaticReads))
+            foreach (var index in DependencyFirstOrder.Of(properties.Count, i => equationOf[properties[i].Name].Index == i, StaticReads))
             {
                 queue.Enqueue(index);
                 queued[index] = true;
@@ -1153,6 +1151,7 @@ internal static class PropertyExposureResolver
                     continue;
 
                 summaries[name] = next;
+                resolution.NoteSummaryChanged(name, index);
                 if (!readers.TryGetValue(name, out var dependents))
                     continue;
                 foreach (var dependent in dependents)
@@ -1988,25 +1987,90 @@ internal static class PropertyExposureResolver
                 return result;
             _liveNamesSaturated = true;
             _liveNameInterner = null;
+            _recentSummaryChanges = null;
             memos.Observations?.RecordSettlementLiveNameSaturation();
             return default;
         }
 
         // C1 WHILE THE LEVEL IS IN PROGRESS (implementation only): the level's unbound open-walk settlement
-        // (SharedOpenWalksLevel) whose walks read summaries of this level, kept for the rest of this level's solve with
-        // those summaries as read (their names once, in the set's order, and each set as it was). A later Run reuses it
-        // exactly when every one of them and every view it consulted still stands: it is then the settlement that Run
-        // would compute (its key holds the site, it is whole, no summary changes within a Run), and its live reads are
-        // recorded again for the new top-level settlement. The run's share keeps only settlements that read no live
-        // summary, so without this every reader walked the level again. Each reuse checks every name it read, one unit of
-        // static work per name (TryLiveOpenWalks), however many there are.
-        private Dictionary<SettlementKey, (SettlementShare.Settled Settled, string[] Names, RequirementSet[] Read)>? _liveOpenWalks;
+        // (SharedOpenWalksLevel) whose walks read summaries of this level, kept for the rest of this level's solve with the
+        // level's summary revision it last stood at (LIVE REVISIONS). A later Run reuses it exactly when no summary it read
+        // has changed since and every view it consulted still stands: it is then the settlement that Run would compute (its
+        // key holds the site, it is whole, no summary changes within a Run), and its live reads are recorded again for the
+        // new top-level settlement. The run's share keeps only settlements that read no live summary, so without this every
+        // reader walked the level again.
+        private Dictionary<SettlementKey, (SettlementShare.Settled Settled, long Revision)>? _liveOpenWalks;
         private long _wideOpenWalkNames;
 
         // LIVE SETTLEMENTS (implementation only): every other whole settlement that read summaries of this level, kept for
         // the rest of this level's solve (LiveSettlements). Null until the first one completes.
         private LiveSettlements? _live;
         private HashSet<string>? _levelReads;
+
+        /// <summary>
+        /// LIVE REVISIONS (2026-11-26; implementation only, no classification, requirement, diagnostic or Lean rule). A
+        /// settlement kept live (<c>_liveOpenWalks</c>, <see cref="LiveSettlements"/>) stands while no summary it read has
+        /// changed. Until then each one copied the names and summaries it read into a snapshot when it was kept, and each
+        /// reuse compared every one of them with the current summary: the audit's <c>liveb</c> shape at width 400 took
+        /// 2,003 frames but 159,600 comparisons and 161,600 snapshot names, and readers whose read sets are distinct
+        /// paid the snapshots of settlements nothing took again. Now the summaries of the level in progress carry one
+        /// REVISION, the number of changes since the first live keep (<see cref="LevelSolver"/>, between Runs, through
+        /// <see cref="NoteSummaryChanged"/>); a kept settlement holds the revision it last stood at and copies nothing. A
+        /// reuse at the same revision stands with no comparison. Otherwise it tests each change since against the names
+        /// the settlement read (<see cref="LiveReadsStand"/>), or, when the changes outnumber those names or the live-read
+        /// interner that named them is released (THE BOUND, <see cref="_liveNameInterner"/>), tests each name's last change
+        /// (in the level's equation index): one unit of static work per change or name tested, charged before it runs.
+        /// A settlement that stands takes the current revision, so no change is tested twice for it.
+        /// <para>A settlement stands only when no summary it read was replaced at all, so it never stands where the former
+        /// comparison of every summary found one changed. It is exactly that comparison: a change is recorded only when
+        /// the new summary differs from the one it replaces, and every equation is monotone (<see cref="LevelSolver"/>: a
+        /// summary only grows), so a summary replaced after a settlement read it never equals what it read again. The
+        /// history holds at most the smaller of the level's name count and the residual capacity. Revisions older than
+        /// that window use the equation stamps. Releasing the interner releases the history as well.</para>
+        /// </summary>
+        private long _summaryRevision = -1;
+        private List<string>? _recentSummaryChanges;
+        private int ChangeWindowCapacity => (int)Math.Min(_residualCapacity, levelInProgress.Summaries.Count);
+        private Dictionary<string, (int Index, long ChangedAt)>? _equations;
+
+        // The solver already indexes the last declaration of each name. Store its version there too, so updating a
+        // repeatedly changing equation or a never-read name cannot grow a separate table.
+        public IReadOnlyDictionary<string, (int Index, long ChangedAt)> IndexEquations(IReadOnlyList<Property> properties)
+        {
+            _equations = new(StringComparer.Ordinal);
+            for (var i = 0; i < properties.Count; i++)
+                _equations[properties[i].Name] = (i, 0);
+            return _equations;
+        }
+
+        /// <summary>
+        /// The level solver changed the summary <paramref name="name"/> of the level in progress to a different set
+        /// (LIVE REVISIONS): the level's next revision, recorded once a settlement is kept live.
+        /// </summary>
+        public void NoteSummaryChanged(string name, int index)
+        {
+            if (_summaryRevision < 0)
+                return;
+            if (!_liveNamesSaturated)
+            {
+                var recent = _recentSummaryChanges ??= [];
+                var capacity = ChangeWindowCapacity;
+                if (recent.Count < capacity)
+                    recent.Add(name);
+                else
+                    recent[(int)(_summaryRevision % capacity)] = name;
+            }
+
+            _equations![name] = (index, ++_summaryRevision);
+            memos.Observations?.RecordSettlementLiveSummaryChange(_recentSummaryChanges?.Count ?? 0);
+        }
+
+        private long KeepRevision()
+        {
+            if (_summaryRevision < 0)
+                _summaryRevision = 0;
+            return _summaryRevision;
+        }
 
         /// <summary>
         /// LIVE SETTLEMENTS (November 2026; implementation only, no classification, requirement, diagnostic or Lean rule).
@@ -2016,42 +2080,41 @@ internal static class PropertyExposureResolver
         /// inside its own Run: K readers with bound owners of a member that reads W such summaries took K × W frames (the
         /// November 21 audit's broader <c>exposure-live-open-walks-maxlivereads</c> shapes: a namespace member listing the
         /// level's properties, reached by a written path or through an <c>open</c>).
-        /// <para>Here such a settlement is kept for the rest of the level's solve, with every summary it read as it read
-        /// it, under the share's own rules otherwise (<see cref="SettlementShare"/>): it is whole; it answers every site at
+        /// <para>Here such a settlement is kept for the rest of the level's solve, with the level's summary revision it last
+        /// stood at (LIVE REVISIONS), under the share's own rules otherwise (<see cref="SettlementShare"/>): it is whole; it answers every site at
         /// its level (no view at two versions, no site lookup below the level); it made no owner lookup off its site's
         /// chain, here or in anything it reached or reused (such a result answers its exact key only, and keeping it
         /// would extend THE OFF-CHAIN GAP to keys the current walk computes afresh: it is never kept here); and it is
         /// answered by its footprint, by exact <c>Contains</c>, at most <see cref="SettlementShare.MaxCandidates"/> per
         /// content and level, within <see cref="SettlementShare.DefaultCapacity"/> of retained weight. A later settlement
         /// of the same content and level takes it exactly when its bound owners satisfy that footprint, every view it
-        /// consulted stands, and EVERY summary it read still equals the current one: it is then the settlement that Run
-        /// would compute, because which summaries a settlement reads is structural, the summaries it read are the ones
-        /// that Run reads (none changes within a Run), and the share's argument covers its key, views and bound owners.
-        /// Its live reads are recorded again in the reusing top-level settlement, so the level solver evaluates that
-        /// reader again when one of them changes, exactly as when it is computed. The check reads every summary, one unit
-        /// of static work per name, and a stale entry is dropped and computed again. The test seam
-        /// <see cref="SettlementShareModeForTesting"/> applies: exact bound owners only, or nothing kept.</para>
+        /// consulted stands, and EVERY summary it read still equals the current one (no summary it read has changed since
+        /// the revision it holds, LIVE REVISIONS): it is then the settlement that Run would compute, because which
+        /// summaries a settlement reads is structural, the summaries it read are the ones that Run reads (none changes
+        /// within a Run), and the share's argument covers its key, views and bound owners. Its live reads are recorded
+        /// again in the reusing top-level settlement, so the level solver evaluates that reader again when one of them
+        /// changes, exactly as when it is computed. A stale entry is dropped and computed again. The retained weight
+        /// still counts the names an entry read: its name set outlives the interner that built it once that is
+        /// released. The test seam <see cref="SettlementShareModeForTesting"/> applies: exact bound owners only, or
+        /// nothing kept.</para>
         /// </summary>
         private sealed class LiveSettlements(PendingResolution resolution, FrontEndTraversalObservations? observations)
         {
-            private readonly record struct Kept(SettlementShare.Settled Settled, BoundOwnerSet? Bound, string[] Names,
-                RequirementSet[] Read, long Weight);
+            private readonly record struct Kept(SettlementShare.Settled Settled, BoundOwnerSet? Bound, long Revision, long Weight);
 
             private readonly Dictionary<(object Content, SummaryScope Level), List<Kept>> _kept = [];
             private readonly SettlementShareMode _mode = SettlementShareModeForTesting.Value;
             private long _retained;
 
             /// <summary>
-            /// The kept settlement of <paramref name="key"/>'s content and level that answers its bound owners, with the
-            /// names of the summaries it read, while its views and those summaries stand; a
-            /// stale entry met is dropped. The resolution charges the width of each validation.
+            /// The kept settlement of <paramref name="key"/>'s content and level that answers its bound owners, while its
+            /// views and the summaries it read stand; it then holds the current revision. A stale entry met is dropped.
+            /// The resolution charges each validation (<see cref="LiveReadsStand"/>).
             /// </summary>
             public bool TryGet(SettlementShare.Key key,
-                [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SettlementShare.Settled? settled,
-                [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string[]? names)
+                [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SettlementShare.Settled? settled)
             {
                 settled = null;
-                names = null;
                 if (!_kept.TryGetValue((key.Content, key.Level), out var entries))
                     return false;
                 for (var i = 0; i < entries.Count; i++)
@@ -2060,16 +2123,16 @@ internal static class PropertyExposureResolver
                     observations?.RecordSettlementShareCandidateVisit();
                     if (!Answers(entry, key.Bound))
                         continue;
-                    if (!entry.Settled.ViewsStand() || !resolution.LiveReadsStand(entry.Names, entry.Read))
+                    if (!entry.Settled.ViewsStand() || !resolution.LiveReadsStand(entry.Settled, entry.Revision, out var revision))
                     {
                         observations?.RecordSettlementShareStaleView();
                         Remove(key, entries, i);
                         return false;
                     }
 
+                    entries[i] = entry with { Revision = revision };
                     observations?.RecordSettlementLiveHit();
                     settled = entry.Settled;
-                    names = entry.Names;
                     return true;
                 }
 
@@ -2077,8 +2140,8 @@ internal static class PropertyExposureResolver
             }
 
             /// <summary>
-            /// Keeps a whole settlement that read summaries of the level in progress (their names and the sets it read)
-            /// under the rules of the class summary; nothing when a kept one already answers the key, past
+            /// Keeps a whole settlement that read summaries of the level in progress, at the current revision, under the
+            /// rules of the class summary; nothing when a kept one already answers the key, past
             /// <see cref="SettlementShare.MaxCandidates"/> per content and level, or once the retained weight is full.
             /// </summary>
             public void Store(SettlementShare.Key key, SettlementShare.Settled settled)
@@ -2100,14 +2163,13 @@ internal static class PropertyExposureResolver
                 var weight = key.Weight + settled.Views.Length + (settled.Footprint?.Length ?? 0) + settled.LiveReads.Count;
                 if (_retained + weight > resolution._residualCapacity)
                     return;
-                var (names, read) = resolution.LiveReadsAsRead(settled);
                 if (entries is null)
                     _kept.Add((key.Content, key.Level), entries = new(1));
-                entries.Add(new(settled, key.Bound, names, read, weight));
+                entries.Add(new(settled, key.Bound, resolution.KeepRevision(), weight));
                 _retained += weight;
                 observations?.RecordSettlementLiveStore();
                 if (!resolution._liveNamesSaturated)
-                    observations?.LiveSnapshotStoredBeforeSaturation?.Invoke(names);
+                    observations?.LiveSettlementStoredBeforeSaturation?.Invoke(settled);
             }
 
             private bool Answers(Kept entry, BoundOwnerSet? bound)
@@ -2125,41 +2187,78 @@ internal static class PropertyExposureResolver
         }
 
         // A kept live settlement for `key` (LiveSettlements), its live reads recorded again in the top-level settlement in
-        // progress; the comparison is charged like TryLiveOpenWalks', one unit per summary compared, before it runs.
+        // progress; the validation is charged like TryLiveOpenWalks', before it runs (LiveReadsStand).
         private bool TryLiveSettlement(SettlementShare.Key key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SettlementShare.Settled? settled)
         {
             settled = null;
-            if (_live is null || !_live.TryGet(key, out settled, out var names))
+            if (_live is null || !_live.TryGet(key, out settled))
                 return false;
-            ReplayLiveReads(names);
+            ReplayLiveReads(settled.LiveReads);
             return true;
         }
 
-        // Charge the width before probing the live summaries, even when an early mismatch ends the comparison.
-        private bool LiveReadsStand(string[] names, RequirementSet[] read)
+        /// <summary>
+        /// Whether no summary <paramref name="settled"/> read has changed since <paramref name="revision"/>, the revision it
+        /// was kept at or last stood at (LIVE REVISIONS), and the <paramref name="current"/> revision it then stands at.
+        /// At the current revision nothing is tested. Otherwise each change since is tested against the names it read, or,
+        /// when the changes outnumber those names or the interner that named them is released, each name's last change:
+        /// one unit of static work per change or name, charged before the test runs, even when an early change ends it.
+        /// </summary>
+        private bool LiveReadsStand(SettlementShare.Settled settled, long revision, out long current)
         {
-            ledger?.Work(names.Length, cancellationToken);
-            memos.Observations?.RecordSettlementLiveReadChecks(names.Length);
-            for (var i = 0; i < names.Length; i++)
+            current = _summaryRevision;
+            var changes = current - revision;
+            if (changes == 0)
             {
-                CheckWideWalkCancellation(i);
-                if (!LiveSummary(names[i]).Equals(read[i]))
-                {
-                    if (_liveNamesSaturated)
-                        memos.Observations?.LiveSnapshotStaleAfterSaturation?.Invoke(names);
-                    return false;
-                }
+                memos.Observations?.RecordSettlementLiveRevisionHit();
+                return true;
             }
+
+            var names = settled.LiveReads;
+            if (_liveNameInterner is { } interner && changes <= names.Count && changes <= _recentSummaryChanges!.Count)
+            {
+                ledger?.Work(changes, cancellationToken);
+                memos.Observations?.RecordSettlementLiveReadChecks(changes);
+                memos.Observations?.RecordSettlementLiveChangeChecks(changes);
+                var capacity = ChangeWindowCapacity;
+                for (var i = 0; i < changes; i++)
+                {
+                    CheckWideWalkCancellation(i);
+                    if (interner.Contains(names, _recentSummaryChanges![(int)((revision + i) % capacity)]))
+                        return Stale(settled);
+                }
+
+                return true;
+            }
+
+            ledger?.Work(names.Count, cancellationToken);
+            memos.Observations?.RecordSettlementLiveReadChecks(names.Count);
+            var index = 0;
+            foreach (var name in names.Names)
+            {
+                CheckWideWalkCancellation(index++);
+                if (_equations!.TryGetValue(name, out var equation) && equation.ChangedAt > revision)
+                    return Stale(settled);
+            }
+
             return true;
         }
 
-        private void ReplayLiveReads(string[] names)
+        private bool Stale(SettlementShare.Settled settled)
+        {
+            if (_liveNamesSaturated)
+                memos.Observations?.LiveSettlementStaleAfterSaturation?.Invoke(settled);
+            return false;
+        }
+
+        private void ReplayLiveReads(CanonicalNameSet names)
         {
             if (_levelReads is null) return;
-            for (var i = 0; i < names.Length; i++)
+            var i = 0;
+            foreach (var name in names.Names)
             {
-                CheckWideWalkCancellation(i);
-                _levelReads.Add(names[i]);
+                CheckWideWalkCancellation(i++);
+                _levelReads.Add(name);
             }
         }
 
@@ -2177,25 +2276,6 @@ internal static class PropertyExposureResolver
             (_live ??= new LiveSettlements(this, memos.Observations)).Store(key, settled);
         }
 
-        // The summaries of this level a completed settlement read, by name in its set's order, each as it is now: no
-        // summary changes within a Run, so these are the ones it read.
-        private (string[] Names, RequirementSet[] Read) LiveReadsAsRead(SettlementShare.Settled settled)
-        {
-            var count = settled.LiveReads.Count;
-            ledger?.Work(count, cancellationToken);
-            memos.Observations?.RecordSettlementSnapshotNames(count);
-            var names = new string[count];
-            var read = new RequirementSet[names.Length];
-            var i = 0;
-            foreach (var name in settled.LiveReads.Names)
-            {
-                CheckWideWalkCancellation(i);
-                names[i] = name;
-                read[i++] = LiveSummary(name);
-            }
-
-            return (names, read);
-        }
         // The frame whose body is running: what it consults beyond its key is recorded on it (see Frame).
         private Frame? _running;
 
@@ -2838,49 +2918,46 @@ internal static class PropertyExposureResolver
         // only for a standalone analysis, which has no operation (SettlementLedgerOf).
         private void ChargeFrame() => ledger?.Work(SettlementFrameWork);
 
-        // Keeps the level's unbound open-walk settlement that read summaries of this level (_liveOpenWalks), with each one
-        // as it is now: no summary changes within a Run, so these are the ones it read. Only one that names every summary it
-        // read: a kept one is reused exactly while the summaries it names stand.
+        // Keeps the level's unbound open-walk settlement that read summaries of this level (_liveOpenWalks) at the current
+        // revision: no summary changes within a Run, so the summaries it read are the ones of that revision (LIVE
+        // REVISIONS). Only one that names every summary it read: a kept one is reused exactly while none of them changes.
         private void KeepLiveOpenWalks(SettlementKey key, SettlementShare.Settled settled)
         {
             if (!settled.LiveReadsKnown)
                 throw new InvalidOperationException("An open-walk settlement whose live reads are unknown is never kept beyond its Run.");
-            // Narrow entries already belonged to this per-level cache. Bound the extra storage introduced by wide ones.
+            // Narrow entries already belonged to this per-level cache. Bound the names wide ones keep named, which their
+            // sets hold once the interner that built them is released.
             var previous = _liveOpenWalks is not null && _liveOpenWalks.TryGetValue(key, out var prior)
-                ? WideOpenWalkNames(prior.Names.Length) : 0;
+                ? WideOpenWalkNames(prior.Settled.LiveReads.Count) : 0;
             var retained = _wideOpenWalkNames - previous + WideOpenWalkNames(settled.LiveReads.Count);
             if (retained > _residualCapacity)
                 return;
-            var (names, read) = LiveReadsAsRead(settled);
-            (_liveOpenWalks ??= [])[key] = (settled, names, read);
+            (_liveOpenWalks ??= [])[key] = (settled, KeepRevision());
             _wideOpenWalkNames = retained;
         }
 
         private static int WideOpenWalkNames(int count) => count > 16 ? count : 0;
 
-        // A kept open-walk settlement of this level, while every summary it read and every view it consulted stands; its
-        // live reads become reads of the top-level settlement in progress, exactly as if it had been computed in it. The
-        // check reads every summary the settlement read: one unit of static work per name, charged before it runs.
+        // A kept open-walk settlement of this level, while no summary it read has changed and every view it consulted
+        // stands; its live reads become reads of the top-level settlement in progress, exactly as if it had been computed
+        // in it. The validation is charged before it runs (LiveReadsStand).
         private bool TryLiveOpenWalks(SettlementKey key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SettlementShare.Settled? settled)
         {
             settled = null;
             if (_liveOpenWalks is null || !_liveOpenWalks.TryGetValue(key, out var kept))
                 return false;
-            if (!LiveReadsStand(kept.Names, kept.Read) || !kept.Settled.ViewsStand())
+            if (!LiveReadsStand(kept.Settled, kept.Revision, out var revision) || !kept.Settled.ViewsStand())
             {
                 _liveOpenWalks.Remove(key);
-                _wideOpenWalkNames -= WideOpenWalkNames(kept.Names.Length);
+                _wideOpenWalkNames -= WideOpenWalkNames(kept.Settled.LiveReads.Count);
                 return false;
             }
 
-            ReplayLiveReads(kept.Names);
+            _liveOpenWalks[key] = (kept.Settled, revision);
+            ReplayLiveReads(kept.Settled.LiveReads);
             settled = kept.Settled;
             return true;
         }
-
-        // The current summary of a property of the level in progress, as TryLookupSummary reads it.
-        private RequirementSet LiveSummary(string name)
-            => levelInProgress.Summaries.TryGetValue(name, out var summary) ? summary : default;
 
         private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, BoundOwnerSet? boundOwners)
         {

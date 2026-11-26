@@ -157,7 +157,7 @@ public sealed class ExposureDepthWidthTests
     /// up to the declaring one settles the N reads of the property it solves. Names declared halfway down stop the
     /// settlements at their level, and the bound-owner control settles none: parameter reads are requirements, resolved
     /// in place. Each frame is one top-level resolution, pushes two settlement checkpoints (the reference's frame and its
-    /// published route), and charges the operation's ledger one unit before it is counted. The live snapshot, live-name and
+    /// published route), and charges the operation's ledger one unit before it is counted. The live validation, live-name and
     /// seed work between frames has its own charge.
     /// </summary>
     [Theory]
@@ -185,7 +185,7 @@ public sealed class ExposureDepthWidthTests
         observations.RequiredAncestorSettlementObserver = _ =>
         {
             counted++;
-            var reuse = observations.SettlementSnapshotNames + observations.SettlementLiveReadChecks + observations.SettlementSeedPartWork
+            var reuse = observations.SettlementLiveReadChecks + observations.SettlementSeedPartWork
                 + observations.SettlementLiveNameEntries;
             if (mismatch == 0 && ledger.WorkCharged != before + counted * PropertyExposureResolver.SettlementFrameWork + reuse)
                 mismatch = counted;
