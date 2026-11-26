@@ -411,6 +411,74 @@ private def countAlg : Algorithm :=
   (value [dot (.resolve "S") "count"]
     [("S", alg [] [] [] [dot (lst [.num 1]) "filter" (some [block "n" (gt (dot (.resolve "S") "count") (.num 0))])])])
 
+/-! ## The C#-only boundaries
+
+`SEMANTIC-ALIGNMENT.md` records three C#-only behaviors of lazy collections. Each C# observation is
+the Lean one below plus one host policy; these guards pin the Lean side, `LazyCollectionTests`
+checks the paired C# programs, and `KatLangArityLaws/LazyCollectionBoundaries.lean` states
+the Lean law each one rests on. -/
+
+-- STAGE-SITE FRAMES (`discover_verdict_failure`). `count(filter([1, 2], {x}))` reports the consumer's
+-- frame around the step's own failure, and no frame for the written `filter` call: C# adds exactly
+-- `while evaluating call to filter` between them.
+#guard match value [call "count" [call "filter" [lst [.num 1, .num 2], block "x" (.param "x")]]] with
+  | .error (.withContext "while evaluating call to count"
+      (.typeMismatch "filter predicate result must be a Boolean value (true or false), but was numeric value 1")) =>
+    true
+  | _ => false
+-- `[1, 2].map{x / 0}.first`: the consumer's frame, the step's own `map transform` frame, the division.
+-- C# adds `while evaluating dotCall .map of [1, 2]` between the first two.
+#guard match value [dot (dot (lst [.num 1, .num 2]) "map" (some [block "x" (.binary .div (.param "x") (.num 0))])) "first"] with
+  | .error (.withContext _ (.withContext step .divByZero)) => step.startsWith "while evaluating map transform"
+  | _ => false
+
+-- RESERVATIONS (`mapItems_positions`, `filterItems_candidates`). A literal's and a `map` stage's
+-- cardinality is known when it is built, and counting reads no position: `[1, 2, 3].map{x / 0}.count`
+-- is 3 — C# reserves 3 + 3 positions then, so a cumulative budget below 6 refuses the run before any
+-- position is read. A `filter`'s cardinality is its accepted candidates': `[1, 2, 3].filter{x > 1}.count`
+-- is 2 — C# reserves those 2 when the scan completes (budget 3 + 2).
+#guard gives (value [dot (lst [.num 1, .num 2, .num 3]) "count"]) (.atom 3)
+#guard gives (value [dot (dot (lst [.num 1, .num 2, .num 3]) "map" (some [block "x" (.binary .div (.param "x") (.num 0))]))
+  "count"]) (.atom 3)
+#guard gives (value [dot (dot (lst [.num 1, .num 2, .num 3]) "filter" (some [block "x" (gt (.param "x") (.num 1))]))
+  "count"]) (.atom 2)
+
+-- A map over the same pending scan: counting discovers two matches; reading the map whole also
+-- computes their two mapped values. C# reserves 5 positions for the count and 7 for the whole read.
+private def mappedScan : KatLang.Expr :=
+  dot (dot (lst [.num 1, .num 2, .num 3]) "filter" (some [block "x" (gt (.param "x") (.num 1))]))
+    "map" (some [block "x" (.binary .add (.param "x") (.num 1))])
+#guard gives (value [dot mappedScan "count"]) (.atom 2)
+#guard gives (value [mappedScan]) (atoms [3, 4])
+
+-- READ GENERATIONS (`materializePosition_on_path`, `materializePosition_fresh`). Lean has no depth bound:
+-- `Nest(n) = if(n == 0, [7], [Nest(n - 1)])` read whole is `[7]` at 100 AND at 200 nested calls, while C#
+-- ends `atoms(Nest(200))` with `EvaluationDepthExceeded` after 128 read generations.
+private def nestAlg : Algorithm :=
+  alg ["n"] [] [] [call "if" [eq n (.num 0), lst [.num 7], lst [call "Nest" [.binary .sub n (.num 1)]]]]
+#guard gives (value [call "atoms" [call "Nest" [.num 100]]] [("Nest", nestAlg)]) (atoms [7])
+#guard gives (value [call "atoms" [call "Nest" [.num 200]]] [("Nest", nestAlg)]) (atoms [7])
+
+/-- The run's core VALUE read at a fixed fuel. Exhaustion describes this approximation. -/
+private def fuelValue (fuel : Nat) (rows : List KatLang.Expr) (props : List (String × Algorithm)) :
+    Except Error Result :=
+  let e := (KatLang.identifyPropertyExpr (program props rows)).run' 0
+  match (KatLang.evalFuel fuel (.evalRunValue e { callStack := [KatLang.preludeAlg] } [])).runState
+      KatLang.EvalState.empty with
+  | (r, _) => r
+
+-- `F(x) = [x].map(F)`: building and counting it reads nothing. Reading it whole creates a FRESH list at
+-- each time the callback runs. The read is incomplete at every fuel tried, where C# ends it
+-- with `EvaluationDepthExceeded`. The largest fuel completes
+-- the count, and a self-containing list (`L = [L]`, above) is `demandCycle` in both.
+private def fAlg : Algorithm := alg ["x"] [] [] [dot (lst [.param "x"]) "map" (some [.resolve "F"])]
+#guard gives (value [dot (call "F" [.num 1]) "count"] [("F", fAlg)]) (.atom 1)
+#guard [50, 200, 1000].all fun fuel =>
+  match fuelValue fuel [call "F" [.num 1]] [("F", fAlg)] with
+  | .error .fuelExhausted => true
+  | _ => false
+#guard gives (fuelValue 1000 [dot (call "F" [.num 1]) "count"] [("F", fAlg)]) (.atom 1)
+
 end LazyCollections
 
 end KatLangTests

@@ -34,8 +34,8 @@ call boundary. It changes no definition of `KatLang.lean`.
 | `applyBuiltinCounted` (`.repeatBuiltin`, `.whileBuiltin`) | `metaLoopCaptureSourced_run`, `repeat_setup_order` over abstract capabilities | The arm IS the setup at the real channels: `repeat_arm`, `while_arm` (definitional), `repeat_completes_iff`, `while_completes_iff`, `repeat_setup_stages`, `while_setup_stages` | All cell-backed arguments of a captured plan; failures `repeat_capture_failure`, `repeat_count_failure`, `repeat_negative_count` |
 | `repeatLoop` (local to the arm) | none | Equations and composition `repeatDriver_zero/succ/add`; finite derivation `repeat_trace_iff` | Every `n`, every step; each round an atomic production subcall |
 | `EvalBody.whileLoop` | `production_unfolds` only | Finite derivation with both directions `while_trace_iff` | Every completed run; the round an atomic production subcall |
-| Final boundary (LOOP-07) | `zero_state_result` | `Finished`, `finish_iff`, `repeat_after_setup_iff`, `while_after_setup_iff` | Every completed run |
-| One step against an ordinary call | none | `reader_agreement`, `user_step_agreement`, `family_step_agreement`, `count_one_user`, `count_one_family`, `repeat_builtin_count_one` | `UserStep` + `UserRowsBounded`, or `FamilyRowsBounded` |
+| Final boundary (LOOP-07) | `zero_state_result` | `Finished`, `finish_iff`, `repeat_after_setup_iff`, `while_after_setup_iff`; the read of a state cell: `demand_ready` (plain slot), `demand_ready_alias` (deferred item: the position), `repeat_one_round_materialized` | Every completed run |
+| One step against an ordinary call | none | `reader_agreement`, `user_step_agreement`, `family_step_agreement`, `count_one_user`, `count_one_family`, `repeat_builtin_count_one` | `UserStep` + `UserRowsBounded`, or `FamilyRowsBounded`; final slot readback in the count-one equations also takes `PlainRows` |
 | Whole builtin | none | `repeat_builtin_iff`, `while_builtin_iff` | From a completed `RepeatSetup` / `WhileSetup` |
 | Effects | `evalUnbounded_disciplined`, `evalUnbounded_linkDisc`, `cache_entries_survive` | `repeat_trace_retained`, `while_trace_retained`, `projection_reused` | Every finite run, ordinary errors included |
 
@@ -58,7 +58,7 @@ differs is the reader, whose bodies ARE `Finite` (`reader_agreement`).
 `StepAgreement wrap L O`: the loop outcome `L` and the ordinary outcome `O` complete together; a
 success gives `O = (ordinaryValue ys, t)` over the SAME state `t`; an error gives the same error,
 nested on the ordinary side, in the same state. Both executions perform the same operations, so
-the state relation is equality. The loop then appends one Ready cell per slot and completes each
+the state relation is equality. Given `PlainRows`, the loop appends one Ready cell per slot and completes each
 (`pushReady`, `pushCompleted`, `oneRoundOutcome`): every other `EvalState` field is unchanged and
 the appended cells are stated exactly, references inside `Result`s included.
 
@@ -105,6 +105,19 @@ row one cell, though both finish as one value.
   cross-language count equivalence. Lean's count is an `Int`; C# comparison stays finite evidence.
 * `projection_reused` is about a COMPLETED cell projection. Lean re-enters the capability each round
   and C# may normalize an alias target once; no context independence of alias resolution is claimed.
+* `PlainRows` (issue #204), a premise of `repeat_one_round` and so of `count_one_user`,
+  `count_one_family` and `repeat_builtin_count_one`, is consumed at ONE place: the final read of
+  the Ready cells holding the emitted slots (`materialize_ready` through `demand_ready`). A Ready
+  cell holding a BARE deferred item is an alias of that position and completes with the position's
+  outcome (`demand_ready_alias`, `demand_ready_alias_completed`); `repeat_one_round_materialized`
+  states the round with that real read and no premise on the slots. The premise is not a
+  property of every state: from a host-built heap holding a completed bare item an `if` step emits
+  it and `repeat_one_round`'s conclusion is false
+  (`FiniteLoopPlainRowsGuards.one_round_without_plainRows_is_false`). `FiniteLoopSurface.lean`
+  discharges it from every state for steps whose rows are scalar rows or list literals
+  (`user_plainRows`, `family_plainRows`) and reduces it, for a builtin step, to the ordinary
+  application's result (`plainRows_builtin`). Plainness of every emitted slot in closed runs from
+  `EvalState.empty` remains open. The trace equations for `while` use the actual final read.
 -/
 
 namespace KatLang.FiniteLoop
@@ -1205,10 +1218,10 @@ def evaluatedAt (h : Array NeedCell) (a : Nat) (v : CountedResult) : Array NeedC
 
 /-- A SLOT VALUE THAT IS NOT ITSELF A LIST POSITION (lazy collections, issue #204). A Ready cell
     holding a deferred list item IS that position — its VALUE is the position's
-    (`NeedDemand.suspendedValue`), which is how a list pattern binds a name to an element it has
-    not read. A loop's state cells hold the slots a step emitted, and those are values: every
-    premise below that reads such a cell back says so. A concrete slot is plain
-    (`plainSlot_of_concrete`), and so is a list, lazy or not. -/
+    (`NeedDemand.suspendedValue`, `demand_ready_alias`), which is how a list pattern binds a name to
+    an element it has not read. A loop's state cells hold the slots a step emitted, and the theorems
+    below that read such a cell back as its slot assume it is a value (`PlainRows`). A concrete slot
+    is plain (`plainSlot_of_concrete`), and so is a list, lazy or not: only the top level matters. -/
 def PlainSlot (value : Result) : Prop := ∀ cell, value ≠ .deferred cell
 
 theorem plainSlot_of_concrete {value : Result} (h : value.isLazy = false) : PlainSlot value := by
@@ -1216,7 +1229,9 @@ theorem plainSlot_of_concrete {value : Result} (h : value.isLazy = false) : Plai
   subst hv
   simp [Result.isLazy] at h
 
-/-- The rows a completed step emitted are plain slots (`PlainSlot`). -/
+/-- The rows a completed step emitted are plain slots (`PlainSlot`). A premise, not a theorem of
+    every state (`FiniteLoopPlainRowsGuards.host_round_not_plain`); discharged for plain-row steps
+    and reduced to the call's result for builtin steps in `FiniteLoopSurface.lean` § 5. -/
 def PlainRows (L : Except Error (List Result) × EvalState) : Prop :=
   ∀ ys t, L = (.ok ys, t) → ∀ y ∈ ys, PlainSlot y
 
@@ -1232,6 +1247,62 @@ theorem demand_ready (a : Nat) (s : EvalState) (c : NeedCell) (v : CountedResult
   rw [hsusp]
   obtain ⟨r, count⟩ := v
   cases r <;> first | rfl | exact absurd rfl (hv _)
+
+/-- The VALUE demand of a COMPLETED cell, at production: its stored outcome, nothing changed. -/
+theorem demand_completed (a : Nat) (s : EvalState) (c : NeedCell) (o : Except Error CountedResult)
+    (hc : s.needs[a]? = some c) (hs : c.state = .completed o) (ho : o ≠ .error .fuelExhausted) :
+    (demandNeedRecursive a).runState s = (o, s) := by
+  refine production_of_answer_free (.demandNeedRecursive a) s _ (fun rec => ?_) ho
+  show (NeedDemand.step (rec.evalSuppliedAt a) rec.planRoute rec.demandNeedRecursive a).runState s = _
+  exact KatLang.NeedControl.Memo.completed_sticky _ _ _ a s c o hc hs
+
+/-- **THE ALIAS LAW, AT PRODUCTION** (issue #204). A suspended Ready cell holding a DEFERRED list
+    item is NOT a slot holding that item: it IS the item's position (`NeedDemand.suspendedValue`).
+    Its VALUE demand is the position's demand, run with the alias cell marked `evaluating`, and the
+    alias cell caches that outcome, including a bare item if the position itself returns one. In `demand_ready`,
+    where a Ready cell holding a plain slot completes with that slot. -/
+theorem demand_ready_alias (a position k : Nat) (s : EvalState) (c : NeedCell)
+    (hc : s.needs[a]? = some c) (hs : c.state = .suspended) (hsusp : c.suspension = .ready (.deferred position, k))
+    (o : Except Error CountedResult) (t : EvalState)
+    (hpos : (demandNeedRecursive position).runState
+      { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = (o, t))
+    (ho : o ≠ .error .fuelExhausted) :
+    (demandNeedRecursive a).runState s =
+      (o, { t with needs := t.needs.modify a (fun c => { c with state := .completed o }) }) := by
+  have hcomplete : o.isIncomplete = false := by
+    cases o with
+    | ok _ => rfl
+    | error e => cases e <;> first | exact absurd rfl ho | rfl
+  have hpos' : (evalUnbounded (.demandNeedRecursive position)).runState
+      { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = (o, t) := hpos
+  obtain ⟨m, hm, _⟩ := (production_completes_iff (.demandNeedRecursive position) _ (o, t)).1
+    ⟨hpos', by unfold ProductionCompletes; rw [hpos']; exact ho⟩
+  have hstep : (evalStep (evalFuel m) (.demandNeedRecursive a)).runState s =
+      (o, { t with needs := t.needs.modify a (fun c => { c with state := .completed o }) }) := by
+    show (NeedDemand.step ((evalFuel m).evalSuppliedAt a) (evalFuel m).planRoute
+      (evalFuel m).demandNeedRecursive a).runState s = _
+    refine KatLang.NeedControl.Memo.suspended_retains_state _ _ _ a s _ c o hc hs ?_ hcomplete
+    rw [hsusp]
+    exact hm
+  have hfuel : (evalFuel (m + 1) (.demandNeedRecursive a)).runState s =
+      (o, { t with needs := t.needs.modify a (fun c => { c with state := .completed o }) }) := by
+    rw [evalFuel_succ, normalize_of_complete _ s (by rw [hstep]; exact ho), hstep]
+  exact ((production_completes_iff (.demandNeedRecursive a) s _).2
+    ⟨m + 1, hfuel, (evalFuel_completes_iff (m + 1) _ s).2 (by rw [hfuel]; exact ho)⟩).1
+
+/-- The alias law over a COMPLETED position: the alias cell completes with the position's value,
+    in the heap `evaluatedAt` describes — the same heap shape as `demand_ready`, with the
+    POSITION's value where `demand_ready` has the slot. -/
+theorem demand_ready_alias_completed (a position k : Nat) (s : EvalState) (c p : NeedCell) (v : CountedResult)
+    (hc : s.needs[a]? = some c) (hs : c.state = .suspended) (hsusp : c.suspension = .ready (.deferred position, k))
+    (hne : a ≠ position) (hp : s.needs[position]? = some p) (hps : p.state = .completed (.ok v)) :
+    (demandNeedRecursive a).runState s = (.ok v, { s with needs := evaluatedAt s.needs a v }) := by
+  have hp' : (s.needs.modify a (fun c => { c with state := .evaluating }))[position]? = some p := by
+    rw [KatLang.CallPlan.modify_get]
+    simp only [hne, hp, ite_false]
+  have hpos := demand_completed position
+    { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } p (.ok v) hp' hps nofun
+  exact demand_ready_alias a position k s c hc hs hsusp (.ok v) _ hpos nofun
 
 /-- Read a list of state cells as the loop's final slots. -/
 abbrev materialize (final : List Nat) : EvalM (List Result) :=
@@ -2064,18 +2135,21 @@ def oneRoundOutcome : Except Error (List Result) × EvalState → Except Error C
   | (.ok ys, t) => (.ok (loopResultCounted ys), pushCompleted t ys)
   | (.error e, t) => (.error e, t)
 
-/-- **COUNT ONE, THE REAL SEQUENCE.** From a retained step projected to `alg`: ONE invocation over
-    the ORIGINAL cells (`runNeedStepSlots`, whatever the callable category), the emitted slots
-    allocated as the next Ready cells in order, those cells materialized, and the loop's counted
-    value. The final state is the step's state with one COMPLETED Ready cell per slot appended;
-    every other field is unchanged. The emitted slots are values, never a bare list position
-    (`PlainRows`, issue #204): the cells that hold them complete with them. -/
-theorem repeat_one_round (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (alg : Algorithm)
-    (hi : (invokeNeed step).runState s = (.ok (some alg), s₁))
-    (hplain : PlainRows ((runNeedStepSlots alg ctx env cells name).runState s₁)) :
+/-- **COUNT ONE, WITH NO PREMISE ON THE SLOTS.** From a retained step projected to `alg`: ONE
+    invocation over the ORIGINAL cells, its slots allocated as the next Ready cells, and THOSE CELLS'
+    real final demand (`materialize`). A slot that is a bare deferred item makes its Ready cell an
+    alias of that position (`demand_ready_alias`), so the slot is then not what the loop reads;
+    `repeat_one_round` is this equation where it is (`PlainRows`). -/
+theorem repeat_one_round_materialized (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
+    (name : String) (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (alg : Algorithm)
+    (hi : (invokeNeed step).runState s = (.ok (some alg), s₁)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
-      oneRoundOutcome ((runNeedStepSlots alg ctx env cells name).runState s₁) := by
+      (match (runNeedStepSlots alg ctx env cells name).runState s₁ with
+       | (.error e, t) => (.error e, t)
+       | (.ok ys, s₂) =>
+         match (materialize (readyAddrs s₂.needs.size ys)).runState (pushReady s₂ ys) with
+         | (.error e, u) => (.error e, u)
+         | (.ok zs, u) => (.ok (loopResultCounted zs), u)) := by
   have hdriver : (repeatDriver step ctx env name evalUnbounded 1 cells).runState s =
       (match (runNeedStepSlots alg ctx env cells name).runState s₁ with
        | (.error e, t) => (.error e, t)
@@ -2089,11 +2163,32 @@ theorem repeat_one_round (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env
   show (repeatDriver step ctx env name evalUnbounded 1 cells >>= fun fc =>
     materialize (fc.map Prod.fst) >>= fun ys => pure (loopResultCounted ys)).runState s = _
   rw [EvalM.bind_runState, hdriver]
+  rcases (runNeedStepSlots alg ctx env cells name).runState s₁ with ⟨_ | ys, s₂⟩
+  · rfl
+  · simp only [EvalM.bind_runState]
+    rw [retainedSourced_fst]
+    rcases (materialize (readyAddrs s₂.needs.size ys)).runState (pushReady s₂ ys) with ⟨_ | zs, u⟩ <;> rfl
+
+/-- **COUNT ONE, THE REAL SEQUENCE.** From a retained step projected to `alg`: ONE invocation over
+    the ORIGINAL cells (`runNeedStepSlots`, whatever the callable category), the emitted slots
+    allocated as the next Ready cells in order, those cells materialized, and the loop's counted
+    value. The final state is the step's state with one COMPLETED Ready cell per slot appended;
+    every other field is unchanged. It is `repeat_one_round_materialized` where the emitted slots
+    are no bare list position (`PlainRows`, issue #204): the cells that hold them then complete with
+    them (`materialize_ready`). The premise is necessary
+    (`FiniteLoopPlainRowsGuards.one_round_without_plainRows_is_false`). -/
+theorem repeat_one_round (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (alg : Algorithm)
+    (hi : (invokeNeed step).runState s = (.ok (some alg), s₁))
+    (hplain : PlainRows ((runNeedStepSlots alg ctx env cells name).runState s₁)) :
+    (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
+      oneRoundOutcome ((runNeedStepSlots alg ctx env cells name).runState s₁) := by
+  rw [repeat_one_round_materialized step ctx env name cells s s₁ alg hi]
   generalize (runNeedStepSlots alg ctx env cells name).runState s₁ = L at hplain ⊢
   rcases L with ⟨_ | ys, s₂⟩
   · rfl
-  · simp only [EvalM.bind_runState]
-    rw [retainedSourced_fst, materialize_ready ys s₂.needs (pushReady s₂ ys) rfl (hplain ys s₂ rfl)]
+  · dsimp only
+    rw [materialize_ready ys s₂.needs (pushReady s₂ ys) rfl (hplain ys s₂ rfl)]
     rfl
 
 /-- The two value observations agree exactly on canonical slots. -/

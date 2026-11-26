@@ -5,9 +5,9 @@ open KatLang KatLang.EvaluatorCore KatLang.WhileRoundProduction KatLang.FiniteLo
 /-!
 # E-15 widening: the surface domain of the finite-loop comparison (November 2026)
 
-`FiniteLoopCorrespondence.lean` (FG-L1) compared one loop step with the ordinary call under three
-run premises — `UserRowsBounded`, `FamilyRowsBounded` and canonical slots — that its guards
-discharged for numeric literal rows only, and it gave builtin and alias steps their dispatch only.
+`FiniteLoopCorrespondence.lean` (FG-L1) compared one loop step with the ordinary call under four
+run premises — `UserRowsBounded`, `FamilyRowsBounded`, canonical slots and, since issue #204,
+`PlainRows` — and gave dispatch equations for builtin and alias steps.
 This module discharges those premises for whole syntactic classes of steps, and proves value
 theorems for builtin and alias steps. It changes no definition of `KatLang.lean` and no theorem
 of `FiniteLoopCorrespondence.lean`.
@@ -19,8 +19,12 @@ in every context, for every supply: the evaluator arm of such a row fixes the co
 
 * `scalarRow` — a literal (`7`, `'a'`, `true`), `()`, and every unary,
   binary and comparison operator WHATEVER ITS OPERANDS: `x + 1`, `-x`, `not b`, `x < n`,
-  `F(x) * 2`, `xs[0] + y`. Such a row completes with one canonical scalar (or `()`) at a
-  value-boundary count (`scalarRow_canonical`).
+  `F(x) * 2`, `xs[0] + y`. Such a row completes with one scalar — a number, a Boolean, a string or
+  `()` — at a value-boundary count (`scalarRow_scalar`), so with a canonical value
+  (`scalarRow_canonical`) that is no list position.
+* `plainRow` — a scalar row or a list literal `[…]`. Such a row completes with a value that is no
+  bare list position (`plainRows_give`): a list literal is a LIST however many of its positions
+  are deferred.
 * `valueRow` — a scalar row, a capture `(b, a)`, a name `K`, an inline block, a selection
   `xs[i]`, a list `[x, x]`, an internal join, or an explicit spread `v*`. A non-spread value row
   completes at a value-boundary count (`valueRow_bounded`); a spread is admitted by `RowBoundary`
@@ -34,10 +38,18 @@ Discharges:
 | `UserRowsBounded` | every user step whose rows are value rows (`RowsBy valueRow`) | `userRowsBounded_of_valueRows` |
 | `FamilyRowsBounded` | every family whose clause bodies are user bodies with value rows (`ClauseBy valueRow`) | `familyRowsBounded_of_clauses` (via `select_ok`: every dispatched body is a clause body wired under the family) |
 | canonical slots | every user step / family whose rows are scalar rows | `user_slots_canonical`, `family_slots_canonical` |
+| `PlainRows` | every user step / family whose rows are plain rows, every state | `user_plainRows`, `family_plainRows` (both slot classes through ONE argument, `RowsGive` → `user_slots_by`, `family_slots_by`) |
+| `PlainRows` of a builtin step | REDUCED to the ordinary application: its result is no bare position | `plainRows_builtin`, `builtin_plainRows` |
+
+With both run premises discharged, `count_one_user_plain` and `count_one_family_plain` state FG-L1's
+one-round agreement and equation for plain-row steps from the step projection alone. That
+`PlainRows` is not a theorem of every state, and that FG-L1's one-round equation is false
+without it, is `FiniteLoopPlainRowsGuards.lean`.
 
 Examples IN the domain: `Inc(x) = x + 1`; `Next(x) = x + 1, x < 3`; `Twice(x) = x + 1, x * 2`;
 `Use(x) = Inc(x) * 2`; `Fam(0) = 100; Fam(n) = n * 2`; `Flip(a, b) = (b, a)` (rows bounded,
-value equality NOT claimed: a capture is not a scalar row); `Sel(xs) = xs[0]`; `Lst(x) = [x, x]`.
+value equality NOT claimed: a capture is not a scalar row); `Sel(xs) = xs[0]`; `Lst(x) = [x, x]` (a
+plain row: `PlainRows` too).
 
 Examples OUTSIDE it: `Swap(a, b) = b, a` and `Echo(x) = x` (a bare parameter row reads the
 supplied cell's count: a host-built Ready cell of count two splits, guard `hostTwoCell` of
@@ -49,29 +61,35 @@ count is not proved bounded here); `Dot(x) = x.F` (dot member).
 * `count_one_user_value`, `count_one_family_value`: for scalar-row steps, `repeat` of count one
   completes with `v` IFF the ordinary call over the same cells completes with the SAME `v`; the
   loop's final state is the call's plus one completed slot cell per slot. Premise: the step
-  projection only.
+  projection only (`PlainRows` is discharged: scalar rows are plain rows).
 * `builtin_step_value`, `count_one_builtin`, `count_one_builtin_ok`: a builtin step round IS its
   ordinary application's completed outcome (its one result as one slot, an error under the
   step frame), and `repeat(1)` is determined by the ordinary call `F(args)`; on a canonical
   result it IS `reCountValueBoundary` of the call's result (`scalar_canonical` discharges this
-  for numbers, Booleans and strings). No Lean `Builtin` is excluded from this application-relative
-  statement. Additionally `count_application_value` / `count_one_count_value` prove the top-level
-  length formula for ordinary prepared collections (excluding views and retained collectors), and
-  `if_application_value` / `count_one_if_value` prove the chosen-branch formula for both Boolean
-  conditions, without evaluating the other branch. These use argument-operation premises rather
-  than assuming the builtin application's result. Other builtins have no closed-form result law
-  here. Math functions and host operations in the C# corpus are outside Lean's `Builtin` type.
+  for numbers, Booleans and strings). FG-L1's `PlainRows` is replaced by its exact content: the
+  call's result is no bare list position (`count_one_if_value` assumes it of the chosen branch's
+  value; `count_one_count_value` needs no such premise). No Lean `Builtin` is excluded from this
+  application-relative statement. Additionally `count_application_value` / `count_one_count_value`
+  prove the top-level length formula for ordinary prepared collections (excluding views and
+  retained collectors), and `if_application_value` / `count_one_if_value` prove the chosen-branch
+  formula for both Boolean conditions, without evaluating the other branch. These use
+  argument-operation premises rather than assuming the builtin application's result. Other builtins
+  have no closed-form result law here. Math functions and host operations in the C# corpus are
+  outside Lean's `Builtin` type.
 * `alias_loop_forwards`, `alias_call_forwards`, `StepAgreement.forward`: once an alias resolves
   to `target`, both receivers ARE the target's from the resolved state.
-  `alias_user_step_agreement`, `count_one_alias_value`, `count_one_alias_builtin` follow.
+  `alias_user_step_agreement`, `count_one_alias_value` (no `PlainRows` premise),
+  `count_one_alias_builtin` (the premise on the call's result) follow.
 
 ## Not claimed
 
 Bare parameter, bare call and dot-member rows (above); canonical values of non-scalar value
 rows (a capture, list, name or selection value is not proved canonical); canonicity of a
 builtin list result beyond the premise; the alias resolution premise (resolution is not shown to
-succeed); arbitrary-binder `FuelReached` (E-7);
-C#, which stays finite evidence (E-16).
+succeed); `PlainRows` for steps with bare parameter, call, dot-member, capture, name, block,
+selection or spread rows — their values come from cells and callees. Extending the proof to these
+rows in closed runs from `EvalState.empty` requires reasoning about reachable slot values; arbitrary-binder
+`FuelReached` (E-7); C#, which stays finite evidence (E-16).
 -/
 
 namespace KatLang.FiniteLoopSurface
@@ -173,6 +191,27 @@ theorem canon_atom (n : Int) : Canonical (.atom n, 1) := ⟨Nat.le_refl _, by si
 theorem canon_bool (b : Bool) : Canonical (.bool b, 1) := ⟨Nat.le_refl _, by simp [Result.normalize]⟩
 theorem canon_str (x : String) : Canonical (.str x, 1) := ⟨Nat.le_refl _, by simp [Result.normalize]⟩
 
+/-- A SCALAR VALUE: a number, a Boolean, a string or `()` — what a scalar row completes with. -/
+def ScalarValue (r : Result) : Prop :=
+  (∃ n, r = .atom n) ∨ (∃ b, r = .bool b) ∨ (∃ x, r = .str x) ∨ r = .sequenceValue []
+
+/-- A scalar value at a value-boundary count. -/
+def Scalar (out : CountedResult) : Prop := out.snd ≤ 1 ∧ ScalarValue out.fst
+
+theorem ScalarValue.normalize {r : Result} (h : ScalarValue r) : r.normalize = r := by
+  rcases h with ⟨n, rfl⟩ | ⟨b, rfl⟩ | ⟨x, rfl⟩ | rfl <;> simp [Result.normalize]
+
+/-- A scalar value is no list position (`PlainSlot`). -/
+theorem ScalarValue.plain {r : Result} (h : ScalarValue r) : PlainSlot r := by
+  intro cell hr
+  rcases h with ⟨n, rfl⟩ | ⟨b, rfl⟩ | ⟨x, rfl⟩ | rfl <;> cases hr
+
+theorem Scalar.canonical {out : CountedResult} (h : Scalar out) : Canonical out := ⟨h.1, h.2.normalize⟩
+
+theorem scal_atom (n : Int) : Scalar (.atom n, 1) := ⟨Nat.le_refl _, .inl ⟨n, rfl⟩⟩
+theorem scal_bool (b : Bool) : Scalar (.bool b, 1) := ⟨Nat.le_refl _, .inr (.inl ⟨b, rfl⟩)⟩
+theorem scal_str (x : String) : Scalar (.str x, 1) := ⟨Nat.le_refl _, .inr (.inr (.inl ⟨x, rfl⟩))⟩
+
 /-- One structural step of an `OkSat` goal. -/
 syntax "oksat_step" : tactic
 macro_rules
@@ -199,19 +238,19 @@ theorem negativeIntPow_atom (x y : Int) :
   · exact okSat_pure ⟨_, rfl⟩
   · exact okSat_error _
 
-theorem unary_canonical (op : UnaryOp) (operand : Expr) (ctx : EvalCtx) (env : ValEnv) :
-    OkSat Canonical (evalUnbounded (.evalUnaryCounted op operand ctx env)) := by
-  refine okSat_call (.evalUnaryCounted op operand ctx env) Canonical ?_
+theorem unary_scalar (op : UnaryOp) (operand : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    OkSat Scalar (evalUnbounded (.evalUnaryCounted op operand ctx env)) := by
+  refine okSat_call (.evalUnaryCounted op operand ctx env) Scalar ?_
   show OkSat _ (EvalBody.evalUnaryCounted evalUnbounded op operand ctx env)
   unfold EvalBody.evalUnaryCounted
   refine okSat_bind fun r => ?_
   cases op
   all_goals (dsimp only; split)
-  all_goals first | exact okSat_error _ | first | exact okSat_pure (canon_atom _) | exact okSat_pure (canon_bool _)
+  all_goals first | exact okSat_error _ | first | exact okSat_pure (scal_atom _) | exact okSat_pure (scal_bool _)
 
-theorem binary_canonical (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : ValEnv) :
-    OkSat Canonical (evalUnbounded (.evalBinaryCounted op a b ctx env)) := by
-  refine okSat_call (.evalBinaryCounted op a b ctx env) Canonical ?_
+theorem binary_scalar (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    OkSat Scalar (evalUnbounded (.evalBinaryCounted op a b ctx env)) := by
+  refine okSat_call (.evalBinaryCounted op a b ctx env) Scalar ?_
   show OkSat _ (EvalBody.evalBinaryCounted evalUnbounded op a b ctx env)
   unfold EvalBody.evalBinaryCounted
   refine okSat_bind fun lr => ?_
@@ -220,13 +259,13 @@ theorem binary_canonical (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : Val
   all_goals first
     | (refine okSat_bind fun x => ?_
        split
-       · exact okSat_pure (canon_bool _)
-       · exact okSat_bind fun rr => okSat_bind fun y => okSat_pure (canon_bool _))
+       · exact okSat_pure (scal_bool _)
+       · exact okSat_bind fun rr => okSat_bind fun y => okSat_pure (scal_bool _))
     | skip
   refine okSat_bind fun rr => ?_
   split
   -- `xor`: both operands were evaluated.
-  · exact okSat_bind fun x => okSat_bind fun y => okSat_pure (canon_bool _)
+  · exact okSat_bind fun x => okSat_bind fun y => okSat_pure (scal_bool _)
   split
   all_goals first | exact okSat_error _ | skip
   refine okSat_bind fun x => okSat_bind fun y => ?_
@@ -235,19 +274,19 @@ theorem binary_canonical (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : Val
   split
   · refine okSat_bind_of (negativeIntPow_atom x y) fun v hv => ?_
     obtain ⟨n, rfl⟩ := hv
-    exact okSat_pure (canon_atom n)
+    exact okSat_pure (scal_atom n)
   · apply okSat_pure
-    split <;> first | exact canon_atom _ | exact canon_bool _
+    split <;> first | exact scal_atom _ | exact scal_bool _
 
-theorem links_canonical (pe : Expr) (prev : Result) (holds : Bool) (links : List ComparisonLink)
+theorem links_scalar (pe : Expr) (prev : Result) (holds : Bool) (links : List ComparisonLink)
     (ctx : EvalCtx) (env : ValEnv) :
-    OkSat Canonical (evalUnbounded (.evalComparisonLinksCounted pe prev holds links ctx env)) := by
+    OkSat Scalar (evalUnbounded (.evalComparisonLinksCounted pe prev holds links ctx env)) := by
   induction links generalizing pe prev holds with
   | nil =>
-    refine okSat_call (.evalComparisonLinksCounted pe prev holds [] ctx env) Canonical ?_
-    exact okSat_pure (canon_bool _)
+    refine okSat_call (.evalComparisonLinksCounted pe prev holds [] ctx env) Scalar ?_
+    exact okSat_pure (scal_bool _)
   | cons l rest ih =>
-    refine okSat_call (.evalComparisonLinksCounted pe prev holds (l :: rest) ctx env) Canonical ?_
+    refine okSat_call (.evalComparisonLinksCounted pe prev holds (l :: rest) ctx env) Scalar ?_
     show OkSat _ (EvalBody.evalComparisonLinksCounted evalUnbounded pe prev holds (l :: rest) ctx env)
     unfold EvalBody.evalComparisonLinksCounted
     refine okSat_bind fun next => ?_
@@ -260,12 +299,12 @@ theorem links_canonical (pe : Expr) (prev : Result) (holds : Bool) (links : List
             exact okSat_bind fun _ => ih _ _ _)
         | (simp only [EvalM.pure_bind]; exact okSat_bind fun _ => ih _ _ _)
 
-theorem comparison_canonical (first : Expr) (links : List ComparisonLink) (ctx : EvalCtx) (env : ValEnv) :
-    OkSat Canonical (evalUnbounded (.evalComparisonCounted first links ctx env)) := by
-  refine okSat_call (.evalComparisonCounted first links ctx env) Canonical ?_
+theorem comparison_scalar (first : Expr) (links : List ComparisonLink) (ctx : EvalCtx) (env : ValEnv) :
+    OkSat Scalar (evalUnbounded (.evalComparisonCounted first links ctx env)) := by
+  refine okSat_call (.evalComparisonCounted first links ctx env) Scalar ?_
   show OkSat _ (EvalBody.evalComparisonCounted evalUnbounded first links ctx env)
   unfold EvalBody.evalComparisonCounted
-  exact okSat_bind fun _ => links_canonical _ _ _ _ _ _
+  exact okSat_bind fun _ => links_scalar _ _ _ _ _ _
 
 theorem listLiteral_bounded (elements : List Expr) (ctx : EvalCtx) (env : ValEnv) :
     OkSat Bounded (evalUnbounded (.evalListLiteralCounted elements ctx env)) := by
@@ -325,20 +364,30 @@ theorem canon_empty (depth : Nat) :
     Canonical (buildEmptySequenceValue depth, Result.valueCount (buildEmptySequenceValue depth)) :=
   ⟨valueCount_le (buildEmptySequenceValue depth), by simp [buildEmptySequenceValue, Result.normalize]⟩
 
+theorem scal_empty (depth : Nat) :
+    Scalar (buildEmptySequenceValue depth, Result.valueCount (buildEmptySequenceValue depth)) :=
+  ⟨valueCount_le (buildEmptySequenceValue depth), .inr (.inr (.inr rfl))⟩
+
+/-- **A scalar row completes with a scalar value at a value-boundary count**, from every state, in
+    every context: a number, a Boolean, a string or `()`. -/
+theorem scalarRow_scalar (e : Expr) (h : scalarRow e = true) (ctx : EvalCtx) (env : ValEnv) :
+    OkSat Scalar (evalCounted e ctx env) := by
+  refine okSat_call (.evalCounted e ctx env) Scalar ?_
+  show OkSat _ (EvalBody.evalCounted evalUnbounded e ctx env)
+  cases e <;> simp [scalarRow] at h <;> dsimp only [EvalBody.evalCounted]
+  · exact okSat_pure (scal_atom _)
+  · exact okSat_pure (scal_str _)
+  · exact okSat_pure (scal_bool _)
+  · exact okSat_nested (unary_scalar _ _ _ _)
+  · exact okSat_nested (binary_scalar _ _ _ _ _)
+  · exact okSat_nested (comparison_scalar _ _ _ _)
+  · exact okSat_pure (scal_empty _)
+
 /-- **A scalar row completes with a canonical value at a value-boundary count**, from every state,
     in every context. -/
 theorem scalarRow_canonical (e : Expr) (h : scalarRow e = true) (ctx : EvalCtx) (env : ValEnv) :
-    OkSat Canonical (evalCounted e ctx env) := by
-  refine okSat_call (.evalCounted e ctx env) Canonical ?_
-  show OkSat _ (EvalBody.evalCounted evalUnbounded e ctx env)
-  cases e <;> simp [scalarRow] at h <;> dsimp only [EvalBody.evalCounted]
-  · exact okSat_pure (canon_atom _)
-  · exact okSat_pure (canon_str _)
-  · exact okSat_pure (canon_bool _)
-  · exact okSat_nested (unary_canonical _ _ _ _)
-  · exact okSat_nested (binary_canonical _ _ _ _ _)
-  · exact okSat_nested (comparison_canonical _ _ _ _)
-  · exact okSat_pure (canon_empty _)
+    OkSat Canonical (evalCounted e ctx env) :=
+  okSat_mono (fun _ hs => hs.canonical) (scalarRow_scalar e h ctx env)
 
 /-- **A non-spread value-boundary row completes at a value-boundary count**, from every state, in
     every context. -/
@@ -487,7 +536,24 @@ theorem familyRowsBounded_of_clauses (a : Algorithm) (h : ∀ br ∈ a.branches,
   rw [← hq] at hc
   exact ⟨hc.notBuiltin, hc.passes, boundedRows_of_valueRows _ _ _ _ hc.rows⟩
 
-/-! ## 5. Canonical slots -/
+/-! ## 5. Slot classes: canonical slots and plain slots
+
+One argument serves every slot predicate: a ROW CLASS whose rows are not spreads and complete, from
+every state, at a value-boundary count with a value satisfying `P` (`RowsGive`) supplies slots that
+all satisfy `P`, for a user step and for a clause family. Two instances:
+
+* scalar rows give CANONICAL slots (the value equality of § 6);
+* PLAIN ROWS — scalar rows and list literals — give PLAIN slots, slots that are no bare list position
+  (`PlainSlot`): this discharges FG-L1's premise `PlainRows` for those steps, from every state. -/
+
+/-- Rows of class `row` are not spreads and complete, from every state and in every context, at a
+    value-boundary count with a value satisfying `P`. -/
+def RowsGive (row : Expr → Bool) (P : Result → Prop) : Prop :=
+  ∀ e, row e = true → (¬ ∃ x, e = .sequenceSpread x) ∧
+    ∀ ctx env, OkSat (fun out : CountedResult => out.snd ≤ 1 ∧ P out.fst) (evalCounted e ctx env)
+
+/-- Every slot of a row supply satisfies `P`. -/
+def SlotsBy (P : Result → Prop) (ys : List Result) : Prop := ∀ y ∈ ys, P y
 
 /-- Every slot of a row supply is canonical. -/
 def CanonSlots (ys : List Result) : Prop := ∀ y ∈ ys, y.normalize = y
@@ -495,10 +561,11 @@ def CanonSlots (ys : List Result) : Prop := ∀ y ∈ ys, y.normalize = y
 theorem scalarRow_not_spread {e : Expr} (h : scalarRow e = true) : ¬ ∃ x, e = .sequenceSpread x := by
   rintro ⟨x, rfl⟩; simp [scalarRow] at h
 
-/-- Scalar rows supply canonical slots, one per row, on every completed run. -/
-theorem formRows_canonical (ctx : EvalCtx) (env : ValEnv) :
-    ∀ (rows : List Expr), (∀ e ∈ rows, scalarRow e = true) →
-      OkSat CanonSlots (OutputRows.formLeftToRight (formOutputRow ctx env) rows) := by
+/-- Rows of a class supply slots of its predicate, one per row, on every completed run. -/
+theorem formRows_by {row : Expr → Bool} {P : Result → Prop} (hg : RowsGive row P) (ctx : EvalCtx)
+    (env : ValEnv) :
+    ∀ (rows : List Expr), (∀ e ∈ rows, row e = true) →
+      OkSat (SlotsBy P) (OutputRows.formLeftToRight (formOutputRow ctx env) rows) := by
   intro rows
   induction rows with
   | nil => intro _ s ys t h; cases h; intro y hy; cases hy
@@ -510,9 +577,9 @@ theorem formRows_canonical (ctx : EvalCtx) (env : ValEnv) :
     · rw [hrun] at h; cases h
     · rw [hrun] at h
       dsimp only at h
-      have hse := hr e (by simp)
-      have hc := scalarRow_canonical e hse ctx env s out u hrun
-      rw [items_plain e out (scalarRow_not_spread hse) hc.1, EvalM.bind_runState] at h
+      have hse := hg e (hr e (by simp))
+      have hc := hse.2 ctx env s out u hrun
+      rw [items_plain e out hse.1 hc.1, EvalM.bind_runState] at h
       rcases hrest : (OutputRows.formLeftToRight (formOutputRow ctx env) rest).runState u with ⟨_ | ys', v⟩
       · rw [hrest] at h; cases h
       · rw [hrest] at h
@@ -523,10 +590,10 @@ theorem formRows_canonical (ctx : EvalCtx) (env : ValEnv) :
         · exact hc.2
         · exact ih (fun x hx => hr x (by simp [hx])) u ys' _ hrest y hy
 
-/-- A checked non-builtin body with scalar rows reads canonical slots. -/
-theorem slots_canonical_of_body (b : Algorithm) (hn : NotBuiltin b) (hp : Passes b)
-    (hr : RowsBy scalarRow b) (ctx : EvalCtx) (env : ValEnv) :
-    OkSat CanonSlots (evalAlgOutputSlots b ctx env) := by
+/-- A checked non-builtin body whose rows are of a class reads slots of its predicate. -/
+theorem slots_of_body {row : Expr → Bool} {P : Result → Prop} (hg : RowsGive row P) (b : Algorithm)
+    (hn : NotBuiltin b) (hp : Passes b) (hr : RowsBy row b) (ctx : EvalCtx) (env : ValEnv) :
+    OkSat (SlotsBy P) (evalAlgOutputSlots b ctx env) := by
   intro s ys t h
   have hbody : (EvalBody.evalAlgOutputSlots evalUnbounded b ctx env).runState s =
       (OutputRows.formLeftToRight (formOutputRow (enteredCtx b ctx s) env) b.output).runState
@@ -540,7 +607,7 @@ theorem slots_canonical_of_body (b : Algorithm) (hn : NotBuiltin b) (hp : Passes
   have h' : (OutputRows.formLeftToRight (formOutputRow (enteredCtx b ctx s) env) b.output).runState
       (enteredState b ctx env s) = (.ok ys, t) := by
     rw [← hbody]; exact hu.trans h
-  exact formRows_canonical _ _ _ hr _ _ _ h'
+  exact formRows_by hg _ _ _ hr _ _ _ h'
 
 theorem userActivation_fst (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) :
     OkSat (fun p : Activation => p.1 = a) (userActivation a ctx env cells evalUnbounded) := by
@@ -550,11 +617,12 @@ theorem userActivation_fst (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells
   · exact okSat_bind fun _ => okSat_pure rfl
   · exact okSat_throw _
 
-/-- **The canonical-slot premise IS DISCHARGED for a user step with scalar rows.** -/
-theorem user_slots_canonical (a : Algorithm) (h : UserStep a) (hr : RowsBy scalarRow a) (ctx : EvalCtx)
-    (env : ValEnv) (cells : List NeedSupply.Sourced) (name : String) :
-    OkSat CanonSlots (runNeedStepSlots a ctx env cells name) := by
-  refine okSat_call (.runNeedStepSlots a ctx env cells name) CanonSlots ?_
+/-- A user step whose rows are of a class supplies slots of its predicate. -/
+theorem user_slots_by {row : Expr → Bool} {P : Result → Prop} (hg : RowsGive row P) (a : Algorithm)
+    (h : UserStep a) (hr : RowsBy row a) (ctx : EvalCtx) (env : ValEnv)
+    (cells : List NeedSupply.Sourced) (name : String) :
+    OkSat (SlotsBy P) (runNeedStepSlots a ctx env cells name) := by
+  refine okSat_call (.runNeedStepSlots a ctx env cells name) (SlotsBy P) ?_
   rw [user_loop_body a h ctx env cells name evalUnbounded]
   unfold loopRead
   refine okSat_bind_of (userActivation_fst a ctx env (cells.map Prod.fst)) fun p hp => ?_
@@ -564,15 +632,15 @@ theorem user_slots_canonical (a : Algorithm) (h : UserStep a) (hr : RowsBy scala
   have hn : NotBuiltin b := by
     obtain ⟨_, _, _, _, _, _, _, rfl⟩ := h.user
     intro b' hb; cases hb
-  exact slots_canonical_of_body b hn h.checks hr c' e'
+  exact slots_of_body hg b hn h.checks hr c' e'
 
-/-- **The canonical-slot premise IS DISCHARGED for a clause family whose clause bodies have scalar
-    rows.** -/
-theorem family_slots_canonical (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
-    (d : Option PropertyIdentity) (h : ∀ b ∈ br, ClauseBy scalarRow b.body) (ctx : EvalCtx) (env : ValEnv)
+/-- A clause family whose clause bodies have rows of a class supplies slots of its predicate. -/
+theorem family_slots_by {row : Expr → Bool} {P : Result → Prop} (hg : RowsGive row P)
+    (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
+    (d : Option PropertyIdentity) (h : ∀ b ∈ br, ClauseBy row b.body) (ctx : EvalCtx) (env : ValEnv)
     (cells : List NeedSupply.Sourced) (name : String) :
-    OkSat CanonSlots (runNeedStepSlots (.conditional p o br d) ctx env cells name) := by
-  refine okSat_call (.runNeedStepSlots (.conditional p o br d) ctx env cells name) CanonSlots ?_
+    OkSat (SlotsBy P) (runNeedStepSlots (.conditional p o br d) ctx env cells name) := by
+  refine okSat_call (.runNeedStepSlots (.conditional p o br d) ctx env cells name) (SlotsBy P) ?_
   rw [family_loop_body p o br d ctx env cells name evalUnbounded]
   refine okSat_withCtx _ ?_
   unfold loopRead
@@ -583,7 +651,179 @@ theorem family_slots_canonical (p : Option ScopeCtx) (o : List Expr) (br : List 
   dsimp only at hw
   subst hw
   have hc := (h b hb).withParent w
-  exact slots_canonical_of_body _ hc.notBuiltin hc.passes hc.rows c' e'
+  exact slots_of_body hg _ hc.notBuiltin hc.passes hc.rows c' e'
+
+/-! ### Canonical slots -/
+
+/-- Scalar rows give canonical values. -/
+theorem scalarRows_canonical : RowsGive scalarRow (fun y => y.normalize = y) :=
+  fun e h => ⟨scalarRow_not_spread h, fun ctx env => scalarRow_canonical e h ctx env⟩
+
+/-- Scalar rows supply canonical slots, one per row, on every completed run. -/
+theorem formRows_canonical (ctx : EvalCtx) (env : ValEnv) :
+    ∀ (rows : List Expr), (∀ e ∈ rows, scalarRow e = true) →
+      OkSat CanonSlots (OutputRows.formLeftToRight (formOutputRow ctx env) rows) :=
+  formRows_by scalarRows_canonical ctx env
+
+/-- A checked non-builtin body with scalar rows reads canonical slots. -/
+theorem slots_canonical_of_body (b : Algorithm) (hn : NotBuiltin b) (hp : Passes b)
+    (hr : RowsBy scalarRow b) (ctx : EvalCtx) (env : ValEnv) :
+    OkSat CanonSlots (evalAlgOutputSlots b ctx env) :=
+  slots_of_body scalarRows_canonical b hn hp hr ctx env
+
+/-- **The canonical-slot premise IS DISCHARGED for a user step with scalar rows.** -/
+theorem user_slots_canonical (a : Algorithm) (h : UserStep a) (hr : RowsBy scalarRow a) (ctx : EvalCtx)
+    (env : ValEnv) (cells : List NeedSupply.Sourced) (name : String) :
+    OkSat CanonSlots (runNeedStepSlots a ctx env cells name) :=
+  user_slots_by scalarRows_canonical a h hr ctx env cells name
+
+/-- **The canonical-slot premise IS DISCHARGED for a clause family whose clause bodies have scalar
+    rows.** -/
+theorem family_slots_canonical (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
+    (d : Option PropertyIdentity) (h : ∀ b ∈ br, ClauseBy scalarRow b.body) (ctx : EvalCtx) (env : ValEnv)
+    (cells : List NeedSupply.Sourced) (name : String) :
+    OkSat CanonSlots (runNeedStepSlots (.conditional p o br d) ctx env cells name) :=
+  family_slots_by scalarRows_canonical p o br d h ctx env cells name
+
+/-! ### Plain slots: FG-L1's `PlainRows`, discharged
+
+A loop's state cell is a Ready cell holding an emitted slot. When the slot is a bare deferred list
+item, that cell is an ALIAS of the item's position (`FiniteLoop.demand_ready_alias`): its final read
+is the position's value, not the slot, so FG-L1's one-round equation assumes the emitted slots are
+plain (`PlainRows`). That premise is NOT a property of every step round over every state: a
+host-built heap holding a completed bare deferred item makes an `if` step emit one, and the
+one-round equation is then false (`FiniteLoopPlainRowsGuards.one_round_needs_plainRows`).
+It IS a property of every round of a step whose rows are PLAIN ROWS: a scalar row completes with a
+scalar, and a list literal with a list value, whatever its positions hold (a list is never a bare
+position, even when every position is deferred). For a builtin step the round's one row is the
+ordinary application's result, so the premise is exactly a premise about that result
+(`plainRows_builtin`). -/
+
+/-- PLAIN ROWS: a scalar row, or a list literal. Their values are never a bare list position,
+    from every state. -/
+def plainRow : Expr → Bool
+  | .listLiteral _ => true
+  | e => scalarRow e
+
+theorem plainRow_of_scalarRow {e : Expr} (h : scalarRow e = true) : plainRow e = true := by
+  cases e <;> first | rfl | exact h
+
+theorem valueRow_of_plainRow {e : Expr} (h : plainRow e = true) : valueRow e = true := by
+  cases e <;> first | rfl | exact valueRow_of_scalarRow h
+
+theorem RowsBy.plain_of_scalar {a : Algorithm} (h : RowsBy scalarRow a) : RowsBy plainRow a :=
+  fun e he => plainRow_of_scalarRow (h e he)
+
+theorem RowsBy.value_of_plain {a : Algorithm} (h : RowsBy plainRow a) : RowsBy valueRow a :=
+  fun e he => valueRow_of_plainRow (h e he)
+
+/-- A list literal completes with a LIST at count one: never a bare position, whatever its
+    positions hold. -/
+theorem listLiteral_plain (elements : List Expr) (ctx : EvalCtx) (env : ValEnv) :
+    OkSat (fun out : CountedResult => out.snd ≤ 1 ∧ PlainSlot out.fst)
+      (evalUnbounded (.evalListLiteralCounted elements ctx env)) := by
+  refine okSat_call (.evalListLiteralCounted elements ctx env) _ ?_
+  show OkSat _ (EvalBody.evalListLiteralCounted evalUnbounded elements ctx env)
+  unfold EvalBody.evalListLiteralCounted
+  exact okSat_bind fun _ => okSat_pure ⟨Nat.le_refl _, fun _ h => by cases h⟩
+
+/-- **Plain rows give plain values**, from every state, in every context. -/
+theorem plainRows_give : RowsGive plainRow PlainSlot := by
+  intro e h
+  by_cases hs : scalarRow e = true
+  · exact ⟨scalarRow_not_spread hs,
+      fun ctx env => okSat_mono (fun _ hc => ⟨hc.1, hc.2.plain⟩) (scalarRow_scalar e hs ctx env)⟩
+  · have hl : ∃ es, e = .listLiteral es := by
+      cases e <;> simp_all [plainRow, scalarRow]
+    obtain ⟨es, rfl⟩ := hl
+    refine ⟨?_, fun ctx env => ?_⟩
+    · rintro ⟨x, hx⟩
+      cases hx
+    · refine okSat_call (.evalCounted (.listLiteral es) ctx env) _ ?_
+      show OkSat _ (EvalBody.evalCounted evalUnbounded (.listLiteral es) ctx env)
+      dsimp only [EvalBody.evalCounted]
+      exact okSat_nested (listLiteral_plain _ _ _)
+
+/-- An `OkSat` statement of plain slots IS `PlainRows` of every run. -/
+theorem plainRows_of_okSat {m : EvalM (List Result)} (h : OkSat (SlotsBy PlainSlot) m) (s : EvalState) :
+    PlainRows (m.runState s) :=
+  fun ys t hl => h s ys t hl
+
+/-- **`PlainRows` IS DISCHARGED for every user step whose rows are plain rows**, from every state, in
+    every context, for every supply. -/
+theorem user_plainRows (a : Algorithm) (h : UserStep a) (hr : RowsBy plainRow a) (ctx : EvalCtx)
+    (env : ValEnv) (cells : List NeedSupply.Sourced) (name : String) (s : EvalState) :
+    PlainRows ((runNeedStepSlots a ctx env cells name).runState s) :=
+  plainRows_of_okSat (user_slots_by plainRows_give a h hr ctx env cells name) s
+
+/-- **`PlainRows` IS DISCHARGED for every clause family whose clause bodies have plain rows.** -/
+theorem family_plainRows (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
+    (d : Option PropertyIdentity) (h : ∀ b ∈ br, ClauseBy plainRow b.body) (ctx : EvalCtx) (env : ValEnv)
+    (cells : List NeedSupply.Sourced) (name : String) (s : EvalState) :
+    PlainRows ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s) :=
+  plainRows_of_okSat (family_slots_by plainRows_give p o br d h ctx env cells name) s
+
+/-- **A builtin step's `PlainRows` IS a premise about its ordinary application**: the round's one
+    row is the application's result, so the rows are plain exactly when that result is not a bare
+    list position. -/
+theorem plainRows_builtin (c : String) (x : Except Error CountedResult) (t : EvalState) :
+    PlainRows (builtinStepOutcome c (x, t)) ↔ ∀ out, x = .ok out → PlainSlot out.fst := by
+  constructor
+  · intro h out hx
+    subst hx
+    exact h [out.fst] t rfl out.fst (List.mem_singleton_self _)
+  · intro h ys u hl y hy
+    rcases x with e | out
+    · cases e <;> simp [builtinStepOutcome] at hl
+    · simp only [builtinStepOutcome, loopStepBuiltinRows, Prod.mk.injEq, Except.ok.injEq] at hl
+      obtain ⟨rfl, -⟩ := hl
+      rw [List.mem_singleton.mp hy]
+      exact h out rfl
+
+/-- The rows of a builtin step round, once its application completes, are plain exactly when the
+    application's result is. -/
+theorem builtin_plainRows (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced)
+    (name : String) (s : EvalState) (x : Except Error CountedResult) (t : EvalState)
+    (hx : x ≠ .error .fuelExhausted)
+    (h : (applyBuiltinCountedResolved b (stepArguments cells) ctx env).runState s = (x, t))
+    (hplain : ∀ out, x = .ok out → PlainSlot out.fst) :
+    PlainRows ((runNeedStepSlots (.builtin b) ctx env cells name).runState s) := by
+  have hc : ProductionCompletes (applyBuiltinCountedResolved b (stepArguments cells) ctx env) s := by
+    unfold ProductionCompletes; rw [h]; exact hx
+  rw [(builtin_step_run b ctx env cells name s).2 hc, h]
+  exact (plainRows_builtin _ x t).2 hplain
+
+/-- **COUNT ONE FOR A PLAIN-ROW USER STEP, WITH EVERY RUN PREMISE DISCHARGED.** For every user step
+    whose rows are scalar rows or list literals (`Lst(x) = [x, x]` included: its slot is a list whose
+    positions are deferred), from the projected step: the step agreement with the ordinary call and
+    the one-round equation hold with no `UserRowsBounded` and no `PlainRows` premise. -/
+theorem count_one_user_plain (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (a : Algorithm)
+    (hi : (invokeNeed step).runState s = (.ok (some a), s₁)) (h : UserStep a) (hr : RowsBy plainRow a) :
+    StepAgreement id ((runNeedStepSlots a ctx env cells name).runState s₁)
+      ((evalNeedUserSupply a (cells.map Prod.fst) ctx env).runState s₁) ∧
+    (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
+      oneRoundOutcome ((runNeedStepSlots a ctx env cells name).runState s₁) :=
+  count_one_user step ctx env name cells s s₁ a hi h
+    (userRowsBounded_of_valueRows a hr.value_of_plain ctx env (cells.map Prod.fst) s₁)
+    (user_plainRows a h hr ctx env cells name s₁)
+
+/-- **COUNT ONE FOR A PLAIN-ROW CLAUSE FAMILY, WITH EVERY RUN PREMISE DISCHARGED.** -/
+theorem count_one_family_plain (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
+    (d : Option PropertyIdentity)
+    (hi : (invokeNeed step).runState s = (.ok (some (.conditional p o br d)), s₁))
+    (h : ∀ b ∈ br, ClauseBy plainRow b.body) :
+    StepAgreement (Error.withContext s!"while evaluating call to {name}")
+      ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s₁)
+      ((evalNeedFamilySupply (.conditional p o br d) (cells.map Prod.fst) ctx env name).runState s₁) ∧
+    (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
+      oneRoundOutcome ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s₁) := by
+  have hv : ∀ b ∈ br, ClauseBy valueRow b.body := fun b hb =>
+    ⟨(h b hb).user, (h b hb).props, (h b hb).rows.value_of_plain⟩
+  exact count_one_family step ctx env name cells s s₁ p o br d hi
+    (familyRowsBounded_of_clauses (.conditional p o br d) hv ctx env (cells.map Prod.fst) name s₁)
+    (family_plainRows p o br d h ctx env cells name s₁)
 
 /-! ## 6. `Step(args).repeat(1) = Step(args)` on the widened domain -/
 
@@ -634,11 +874,12 @@ theorem value_iff_of_agreement {wrap : Error → Error} {L : Except Error (List 
 theorem count_one_user_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
     (name : String) (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (a : Algorithm)
     (hi : (invokeNeed step).runState s = (.ok (some a), s₁)) (h : UserStep a) (hr : RowsBy scalarRow a)
-    (v : CountedResult) (hplain : PlainRows ((runNeedStepSlots a ctx env cells name).runState s₁)) :
+    (v : CountedResult) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedUserSupply a (cells.map Prod.fst) ctx env).runState s₁ = (.ok v, t)) := by
   obtain ⟨hag, heq⟩ := count_one_user step ctx env name cells s s₁ a hi h
-    (userRowsBounded_of_valueRows a hr.value_of_scalar ctx env (cells.map Prod.fst) s₁) hplain
+    (userRowsBounded_of_valueRows a hr.value_of_scalar ctx env (cells.map Prod.fst) s₁)
+    (user_plainRows a h hr.plain_of_scalar ctx env cells name s₁)
   rw [heq]
   exact value_iff_of_agreement hag (fun ys t hL => user_slots_canonical a h hr ctx env cells name s₁ ys t hL) v
 
@@ -647,14 +888,15 @@ theorem count_one_family_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx
     (name : String) (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr)
     (br : List CondBranch) (d : Option PropertyIdentity)
     (hi : (invokeNeed step).runState s = (.ok (some (.conditional p o br d)), s₁))
-    (h : ∀ b ∈ br, ClauseBy scalarRow b.body) (v : CountedResult)
-    (hplain : PlainRows ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s₁)) :
+    (h : ∀ b ∈ br, ClauseBy scalarRow b.body) (v : CountedResult) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedFamilySupply (.conditional p o br d) (cells.map Prod.fst) ctx env name).runState s₁ = (.ok v, t)) := by
   have hv : ∀ b ∈ br, ClauseBy valueRow b.body := fun b hb =>
     ⟨(h b hb).user, (h b hb).props, (h b hb).rows.value_of_scalar⟩
   obtain ⟨hag, heq⟩ := count_one_family step ctx env name cells s s₁ p o br d hi
-    (familyRowsBounded_of_clauses (.conditional p o br d) hv ctx env (cells.map Prod.fst) name s₁) hplain
+    (familyRowsBounded_of_clauses (.conditional p o br d) hv ctx env (cells.map Prod.fst) name s₁)
+    (family_plainRows p o br d (fun b hb => ⟨(h b hb).user, (h b hb).props, (h b hb).rows.plain_of_scalar⟩)
+      ctx env cells name s₁)
   rw [heq]
   exact value_iff_of_agreement hag
     (fun ys t hL => family_slots_canonical p o br d h ctx env cells name s₁ ys t hL) v
@@ -688,29 +930,33 @@ theorem builtin_step_value (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells :
     `loopResultCounted [out.fst]` over the call state plus one completed slot cell; an ordinary
     error is the same error under the step call frame, in the same state — so a failing VALUE
     demand of a written argument is reported as the direct call reports it. No builtin is
-    excluded. -/
+    excluded. FG-L1's `PlainRows` is replaced by its exact content here (`plainRows_builtin`): the
+    call's result, when it has one, is not a bare list position. -/
 theorem count_one_builtin (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (b : Builtin) (origin : CalleeOrigin)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin b)), s₁))
     (x : Except Error CountedResult) (t : EvalState) (hx : x ≠ .error .fuelExhausted)
     (hcall : (evalSuppliedCallCounted origin (.builtin b) cells ctx env name).runState s₁ = (x, t))
-    (hplain : PlainRows ((runNeedStepSlots (.builtin b) ctx env cells name).runState s₁)) :
+    (hplain : ∀ out, x = .ok out → PlainSlot out.fst) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome (builtinStepOutcome s!"while evaluating call to {name}" (x, t)) := by
   rw [ordinary_builtin_is_step_application] at hcall
-  rw [repeat_one_round step ctx env name cells s s₁ _ hi hplain, builtin_step_value b ctx env cells name s₁ x t hx hcall]
+  rw [repeat_one_round step ctx env name cells s s₁ _ hi
+      (builtin_plainRows b ctx env cells name s₁ x t hx hcall hplain),
+    builtin_step_value b ctx env cells name s₁ x t hx hcall]
 
-/-- The success case of `count_one_builtin`: on a canonical result, `repeat(1)` IS the call value
-    at its value boundary. -/
+/-- The success case of `count_one_builtin`: on a canonical result that is no bare list position,
+    `repeat(1)` IS the call value at its value boundary. -/
 theorem count_one_builtin_ok (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (b : Builtin) (origin : CalleeOrigin)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin b)), s₁))
     (out : CountedResult) (t : EvalState) (hcan : out.fst.normalize = out.fst)
     (hcall : (evalSuppliedCallCounted origin (.builtin b) cells ctx env name).runState s₁ = (.ok out, t))
-    (hplain : PlainRows ((runNeedStepSlots (.builtin b) ctx env cells name).runState s₁)) :
+    (hplain : PlainSlot out.fst) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       (.ok (reCountValueBoundary out), pushCompleted t [out.fst]) := by
-  rw [count_one_builtin step ctx env name cells s s₁ b origin hi (.ok out) t nofun hcall hplain]
+  rw [count_one_builtin step ctx env name cells s s₁ b origin hi (.ok out) t nofun hcall
+    (fun _ h => by cases h; exact hplain)]
   show (Except.ok (loopResultCounted [out.fst]), _) = _
   rw [loop_value_one_slot out hcan]
   rfl
@@ -779,13 +1025,15 @@ theorem count_one_count_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
     (name : String) (cells : List NeedSupply.Sourced) (s s₁ t : EvalState) (bound : BoundSequenceBuiltinArguments)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin .countBuiltin)), s₁))
     (hb : (evalUnbounded (.bindSequenceBuiltinArguments .countBuiltin {} (stepArguments cells) ctx env)).runState s₁ =
-      (.ok bound, t)) (hv : bound.view? = none) (hs : bound.slice? = none) (hp : bound.pending? = none)
-    (hplain : PlainRows ((runNeedStepSlots (.builtin .countBuiltin) ctx env cells name).runState s₁)) :
+      (.ok bound, t)) (hv : bound.view? = none) (hs : bound.slice? = none) (hp : bound.pending? = none) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       (.ok (.atom (Int.ofNat bound.preparedInput.items.length), 1),
         pushCompleted t [.atom (Int.ofNat bound.preparedInput.items.length)]) := by
   have hcall := count_application_value (stepArguments cells) ctx env s₁ t bound hb hv hs hp
-  rw [repeat_one_round step ctx env name cells s s₁ _ hi hplain,
+  rw [repeat_one_round step ctx env name cells s s₁ _ hi
+      (builtin_plainRows .countBuiltin ctx env cells name s₁
+        (.ok (.atom (Int.ofNat bound.preparedInput.items.length), 1)) t nofun hcall
+        (fun _ h => by cases h; intro _ hc; cases hc)),
     builtin_step_value .countBuiltin ctx env cells name s₁ (.ok _) t nofun hcall]
   simp [oneRoundOutcome, builtinStepOutcome, loopStepBuiltinRows, Result.normalize,
     loopResultCounted, loopStateResult, reCountValueBoundary, Result.valueCount]
@@ -834,14 +1082,14 @@ def stepCellArgument (c : NeedSupply.Sourced) : ResolvedArgumentAlgorithm :=
   { algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some c.1, source? := c.2 }
 
 /-- The lazy `if` step has the selected branch's value. Canonical selected values include all
-    scalar results; the unselected branch may fail or diverge. -/
+    scalar results; the unselected branch may fail or diverge. The selected value must be no bare
+    list position (`hplain`: FG-L1's `PlainRows` for this step, `builtin_plainRows`). -/
 theorem count_one_if_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
     (name : String) (c y n : NeedSupply.Sourced) (s s₁ s₂ t : EvalState) (flag : Bool) (out : CountedResult)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin .ifBuiltin)), s₁))
     (hc : (evalArgumentValue (stepCellArgument c) ctx env).runState s₁ = (.ok (.bool flag), s₂))
     (hb : (evalUnbounded (.evalArgumentValueCounted (stepCellArgument (if flag then y else n)) ctx env)).runState s₂ = (.ok out, t))
-    (hcan : out.fst.normalize = out.fst)
-    (hplain : PlainRows ((runNeedStepSlots (.builtin .ifBuiltin) ctx env [c, y, n] name).runState s₁)) :
+    (hcan : out.fst.normalize = out.fst) (hplain : PlainSlot out.fst) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 [c, y, n]).runState s =
       (.ok (reCountValueBoundary out), pushCompleted t [out.fst]) := by
   have hcall := if_application_value (stepCellArgument c) (stepCellArgument y)
@@ -849,7 +1097,9 @@ theorem count_one_if_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (e
   have hargs : [stepCellArgument c, stepCellArgument y, stepCellArgument n] =
       stepArguments [c, y, n] := rfl
   rw [hargs] at hcall
-  rw [repeat_one_round step ctx env name [c, y, n] s s₁ _ hi hplain,
+  rw [repeat_one_round step ctx env name [c, y, n] s s₁ _ hi
+      (builtin_plainRows .ifBuiltin ctx env [c, y, n] name s₁ (.ok (reCountValueBoundary out)) t nofun hcall
+        (fun _ h => by cases h; exact hplain)),
     builtin_step_value .ifBuiltin ctx env [c, y, n] name s₁ (.ok _) t nofun hcall]
   show (Except.ok (loopResultCounted [out.fst]), _) = _
   rw [loop_value_one_slot out hcan]
@@ -956,14 +1206,18 @@ theorem count_one_alias_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
     (rf : Bool) (origin : CalleeOrigin) (target : Algorithm) (s' : EvalState)
     (hi : (invokeNeed step).runState s = (.ok (some (.alias p o pr tg d rf)), s₁))
     (hres : (resolveAliasTarget (.alias p o pr tg d rf) ctx).runState s₁ = (.ok target, s'))
-    (h : UserStep target) (hr : RowsBy scalarRow target) (v : CountedResult)
-    (hplain : PlainRows ((runNeedStepSlots (.alias p o pr tg d rf) ctx env (c :: cs) name).runState s₁)) :
+    (h : UserStep target) (hr : RowsBy scalarRow target) (v : CountedResult) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 (c :: cs)).runState s = (.ok v, u)) ↔
       (∃ t, (evalSuppliedCallCounted origin (.alias p o pr tg d rf) (c :: cs) ctx env name).runState s₁ = (.ok v, t)) := by
   have hag := alias_user_step_agreement p o pr tg d rf origin c cs ctx env name s₁ target s' hres h
     (userRowsBounded_of_valueRows target hr.value_of_scalar ctx env _ s')
   have hL := alias_loop_forwards p o pr tg d rf ctx env (c :: cs) name s₁ target s' hres
-  rw [repeat_one_round step ctx env name _ s s₁ _ hi hplain]
+  have hrows : PlainRows ((runNeedStepSlots (.alias p o pr tg d rf) ctx env (c :: cs) name).runState s₁) := by
+    intro ys t hl
+    have hc' := hL.completes.1 (by rw [hl]; nofun)
+    rw [hL.eq hc'] at hl
+    exact user_plainRows target h hr.plain_of_scalar ctx env _ name s' ys t hl
+  rw [repeat_one_round step ctx env name _ s s₁ _ hi hrows]
   refine value_iff_of_agreement hag (fun ys t hl => ?_) v
   have hc' := hL.completes.1 (by rw [hl]; nofun)
   rw [hL.eq hc'] at hl
@@ -980,7 +1234,7 @@ theorem count_one_alias_builtin (step : ResolvedArgumentAlgorithm) (ctx : EvalCt
     (hres : (resolveAliasTarget (.alias p o pr tg d rf) ctx).runState s₁ = (.ok (.builtin b), s'))
     (x : Except Error CountedResult) (t : EvalState) (hx : x ≠ .error .fuelExhausted)
     (hcall : (evalSuppliedCallCounted origin (.alias p o pr tg d rf) cells ctx env name).runState s₁ = (x, t))
-    (hplain : PlainRows ((runNeedStepSlots (.alias p o pr tg d rf) ctx env cells name).runState s₁)) :
+    (hplain : ∀ out, x = .ok out → PlainSlot out.fst) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome (builtinStepOutcome s!"while evaluating call to {name}" (x, t)) := by
   have hO := alias_call_forwards origin p o pr tg d rf cells ctx env name s₁ _ s' hres
@@ -995,6 +1249,8 @@ theorem count_one_alias_builtin (step : ResolvedArgumentAlgorithm) (ctx : EvalCt
     rcases x with e | out
     · cases e <;> first | exact absurd rfl hx | simp [builtinStepOutcome]
     · exact nofun
-  rw [repeat_one_round step ctx env name cells s s₁ _ hi hplain, hL.eq hLc, hstep]
+  have hrows : PlainRows ((runNeedStepSlots (.alias p o pr tg d rf) ctx env cells name).runState s₁) := by
+    rw [hL.eq hLc, hstep]; exact (plainRows_builtin _ x t).2 hplain
+  rw [repeat_one_round step ctx env name cells s s₁ _ hi hrows, hL.eq hLc, hstep]
 
 end KatLang.FiniteLoopSurface

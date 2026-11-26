@@ -1,4 +1,4 @@
-import KatLangArityLaws.FiniteLoopCorrespondence
+import KatLangArityLaws.FiniteLoopSurface
 
 open KatLang KatLang.EvaluatorCore KatLang.WhileRoundProduction KatLang.FiniteLoop
 
@@ -46,17 +46,15 @@ theorem litStep_rows (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (s : Eval
     UserRowsBounded litStep ctx env cells s :=
   fun _ _ next u _ _ => boundedRows_literals _ _ _ _ (by simp [litStep, alg, Algorithm.output])
 
-/-- `count_one_user` holds for a concrete step, with every domain premise DISCHARGED: the only
-    premise left is the projection of the retained step. -/
+/-- The numeric literal discharges the row premises. Only projection of the retained step remains. -/
 theorem litStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some litStep), s₁))
-    (hplain : PlainRows ((runNeedStepSlots litStep ctx env cells name).runState s₁)) :
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some litStep), s₁)) :
     StepAgreement id ((runNeedStepSlots litStep ctx env cells name).runState s₁)
       ((evalNeedUserSupply litStep (cells.map Prod.fst) ctx env).runState s₁) ∧
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome ((runNeedStepSlots litStep ctx env cells name).runState s₁) :=
-  count_one_user step ctx env name cells s s₁ litStep hi litStep_domain
-    (litStep_rows ctx env (cells.map Prod.fst) s₁) hplain
+  FiniteLoopSurface.count_one_user_plain step ctx env name cells s s₁ litStep hi litStep_domain
+    (by intro e he; simp [litStep, alg, Algorithm.output] at he; subst he; rfl)
 
 /-- The slot `7` is canonical, so the value equality of the corollary applies to its row supply. -/
 theorem litStep_value : loopResultCounted [.atom 7] = ordinaryValue [.atom 7] :=

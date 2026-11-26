@@ -293,8 +293,11 @@ public sealed class LazyCollectionTests
         // position the `filter` call gave it, under the consumer's own frame.
         var observation = await RunAsync("count(filter([1, 2], {x}))");
         Assert.Equal("err TypeMismatch", Outcome(observation));
-        Assert.Contains("while evaluating call to count: while evaluating call to filter:", observation.Errors[0], StringComparison.Ordinal);
-        Assert.Contains("filter predicate result must be a Boolean", observation.Errors[0], StringComparison.Ordinal);
+        // CoreTests/LazyCollections.lean pins count's frame and the predicate error. C# adds the
+        // building call's frame between them. Include the span delimiter to check the entire message.
+        Assert.StartsWith("TypeMismatch: while evaluating call to count: while evaluating call to filter: "
+            + "Type mismatch: filter predicate result must be a Boolean value (true or false), but was numeric value 1 @ ",
+            Assert.Single(observation.Errors), StringComparison.Ordinal);
 
         var mapped = await RunAsync("[1, 2].map{x / 0}.first");
         Assert.Equal("err DivisionByZero", Outcome(mapped));
@@ -585,5 +588,51 @@ public sealed class LazyCollectionTests
         var part = Assert.Single(counted.PropertyObservations!, static o => o.Name == "Part");
         Assert.Equal(PropertyValueStatus.Withheld, part.Status);
         Assert.Null(part.Value);
+    }
+
+    // ── 13. The C#-only boundaries, paired with Lean ──────────────────────────────────────────
+    // `SEMANTIC-ALIGNMENT.md` records three C#-only behaviors of lazy collections. Each C# observation here is the
+    // Lean observation of the SAME program plus one host policy. Lean pins its side exactly in
+    // `CoreTests/LazyCollections.lean` § "The C#-only boundaries", over the laws of
+    // `KatLangArityLaws/LazyCollectionBoundaries.lean`; the read-generation pairs are the `Nest` and `F(x)` rows of
+    // `AResultThatKeepsBuildingListsWhileItIsRead_EndsAtTheRecursionLimit` (Lean completes `atoms(Nest(200))` with
+    // `[7]` and exhausts each tested fuel on the whole read of `F(1)`). The diagnostic pair is in § 8.
+
+    [Theory]
+    // Loop state over deferred positions (Lean: `KatLangArityLaws/FiniteLoopPlainRowsGuards.lean`, the same programs):
+    // a list pattern binds each position through a cell of its own, so the rows a step emits are the positions'
+    // VALUES — read directly, through a callee's parameter cell, and through the cells earlier rounds bound — never
+    // the positions themselves. Controls: written constants are values already; a nested list keeps its inner
+    // position deferred until the run reads it; a position no round reads is never evaluated.
+    [InlineData("P([x, y]) = x, y\nrepeat(P([1 + 0, 2 + 0]), 1)", "ok S[1, 2]")]
+    [InlineData("P([x, y]) = x, y\nrepeat(P([1, 2]), 1)", "ok S[1, 2]")]
+    [InlineData("Q([x]) = Id(x)\nId(v) = v\nrepeat(Q([1 + 0]), 1)", "ok 1")]
+    [InlineData("N([x]) = x\nrepeat(N([[1 + 0]]), 1)", "ok L[1]")]
+    [InlineData("Sw([x, y]) = [y, x]\nrepeat(Sw([1 + 0, 2 + 0]), 3)", "ok L[2, 1]")]
+    [InlineData("Wh([x, y], n) = [y, x], n - 1, n > 0\nwhile(Wh([1 + 0, 2 + 0], 3))", "ok S[L[2, 1], 0]")]
+    [InlineData("Sw([x, y]) = [y, x]\nrepeat(Sw([1 / 0, 2 + 0]), 2).count", "ok 2")]
+    public Task ALoopStateOverDeferredPositions_HoldsTheirValues(string source, string expected)
+        => Expect(source, expected, "");
+
+    [Theory]
+    // Lean: the literal and its `map` stage both have cardinality 3, counted without reading a position
+    // (`mapItems_positions`); the `filter` stage has cardinality 2, its accepted candidates (`filterItems_candidates`).
+    // C# reserves exactly those counts where each becomes known — the literal and a known-cardinality stage at
+    // construction, a scan at its completion — so the smallest cumulative budget that admits the run is their sum,
+    // and one less refuses the run as a resource limit (the `map` run then still reads no position: never the
+    // division).
+    // A map over a scan reserves its own discovered positions on its first concrete read.
+    [InlineData("[1, 2, 3].map{x / 0}.count", "ok 3", 6)]
+    [InlineData("[1, 2, 3].filter{x > 1}.count", "ok 2", 5)]
+    [InlineData("[1, 2, 3].filter{x > 1}.map{x + 1}.count", "ok 2", 5)]
+    [InlineData("[1, 2, 3].filter{x > 1}.map{x + 1}", "ok L[3, 4]", 7)]
+    public async Task AReservation_IsTheCardinalityTheLeanModelComputes(string source, string expected, int reserved)
+    {
+        var admitted = await SixRouteAgreement.OnEveryRouteAsync(source,
+            limits: new EvaluationLimits { MaxMaterializedItems = reserved });
+        Assert.Equal(expected, Outcome(admitted));
+        var refused = await SixRouteAgreement.OnEveryRouteAsync(source,
+            limits: new EvaluationLimits { MaxMaterializedItems = reserved - 1 });
+        Assert.Equal("err MaterializationLimitExceeded", Outcome(refused));
     }
 }

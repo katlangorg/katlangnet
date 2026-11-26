@@ -97,26 +97,26 @@ theorem famStep_rows_bounded (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (
 /-- `Inc(x).repeat(1) = Inc(x)` BY VALUE, from the projected step alone. -/
 theorem incStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some incStep), s₁))
-    (v : CountedResult) (hplain : PlainRows ((runNeedStepSlots incStep ctx env cells name).runState s₁)) :
+    (v : CountedResult) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedUserSupply incStep (cells.map Prod.fst) ctx env).runState s₁ = (.ok v, t)) :=
-  count_one_user_value step ctx env name cells s s₁ incStep hi incStep_user incStep_rows v hplain
+  count_one_user_value step ctx env name cells s s₁ incStep hi incStep_user incStep_rows v
 
 /-- The two-row `while`-shaped step, by value. -/
 theorem nextStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some nextStep), s₁))
-    (v : CountedResult) (hplain : PlainRows ((runNeedStepSlots nextStep ctx env cells name).runState s₁)) :
+    (v : CountedResult) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedUserSupply nextStep (cells.map Prod.fst) ctx env).runState s₁ = (.ok v, t)) :=
-  count_one_user_value step ctx env name cells s s₁ nextStep hi nextStep_user nextStep_rows v hplain
+  count_one_user_value step ctx env name cells s s₁ nextStep hi nextStep_user nextStep_rows v
 
 /-- The clause family, by value. -/
 theorem famStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some famStep), s₁))
-    (v : CountedResult) (hplain : PlainRows ((runNeedStepSlots famStep ctx env cells name).runState s₁)) :
+    (v : CountedResult) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedFamilySupply famStep (cells.map Prod.fst) ctx env name).runState s₁ = (.ok v, t)) :=
-  count_one_family_value step ctx env name cells s s₁ none [] _ none hi famStep_clauses v hplain
+  count_one_family_value step ctx env name cells s s₁ none [] _ none hi famStep_clauses v
 
 /-- An alias of `Inc`, by value against the ordinary call of the ALIAS; the alias resolution is the
     one premise beyond the projection. -/
@@ -124,12 +124,33 @@ theorem aliasInc_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (e
     (c : NeedSupply.Sourced) (s s₁ s' : EvalState) (origin : CalleeOrigin)
     (hi : (invokeNeed step).runState s = (.ok (some (.alias none [] [] (.resolve "Inc") none false)), s₁))
     (hres : (resolveAliasTarget (.alias none [] [] (.resolve "Inc") none false) ctx).runState s₁ = (.ok incStep, s'))
-    (v : CountedResult)
-    (hplain : PlainRows ((runNeedStepSlots (.alias none [] [] (.resolve "Inc") none false) ctx env [c] name).runState s₁)) :
+    (v : CountedResult) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 [c]).runState s = (.ok v, u)) ↔
       (∃ t, (evalSuppliedCallCounted origin (.alias none [] [] (.resolve "Inc") none false) [c] ctx env name).runState s₁ = (.ok v, t)) :=
   count_one_alias_value step ctx env name c [] s s₁ none [] [] _ none false origin incStep s' hi hres
-    incStep_user incStep_rows v hplain
+    incStep_user incStep_rows v
+
+/-- `Lst(x) = [x, x]`: a list-literal row, a PLAIN row that is not scalar. Its slot is a LIST whose
+    two positions are deferred items: a list is never a bare position, so FG-L1's `PlainRows` and
+    `UserRowsBounded` are both discharged and the one-round equation holds from the projected step
+    alone (no value equality is claimed: a list slot is not proved canonical). -/
+def lstStep : Algorithm := alg ["x"] [] [] [.listLiteral [.param "x", .param "x"]]
+
+theorem lstStep_user : UserStep lstStep where
+  user := ⟨_, _, _, _, _, _, _, rfl⟩
+  checks := check_user_passes _ _ _ _ _ _ _ rfl rfl
+  noView _ _ := rfl
+
+theorem lstStep_rows : RowsBy plainRow lstStep := by
+  intro e he; simp [lstStep, alg, Algorithm.output] at he; subst he; rfl
+
+theorem lstStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some lstStep), s₁)) :
+    StepAgreement id ((runNeedStepSlots lstStep ctx env cells name).runState s₁)
+      ((evalNeedUserSupply lstStep (cells.map Prod.fst) ctx env).runState s₁) ∧
+    (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
+      oneRoundOutcome ((runNeedStepSlots lstStep ctx env cells name).runState s₁) :=
+  count_one_user_plain step ctx env name cells s s₁ lstStep hi lstStep_user lstStep_rows
 
 /-- A `count` step: its numeric result is canonical, so `repeat(1)` IS the call's value — the call
     over the SAME sourced supply, written slots included. -/
@@ -137,12 +158,11 @@ theorem count_step_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env
     (cells : List NeedSupply.Sourced) (s s₁ t : EvalState) (origin : CalleeOrigin) (n : Int)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin .countBuiltin)), s₁))
     (hcall : (evalSuppliedCallCounted origin (.builtin .countBuiltin) cells ctx env name).runState s₁ =
-      (.ok (.atom n, 1), t))
-    (hplain : PlainRows ((runNeedStepSlots (.builtin .countBuiltin) ctx env cells name).runState s₁)) :
+      (.ok (.atom n, 1), t)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       (.ok (reCountValueBoundary (.atom n, 1)), pushCompleted t [.atom n]) :=
   count_one_builtin_ok step ctx env name cells s s₁ .countBuiltin origin hi (.atom n, 1) t
-    (scalar_canonical _ (.inl ⟨n, rfl⟩)) hcall hplain
+    (scalar_canonical _ (.inl ⟨n, rfl⟩)) hcall (fun _ hc => by cases hc)
 
 /-! ## Whole programs: `repeat(Step(args), 1)` against `Step(args)` -/
 
@@ -157,7 +177,7 @@ def decls : List (Ident × Algorithm) :=
    ("Unit", alg ["x"] [] [] [.emptySequence 0]),
    ("Twice", alg ["x"] [] [] [add (.param "x") (.num 1), mul (.param "x") (.num 2)]),
    ("Sel", alg ["xs"] [] [] [.index (.param "xs") [.num 0]]),
-   ("Lst", alg ["x"] [] [] [.listLiteral [.param "x", .param "x"]]),
+   ("Lst", lstStep),
    ("Blk", alg ["x"] [] [] [.algorithmExpr (alg [] [] [] [add (.param "x") (.num 1)])]),
    ("Spr", alg ["x"] [] [] [.sequenceSpread (.capture [.param "x", .num 1])]),
    -- Internal joins are covered by the invariant, but the parser never produces one.
