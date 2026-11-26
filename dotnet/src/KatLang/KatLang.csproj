@@ -52,7 +52,7 @@
 		<Copyright>Copyright © Logics Research Centre SIA and Contributors</Copyright>
 		<Product>KatLang</Product>
 
-		<Description>KatLang is a domain-specific programming language for calculations. This package provides the core parser, evaluator, and semantic model.</Description>
+		<Description>Embed KatLang in .NET 11 applications to run formulas with 34-digit decimal arithmetic and implicit parameters. The package includes a parser, an evaluator with host-defined operations and resource limits, and a semantic model for editor tooling.</Description>
 		<PackageTitle>KatLang</PackageTitle>
 		<PackageTags>katlang;dsl;calculations;mathematics;physics</PackageTags>
 
@@ -67,7 +67,14 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
 
-		<PackageReleaseNotes></PackageReleaseNotes>
+		<PackageReleaseNotes>KatLang lets you write formulas, give them names, and combine them into larger calculations.
+
+- Define a reusable formula in one line. In Speed = distance / time, KatLang infers the implicit parameters distance and time.
+- Calculate with 34 significant decimal digits.
+- Pass formulas to map, filter, and reduce to transform lists and combine their values.
+- Run calculations from .NET with your own operations, resource limits, and cancellation.
+
+Read the short introduction at https://katlang.org/introduction</PackageReleaseNotes>
 
 		<Title>KatLang</Title>
 	</PropertyGroup>
