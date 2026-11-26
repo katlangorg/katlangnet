@@ -2,6 +2,8 @@
 
 **Status: draft for human review. This document is not authoritative in itself.**
 
+> **Demand-driven evaluation: short-circuit `and`/`or` (#202), lazy `reduce` accumulators (#203), lazy collections and pipelines (#204) — 2026-11-26 (reconciliation with language changes already landed on `main`; three owner decisions recorded from the record — issues #202, #203 and #204, closed on 2026-11-23 by `65b1b136`, `66ebae56` and `108268c7` — and none made here; five law titles changed (BOOL-04, OP-03, SEQ-02, VAR-03, COLL-04), no law added, retired or renumbered; ONE registry narrowing, Q-57, which keeps only its `xor`-tier part and stays OPEN; no Q, PV or X status change; uncommitted over `main` @ `c9116ed6`):** the Constitution still stated the evaluation order these three changes replaced. **(1) #202.** `and` and `or` evaluate their left operand once and require a Boolean before anything else, and evaluate the right operand only when the left one does not decide (`false and _`, `true or _`); a skipped operand has no effect, failure, value-kind check, charge or demand, and is still elaborated. `xor` stays eager, and comparison chains are unchanged. BOOL-04 is restated under a new title and loses its *Open Q-57* marker; BOOL-02, OP-03, COLL-09, NEED-03, VAL-10, RUN-08, RAND-01 and the BOOLCMP preamble are amended. **(2) #203.** `reduce` demands its collection whole and then only its last step; each accumulator is a deferred VALUE-only cell evaluated at most once, so `reduce([a, b], R, i)` is `R(b, R(a, i))` for VALUE demand of its accumulators, with the top-level elements evaluated first; an empty fold demands `initial` once. HO-02, HO-03, HO-04, CALL-03, CALL-06, COLL-02, PAR-01, VAR-03, VAL-10, RUN-03, RUN-08 and RAND-01 are amended. **(3) #204.** A list is a finite collection of positions: a list literal defers its ordinary elements, `map`, `filter` and `take` build stages over their source's positions, and each consumer reads only what it needs, while equality, `contains`, `distinct`, a repeated name, `atoms`, the run's output, the engine's named top-level reads and host-operation arguments read whole values, and a collecting binding's VALUE stays eager. SEQ-02 and COLL-04 are restated under new titles; the SEQ preamble, SEQ-03, SEQ-04, SEQ-05, SUP-01, SUP-02, SUP-06, VAL-07, VAL-10, NEED-03, NEED-04, NEED-06, NEED-07, NEED-08, VAR-03, VAR-05, CMP-03, PAT-07, PAT-08, CALL-03, COLL-02, COLL-03, COLL-07, COLL-08, COLL-10, HO-02, HO-03, HO-04, RUN-01, RUN-03, RUN-05, RUN-07 (new item (g)), RUN-08, RAND-01, FORMAL-02 and FORMAL-07 are amended, the last two with the revised premises of formal ledger row E-24. NEED-07's sentence "No shape-only count, lazy list node or lazy element rule exists" had also been stale since the selective observers of a retained collector (`772d936e`, 2026-11-07); the bullet now states them. Stale examples were replaced by pinned witnesses or recomputed against them. PROP-08's retained-cell law (formal ledger row R-1, QUALIFIED) already covered lazy positions and is unchanged. `constitution-summary.md` mirrors the five titles and the marker; `open-questions.md` (Q-57), `decision-lineages.md`, `issue-ledger.md` and `constitution-review-log.md` carry their own dated notes. Evidence: the issues and commits above; `docs/design/language-rules/evaluator-and-hosting.md` § Boolean values and § Limits observe a run; `sequences-lists-and-calls.md` § Collection builtins, § Callback results, § Lazy `reduce` accumulators and § Lazy collections and pipelines; `call-by-need.md` § NEED-04 and § NEED-07; `dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md`; `docs/design/formal-correspondence-ledger.md` rows E-19 and E-24; `lean/KatLang.lean` (`BinaryOp.leftOperandDecides`, `EvalBody.evalBinaryCounted`, `EvalBody.evalReduceCounted`, § Lazy collections, `evalRunValue`); the conformance cases of `conformance/features/` named in the laws (`logical-*`, `hunt-logical-xor-operands-both-evaluated`, `reduce-*`, `lazy-*`, `map-reads-each-source-position-before-its-transform`, `hunt-builtin-map-callbacks-run-in-collection-order`, `selective-collector-*`); `ShortCircuitLogicalOperatorTests`, `LazyReduceAccumulatorTests`, `StreamedReduceFoldEquivalenceTests`, `CallbackResultBoundaryTests`, `LazyCollectionTests`, `OutputLessArgumentBlameTests` and `PropertyObservationPositionReadTests`; and the lineages [#202](decision-lineages.md#202--and-and-or-short-circuit-owner-decision-issue-202-november-2026--recorded-2026-11-26-by-the-demand-driven-evaluation-reconciliation), [#203](decision-lineages.md#203--reduce-evaluates-its-accumulators-on-demand-owner-decision-issue-203-november-2026--recorded-2026-11-26-by-the-demand-driven-evaluation-reconciliation) and [#204](decision-lineages.md#204--lists-and-their-pipelines-are-evaluated-on-demand-owner-decision-issue-204-november-2026--recorded-2026-11-26-by-the-demand-driven-evaluation-reconciliation).
+
 > **Retained runtime-alias cells, the `open` route (formal ledger row R-1 QUALIFIED) — 2026-11-26 (narrowing of the qualification in the repair note below, from the brief of the task that implements it; PROP-08's retained-cell bullet and its host contract restated again; no owner decision is made here; no Q, PV or X status change, Q-59 stays OPEN; uncommitted over `main` @ `5777c440`):** the ADMITTED ACCESS OF A LOCAL-ONLY MEMBER THAT AN `open` PROVIDES is an input read of the retained cell whose computation makes it, like a dot access or a static alias path step: the access uses the owner's activation whether or not the member's body reads the owner's parameter. The lexical lookup is unchanged — the same selection, the same provider order, a state-free judgment that only reports the admission — and the evaluation that USES the selected member (a callee or a supplied name's projection, a value read, a receiver head, an alias's static step or route decision) records it, with the open route's own refusal. With `Cap(meta r) = r` and `F(y) = { open Box ⏎ Box = { public G(x) = if(true, x + 1, y + 0) } ⏎ A = Cap(G(0)).Algorithm ⏎ P = A(5) + 0 ⏎ A(5), P }`, `F(1)` is `(6, 6)` as classified in both row orders; with `P` alone declared exported it is `LocalOnlyProperty` for `A` when the row reads `A` first and `LocalOnlyProperty` for `G` of `Box` — at the row's `G`, as `P`'s own use of `G` is refused — when `P` reads it first (until this change neither order was refused). ROW R-1 STAYS QUALIFIED: the member steps of an `open` TARGET's path (`open Box.Sub`, or `open L` with `L = Box.Sub`) are checked when the level's opens are resolved, for every lookup that consults the level, and are not recorded, so a falsely exported property that reuses a cell whose computation selected a name through a local-only target step is not refused (no wrong value is known). Independent review found two C# paths that recorded an unused selection. Preparing an unused alias argument and planning a row skipped by a false `while` flag now leave the cell shareable in both row orders. The law identifiers and headings are unchanged, so `constitution-summary.md` and `open-questions.md` are unchanged. Evidence: `lean/KatLang.lean` (`ResolvedProperty.openRefusal`, `lookupOpenProperties`, `noteOpenAccess`, `lookupLexicalPropertyNoted`, `noteOpenAccess_unmarked`, `lookupLexicalPropertyNoted_unmarked`), `DetachedExportedEvaluationTests` § 5c (`R1_AnOpenProvidedLocalOnlyMember_IsRefusedInBothRowOrders` and its neighbours, on the optimized, generic, async and genuinely suspending routes; `R1_AnOpenTargetsLocalOnlyPathStep_IsNotRecorded_OpenTargetQualification`), HP-20a…i of `HostParentDifferentialCorpus` (compared with Lean), `docs/design/formal-correspondence-ledger.md` rows R-1 and E-22, `docs/design/language-rules/evaluator-and-hosting.md` § Detached evaluation of exported properties ("Retained runtime-alias cells"), and the [lineage of that date](decision-lineages.md#r-1--the-open-route-an-open-provided-members-access-is-recorded-where-its-selection-is-consumed-november-2026--recorded-2026-11-26-by-the-task-that-implements-it).
 
 > **Retained runtime-alias cells, repair (formal ledger row R-1 QUALIFIED) — 2026-11-24 (correction and qualification of the note below, from the independent review `050804fe` of that change and the owner's repair brief; PROP-08's bullets on retained cells and its host contract restated again, one sentence of a RES-08 bullet restated again; ONE owner decision recorded from the brief, none made here; no Q, PV or X status change, Q-59 stays OPEN; uncommitted over `main` @ `c1549957`):** four corrections to the note below. (1) THE REUSE IS JUDGED BEFORE THE CHANNEL RUNS: a reuse of a retained cell's value or callable by an evaluation that detaches an input the cell is KNOWN to have read is refused with `LocalOnlyProperty` naming the alias (the cell is a binding of an enclosing call), and nothing of the cell runs — no demand, no effect, no work; it is not judged after the channel answered and does not report the recorded read's own refusal. A read of an unavailable captured parameter made directly still reports `UnknownName`. (2) OWNER DECISION (2026-11-24, from the repair brief): THE DEMAND DECIDES — a detached reader may count a lazy list without restricting a later attached reader. An input read the cell's computation makes is refused at the read exactly when a detached evaluation that detaches the read's activation is being served and the read is an input of a cell that admitted such a reader; a read an attached reader demands afterwards uses its own inputs. With `F(y) = { Mk(v) = { Z(*xs) = [1, 2].map{ n + y } ⏎ Cap(Z()) } ⏎ A = Mk(5).Algorithm ⏎ P = A.count + 0 ⏎ A.count, P, A[1] }` and `P` alone declared exported, `F(1)` is `(2, 2, 3)`, and also with the rows `P, A.count, A[1]`; a detached `P` that itself demands an element whose calculation needs `y` is refused. (3) An ADMITTED ACCESS OF A LOCAL-ONLY MEMBER by a dot access or a static alias path step is an input read, whether or not the member's body reads its owner's parameter. (4) A read through an activation the cell's own computation recorded is the cell's own work and an input of no cell, so a correctly classified program keeps its freshly owned inputs. The review's witness `F(y) = { A = Sel(y).Algorithm ⏎ P = A(5) + 0 ⏎ A(5), P }` with `Cap(meta r) = r`, `Inc(n) = n + 1`, `Dbl(n) = n * 2` and `Sel(k) = if(k == 1, Cap(Inc(0)), Cap(Dbl(0)))` is `((6, 6), (10, 10))` as classified; with `P` alone declared exported it is `LocalOnlyProperty` for `A` when the row reads `A` first and `UnknownName(y)` when `P` reads it first. ROW R-1 IS QUALIFIED, NOT CLOSED: the admitted access of an `open`-provided local-only member is not recorded on the cell, so a falsely exported property that reuses a cell whose computation used such a member is not refused (no wrong value is known); and the repair awaits its own independent review. The law identifiers and headings are unchanged, so `constitution-summary.md` and `open-questions.md` are unchanged. Evidence: `lean/KatLang.lean` (`CellInputs`, `CellRecords`, `noteCellInput`, `noteMemberAccess`, `lateRefused`, `servingDetached`, `CellInputs.admit`, `judgeRetainedCellReuse`, `reuseRetainedCell`, `EvalCtx.reattach`), `lean/KatLangArityLaws/RetainedCellReuse.lean`, `DetachedExportedEvaluationTests` § 5c, HP-19a…z and HP-20a…b of `HostParentDifferentialCorpus` (compared with Lean), `docs/design/formal-correspondence-ledger.md` rows R-1 and E-22, `docs/design/language-rules/evaluator-and-hosting.md` § Detached evaluation of exported properties ("Retained runtime-alias cells"), and the [review findings and regression cases](decision-lineages.md#r-1-review-evidence). *(2026-11-26: the admitted access of an `open`-provided local-only member IS recorded now — where the selection is consumed — and row R-1 stays qualified for the path step of an `open` target; see the note of that date and PROP-08.)*
@@ -40,7 +42,7 @@ Where this document and another source differ, this order decides, strongest fir
 
 1. `lean/KatLang.lean`, for every construct it models (FORMAL-01, FORMAL-02).
 2. Accepted owner decisions as recorded in `AGENTS.md` and `docs/design/language-rules/`, which are binding and tracked. A later decision supersedes an earlier one.
-3. `src/KatLang/SEMANTIC-ALIGNMENT.md` for change classification and decision records, and `docs/design/formal-correspondence-ledger.md` for the status of every proof claim.
+3. `dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md` for change classification and decision records, and `docs/design/formal-correspondence-ledger.md` for the status of every proof claim.
 4. This document.
 
 Implementation behavior alone never settles intent, and neither does the oldest wording. Where intent cannot be established, a rule carries an *Open* marker naming its question in `open-questions.md`.
@@ -97,7 +99,7 @@ Superseded spellings and laws (`;` joins, `...`, `spread(x)`, receiver segments,
 | Law | Statement | Marker |
 | --- | --- | --- |
 | SEQ-01 | A list is a second collection kind whose own boundary is never normalized |  |
-| SEQ-02 | A list literal builds exactly one list from its written slots |  |
+| SEQ-02 | A list literal builds exactly one list from its written slots; each ordinary slot is a position evaluated at most once, when it is first read |  |
 | SEQ-03 | Collections are opened only by explicit openers, one boundary at a time: the kind-blind openers open both kinds alike, and a structural pattern opens only its own kind |  |
 | SEQ-04 | Selection chooses stored values and never opens them |  |
 | SEQ-05 | Selection positions are the target's zero-based one-level positions, and a missing position is an error |  |
@@ -177,7 +179,7 @@ Superseded spellings and laws (`;` joins, `...`, `spread(x)`, receiver segments,
 | --- | --- | --- |
 | VAR-01 | A collecting binding collects exactly its allocated items as one exact list |  |
 | VAR-02 | One collector per pattern level; fixed positions bind from both ends first and the collector takes the exact middle | Open Q-47 |
-| VAR-03 | A collecting binding preserves the supplied argument cells: re-spreading a known slice transfers them with their available capabilities, and only reading the collected list demands their values |  |
+| VAR-03 | A collecting binding preserves its cells for re-spread, selective reads demand only the needed cells, and a whole read demands every cell |  |
 | VAR-04 | No binder carries supply provenance: binding sees only the supplied items |  |
 | VAR-05 | Assignment deconstruction is the explicit unpacking receiver | Open Q-51 Open Q-84 |
 | VAR-06 | Deconstruction declares properties of the enclosing algorithm; its right-hand side is one row of that body, successfully evaluated at most once | Open Q-70 |
@@ -252,7 +254,7 @@ Superseded spellings and laws (`;` joins, `...`, `spread(x)`, receiver segments,
 | BOOL-01 | `true`/`false` are a scalar kind of their own, written only as reserved literals, with no Boolean-specific structural rules |  |
 | BOOL-02 | Only a Boolean has a truth value | Open Q-54 |
 | BOOL-03 | A Boolean is never a number: no numeric projection, no implicit conversion |  |
-| BOOL-04 | `and`/`or`/`xor`/`not` are strict Boolean operators: both operands are evaluated, left to right, before either is validated; there is no short circuit | Open Q-57 |
+| BOOL-04 | `and` and `or` evaluate their right operand only when their Boolean left operand does not decide; `xor` evaluates both operands, left to right, before validating either; `not` takes one Boolean |  |
 | BOOL-05 | Builtin `if` demands its Boolean condition first, then exactly the selected branch; the unselected branch is never demanded |  |
 | CMP-01 | The six comparison operators form one chain of adjacent links; a chain is one Boolean, `true` iff every link holds; parentheses end a chain |  |
 | CMP-02 | A chain evaluates every operand exactly once, left to right and incrementally; a `false` link never stops it; the first error does |  |
@@ -266,7 +268,7 @@ Superseded spellings and laws (`;` joins, `...`, `spread(x)`, receiver segments,
 | --- | --- | --- |
 | OP-01 | Operators group by one fixed precedence ladder; `^` is right-associative and binds tighter than prefix minus | Open Q-57 C#-only |
 | OP-02 | Prefix `not` sits between the logical operators and the comparisons, and is never silently regrouped | C#-only |
-| OP-03 | An operator evaluates its operands in source order, then validates, then applies; the first error ends evaluation |  |
+| OP-03 | Arithmetic operators evaluate operands in source order before checking their kinds |  |
 | OP-04 | Arithmetic operators and Math functions take numeric scalars only: no vectorization, no identity element, no concatenation, no coercion |  |
 | OP-05 | A number is a 34-digit decimal floating-point value, and every arithmetic result is rounded once | C#-only |
 | OP-06 | Division, `div` and `mod` by an evaluated zero-valued divisor is an error, never an IEEE infinity or NaN |  |
@@ -306,7 +308,7 @@ Superseded spellings and laws (`;` joins, `...`, `spread(x)`, receiver segments,
 | COLL-01 | Each builtin has exactly one signature and one behavior contract; none is overloaded by the kind of its input |  |
 | COLL-02 | A collection builtin binds exactly one `collection` argument plus fixed controls; argument boundaries are never altered before binding |  |
 | COLL-03 | The bound collection is read through ONE post-binding level; `count` counts exactly those items |  |
-| COLL-04 | Collection-producing builtins return ONE exact list whose kind never depends on the input; observers return one scalar |  |
+| COLL-04 | Collection-producing builtins return one exact list. Each consumer determines which positions it needs |  |
 | COLL-05 | Numeric collection builtins accept only single numbers; the empty-collection policy is fixed per builtin |  |
 | COLL-06 | Aggregates and sorts are defined over the viewed numbers: `order` is a stable ascending sort in which equal numbers tie, and `orderDesc` is its exact reverse | Open Q-28 |
 | COLL-07 | `distinct` and `contains` use the one structural equality of `==`, at the top level of the view |  |
@@ -530,6 +532,7 @@ C(repeat(Fib(0, 1), 3)), repeat(Fib(0, 1), 3), 9
 **Qualifications**
 - A capture group `(a, b)` uses the same row loop, but from outside it is a value boundary.
 - The display format of rows is presentation only.
+- Evaluating a row gives its value, and a list in that value can still hold positions that are evaluated only when read (SEQ-02). The run reads its assembled output whole afterwards (RUN-07 (g)): `L = [tick()]` / `L, tick()` is `S[L[2], 1]`.
 
 ```katlang
 A = 1, 2
@@ -596,8 +599,8 @@ Coll(V), Coll(X), Coll(A[0]), Coll(Id(V)), Coll((1, 2)), Coll(first(A)), Coll(if
 - A failure is not a value kind. It cannot be bound, stored in a property, passed as an argument value, collected, compared, selected, spread or tested. A supplied computation is not its value: one that would fail can be passed, forwarded and collected unevaluated (NEED-01, NEED-07, NEED-08), and it fails only if demanded.
 - No construct catches, inspects, replaces or defaults a failure. There is no try/catch, no default-on-error and no error sentinel value (OP-06).
 - A failure propagates outward through every enclosing operator, comparison, call, callback, loop iteration and output row, and becomes the single outcome of the run. The run then has no output: earlier completed rows are discarded and later rows never run.
-- The reported failure is the first one RAISED in evaluation order: for supplied arguments, the order of first demand (NEED-03, CALL-02); otherwise the orders of OP-03, CMP-02, PAT-10 and the consuming construct.
-- A program avoids a failing computation only by never demanding its value. RUN-08 is the complete, closed list of demand points. The most common avoidances are an undemanded property body (PROP-02), the unselected branch of builtin `if` (BOOL-05), a supplied argument never demanded as a value (CALL-02, CALL-06; a CALLABLE use is no VALUE demand, NEED-06), and an uninvoked callback or loop step.
+- The reported failure is the first one RAISED in evaluation order: for supplied arguments and list positions, the order of first demand (NEED-03, CALL-02, SEQ-02); otherwise the orders of OP-03, BOOL-04, CMP-02, PAT-10 and the consuming construct.
+- A program avoids a failing computation only by never demanding its value. RUN-08 is the complete, closed list of demand points. The most common avoidances are an undemanded property body (PROP-02), the unselected branch of builtin `if` (BOOL-05), a supplied argument never demanded as a value (CALL-02, CALL-06; a CALLABLE use is no VALUE demand, NEED-06), the right operand of an `and` or `or` whose left operand decides (BOOL-04), a list position that no consumer reads (SEQ-02), a `reduce` step that no later step needs (HO-02), and an uninvoked callback or loop step.
 - A resource-limit failure is not avoided by leaving a value undemanded: once any evaluation that actually occurs reaches a limit, the run ends (RUN-03). Only code that is never evaluated reaches no limit.
 - Completed run state survives a failure: cache entries that the owning evaluations of other keys created are kept, while the failed evaluation's own key gets none, not even a result that a re-entrant read of it computed (PROP-09). Because a demanded failure always ends the run, no later read can observe them from source.
 
@@ -648,7 +651,7 @@ distinct((1.0, 1)), order((1.0, 1)), (0.5 + 0.5).string
 
 ## SEQ — Sequences, lists, and selection
 
-KatLang has two collection kinds. A **sequence value** is the canonical value that commas, several outputs and surviving parentheses produce; its redundant structure normalizes, so there is no one-element sequence (VAL-03). A **list value** `[…]` keeps its exact shape: its own boundary is never normalized and it never equals a sequence. Apart from normalization and identity the kinds behave alike, and neither is opened implicitly. An **opener** is an explicit construct that turns a collection into items; each opens exactly one boundary (SEQ-03). **Selection** (`A[i, …]`, `first`, `last`) chooses stored elements of the receiver's one-level positions and never opens them (SEQ-04, SEQ-05).
+KatLang has two collection kinds. A **sequence value** is the canonical value that commas, several outputs and surviving parentheses produce; its redundant structure normalizes, so there is no one-element sequence (VAL-03). A **list value** `[…]` keeps its exact shape: its own boundary is never normalized and it never equals a sequence. A list's ordinary elements are **positions**, each evaluated at most once, when it is first read (SEQ-02), while a sequence value's elements are values from the moment it exists: `[10, 1 / 0][0]` is `10`, and `(10, 1 / 0)[0]` is `DivisionByZero`. Apart from normalization, identity and when their elements are evaluated, the kinds behave alike, and neither is opened implicitly. An **opener** is an explicit construct that turns a collection into items; each opens exactly one boundary (SEQ-03). **Selection** (`A[i, …]`, `first`, `last`) chooses stored elements of the receiver's one-level positions and never opens them (SEQ-04, SEQ-05).
 
 ### SEQ-01 — A list is a second collection kind whose own boundary is never normalized
 
@@ -669,28 +672,37 @@ KatLang has two collection kinds. A **sequence value** is the canonical value th
 ```
 ⇒ `S[false, false, false, false, true, true, L[7], L[L[]], L[S[]], 7]`
 
-### SEQ-02 — A list literal builds exactly one list from its written slots
+### SEQ-02 — A list literal builds exactly one list from its written slots; each ordinary slot is a position evaluated at most once, when it is first read
 
-- `[e1, …, en]` evaluates its written slots exactly once each, left to right, and yields exactly one list value (emitted count 1).
-- A non-spread slot contributes exactly one element, stored exactly as evaluated: its value whole, whatever it is, including `()`, `[]`, a multi-output property's sequence value, a selection, and a block's output value. The literal opens nothing by itself.
-- A spread slot contributes the items of one opened boundary (SUP-02); `()*` and `[]*` contribute nothing.
-- A slot that produces no output (`[1, {}]`) is an evaluation error (`MissingOutput`); it is never skipped.
+- `[e1, …, en]` yields exactly one list value (emitted count 1) and evaluates none of its ordinary slots (issue #204). Each non-spread slot becomes one **position**: a deferred VALUE computation captured in the literal's own environment. A slot that is a parameter transports its existing cell while the literal is formed. An unavailable binding is refused there. Otherwise the argument and the position share one completion (NEED-01, PROP-08). A number, string or Boolean literal and `()` are their values.
+- A spread slot is formed while the literal is built, as in every supply: its operand is evaluated, the level it opens is read in order, and its items enter as values (SUP-02); `()*` and `[]*` contribute nothing. A declaration-level output spread is formed the same way (SUP-08). The literal's cardinality is therefore known when it is built, and counting it or checking a bound reads no position.
+- A position is evaluated at most once per LIST INSTANCE, when it is first read, and keeps its value or its ordinary failure for every later reader of that instance. Each evaluation of a literal creates a fresh list instance. A parameter slot still refers to its original argument cell (NEED-01). Effects, draws and failures follow the order in which positions are read, not the written order, and a position that no consumer reads is never evaluated.
+- A non-spread slot contributes exactly one element: its value whole, whatever it is, including `()`, `[]`, a multi-output property's sequence value, a selection, and a block's output value. The literal opens nothing by itself.
+- An output-less slot still occupies a position. `[1, {}]` has two positions, and reading its second position raises `MissingOutput`, including during a whole read.
 - Bracket content is a pure expression list: a declaration inside brackets is a parse error (`[X = 1]`), and whitespace never separates slots (`[1 2]` and `Data[0 1]` are `UnseparatedSameLineItem`, SYN-07). Inside an open `[`, a newline separates slots as it does inside `(`: `[1` / `2, 3` / `]` on three lines is `[1, 2, 3]`.
 - A nested capture or zero-parameter block as an element gives the same value and the same error position as the general path.
 - A `[` that begins an expression or a slot, or stands on a later physical line, begins a new list literal. A `[` on the same physical line as a completed receiver expression (spaces and tabs allowed) opens that receiver's selector list instead (SEQ-05): `A[1]` and `A [1]` select from `A`, while `A, [1]` and `A` newline `[1]` are two slots. `[` is never a call delimiter.
+- A list can hold itself through a position: `L = [L]` builds `L` without reading it, and `L.count` is `1`. Reading such a value whole reaches a list it is already inside, which is `DemandCycle`, never an endless read; a position whose computation reads itself (`L = [L[0]]`) is its own cell's `DemandCycle` (NEED-09).
+
+**Qualifications**
+- How a consumer reads positions belongs to that consumer: selection (SEQ-05), the collection builtins and their stages (COLL-04), structural patterns and deconstruction (NEED-04, PAT-08, VAR-05), spread (SUP-02), equality (CMP-03), and the run's output and host-operation arguments, which are read whole (RUN-07, RUN-05). Reading a collecting binding as a value demands its slice one level deep (NEED-07).
+- A position keeps the context of the literal that built it, a detached one included (NEED-10, PROP-08). An input read its computation makes under a detached evaluation is judged where the position is read (PROP-08; formal ledger row R-1, qualified).
+- *C#-only:* a diagnostic names an unread position `<deferred>` and never reads it, and a list of known cardinality reserves its positions when it is built (RUN-03).
 
 ```katlang
 A = 1, 2
 [trace(1), A, A*, (), [], { 4, 5 }, trace(6)]
 ```
-⇒ `L[1, S[1, 2], 1, 2, S[], L[], S[4, 5], 6]` with host log `[trace(1), trace(6)]`
+⇒ `L[1, S[1, 2], 1, 2, S[], L[], S[4, 5], 6]` with host log `[trace(1), trace(6)]`: `A*` is formed while the list is built, and the run reads the list whole afterwards, left to right.
+
+`[trace(1), trace(2)].count` is `2` with an empty host log, `[trace(1), trace(2)][1]` is `2` after `[trace(2)]`, and `[trace(1), (trace(2), trace(3))*][0]` is `1` after `[trace(2), trace(3), trace(1)]`: the spread was formed with the list. `X = [trace(1)]` / `X[0], X[0]` traces once, and `F = [trace(1)]` / `F()[0], F()[0]` twice. With `L = [tick(), tick(), tick()]`, the rows `L[2, 0, 2], L[0], tick()` are `S[S[1, 2, 1], 2, 3]`. `F(a) = [a, a][1] + a` / `F(trace(3))` is `6` after one `trace(3)`. A nested list is a position like any other: `[[1 / 0], 2][1]` is `2`, and `[[1 / 0], 2][0].count` is `1`. `Coll(*xs) = xs` / `Coll([1, {}])` raises `MissingOutput` when the run materializes its nested list. Counting `[1, {}]` needs only its cardinality. `L = [L]` / `L` is `DemandCycle`.
 
 ### SEQ-03 — Collections are opened only by explicit openers, one boundary at a time: the kind-blind openers open both kinds alike, and a structural pattern opens only its own kind
 
 - A list is one opaque value everywhere outside the explicit openers, exactly as a sequence value is (values stay values, SUP-03, VAR). A call argument, fixed parameter, collected item, dot receiver, callback element, stored property, root row, loop-state slot and selected element each keep a list whole.
 - A list never coerces to a number (`[5] + 1` is `TypeMismatch`) and never has a truth value (BOOL).
 - The in-language openers are exactly: the spread marker `v*` (SUP-02); assignment deconstruction's unpacking receiver (VAR-05); the selection receiver's position view, which only chooses positions (SEQ-05); the post-binding view of a collection builtin's bound `collection` argument (COLL); and structural parameter patterns (PAT-06, PAT-08). `atoms` (COLL) is a separate recursive numeric projection, not an opener.
-- Each opener opens exactly one boundary. The first four are kind-blind: they share one one-level view in which a sequence value or a list offers its immediate elements and any other value is itself, one item. They treat a sequence and a list with the same elements identically.
+- Each opener opens exactly one boundary. The first four are kind-blind: they share one one-level view in which a sequence value or a list offers its immediate elements and any other value is itself, one item. They expose the same one-level shape for a sequence and a list with the same elements. A list may still have deferred positions (SEQ-02).
 - A structural pattern is kind-specific: a sequence pattern opens only a sequence value and a list pattern only a list, and neither treats a scalar as a one-item structure (PAT-06).
 - An argument view `R.Arguments` is not read as one item: selection, `count`, `first` and `last` read its argument cells as positions (SEQ-05), a spread transports or refuses it (SUP-02), and every other collection builtin refuses it as its whole collection (`TypeMismatch`).
 
@@ -715,7 +727,7 @@ With `Add(x, y) = x + y`, `Add([1, 2])` is `ArityMismatch` while `Add([1, 2]*)` 
 
 ### SEQ-04 — Selection chooses stored values and never opens them
 
-- `A[i]`, `first(A)` and `last(A)` choose one element of the receiver's position view (SEQ-05) and return it exactly as stored. `A[i1, …, in]` chooses one element per supplied index, in supplied order, a repeated index repeating the stored element. A chosen element is never rebuilt, normalized, projected or opened: a selected sequence stays one sequence value, a selected list one exact list, a selected `()` the value `()`.
+- `A[i]`, `first(A)` and `last(A)` choose one element of the receiver's position view (SEQ-05) and return it exactly as stored; for a list position, that is the value its one demand produced (SEQ-02). `A[i1, …, in]` chooses one element per supplied index, in supplied order, a repeated index repeating the stored element. A chosen element is never rebuilt, normalized, projected or opened: a selected sequence stays one sequence value, a selected list one exact list, a selected `()` the value `()`.
 - The result passes through the ordinary value boundary (VAL-06), so a selected `()` spreads to nothing and any other selected value is one value.
 - Only the result grouping is normalized, by ordinary capture (SUP-06): zero selections give `()`, one gives the chosen element itself, several give one sequence of the chosen elements, each kept whole (a chosen `()` or `[]` stays an element). No selector count survives. A multi-selection is one sequence value, never an argument supply.
 - The selection's origin is forgotten. Every later consumer sees exactly what it would see for the same value from any other source, including a stored `X = A[0]`: fixed parameter, collector, dot receiver, pattern, `count`, list slot, root row and loop-state slot alike.
@@ -740,8 +752,9 @@ With `Data = [10, 20, 30]`, `Data[2, 0, 2]` is `(30, 10, 30)` and `Data[]` is `(
 
 ### SEQ-05 — Selection positions are the target's zero-based one-level positions, and a missing position is an error
 
-- **Evaluation order.** When `T[s1, …, sn]` is demanded: (1) the receiver `T` is demanded once through its ordinary value path (`Data` is the ordinary cached read; `Data()` is one fresh invocation that never reads or replaces the entry, though its owning success may establish an empty entry, PROP-05, PROP-06), and a receiver failure stops the selection before any selector runs, even for `T[]`; (2) the selector list forms its supply exactly like a call's argument list (CALL, NEED-07): explicit spread selectors run during formation in written order, ordinary selectors stay suspended; (3) the supplied indices are demanded, validated and selected left to right, and the first failure ends the selection; (4) the chosen elements are normalized (SEQ-04). Formation precedes validation.
+- **Evaluation order.** When `T[s1, …, sn]` is demanded: (1) the receiver `T` supplies its retained collector slice (NEED-07) or is demanded once through its ordinary value path (`Data` is the ordinary cached read; `Data()` is one fresh invocation that never reads or replaces the entry, though its owning success may establish an empty entry, PROP-05, PROP-06), and a receiver failure stops the selection before any selector runs, even for `T[]`; (2) the selector list forms its supply exactly like a call's argument list (CALL, NEED-07): explicit spread selectors run during formation in written order, ordinary selectors stay suspended; (3) the supplied indices are demanded, validated and selected left to right, and the first failure ends the selection; (4) the chosen elements are normalized (SEQ-04). Formation precedes validation.
 - **Positions.** A sequence value or a list offers its immediate elements, in order. Any other value (number, string, Boolean) is one position, position 0: `7[0]` is `7`, `'ab'[0]` is `'ab'`, the empty string too (`''[0]` is `''`), and a string is never its characters. `()` and `[]` have no positions. An argument view `R.Arguments` offers the captured call's effective argument cells: each selector is validated before the view's supply is read, and only the selected cells are demanded (`R.Arguments[]` reads nothing).
+- **List positions are read on demand.** Over a list, a selection reads only the positions it names, in written order, each through its one VALUE demand (SEQ-02). A selector's bound is checked first, against the known cardinality or by discovering positions up to the one it names (a `filter` stage, COLL-04), and a repeated selector reads the position's completed value: `[10, 1 / 0][0]` is `10`, `[1, 1 / 0][5]` is `BadIndex`, and `[trace(1), trace(2), trace(3)][2, 0]` is `S[3, 1]` after `[trace(3), trace(1)]`.
 - `count`, `first`, `last` and selection read this one immediate positional view (COLL): `count('abc')` is `1` and `'abc'[1]` is `BadIndex`. The view is distinct from argument cardinality, emitted count and explicit-spread supply.
 - Positions are zero-based and counted from the front only. A numeric selector that names no position is `BadIndex`, never a default or empty value; in C# this covers negative, fractional, non-finite and beyond-int-range selectors. A selector whose value is not numeric (string, Boolean, `()`, sequence, list) is `TypeMismatch`.
 - A selector is a whole expression slot of the selector list: `A[i + 1]`, `A[B.I]` and `A[f(1)]` select the positions those expressions name, and `A[-1]` is `BadIndex`. There is no negative indexing, slicing, string-character indexing, mutation or user-defined indexing, and `[…]` never resolves a user-visible name.
@@ -769,7 +782,7 @@ KatLang separates values from item supplies. A **supply** is the ordered list of
 - A slot without a spread marker contributes exactly one item: its value, whatever it is (number, string, Boolean, sequence, list, `()`, `[]`) and whatever produced it. No construct turns a non-spread slot into zero items or into several; a nested `while`/`repeat` result is one value (LOOP-07).
 - A slot `E*` contributes the items of SUP-02.
 - A spread creates no value of its own. The receiver decides: a capture yields one canonical value (SUP-06), a list literal one exact list (SEQ-02), a call binds argument slots (CALL), a collector one exact list (VAR), root and body output emit rows (VAL-07), a loop step's rows become the next state's slots (LOOP-03).
-- Evaluation follows the receiver. Root and body output rows, list-literal elements, a surviving parenthesized group, a definition body and a `repeat` step's rows evaluate each slot exactly once in written order (NEED-03). A `while` receiver discovers its flag by forming rows right to left until one supplies an item, then forms the earlier rows left to right only after `true`; each row is formed at most once (LOOP-06). A call, dot-call or selector list evaluates only its arbitrary spread operands while the supply is formed, left to right among them (SUP-02, NEED-07); a spread whose last star opens an argument view transports that call's original computations unevaluated (CR-11). Each non-spread call slot is a supplied computation evaluated at most once, on its first value demand, or never (CALL-02, CALL-06). Re-spreading a known collector slice transfers its computations unevaluated (VAR-03).
+- Evaluation follows the receiver. Root and body output rows, a surviving parenthesized group, a definition body and a `repeat` step's rows evaluate each slot exactly once in written order (NEED-03). A list literal evaluates only its spread slots while it is built; each of its other slots is a position, evaluated at most once, when it is read (SEQ-02). A `while` receiver discovers its flag by forming rows right to left until one supplies an item, then forms the earlier rows left to right only after `true`; each row is formed at most once (LOOP-06). A call, dot-call or selector list evaluates only its arbitrary spread operands while the supply is formed, left to right among them (SUP-02, NEED-07); a spread whose last star opens an argument view transports that call's original computations unevaluated (CR-11). Each non-spread call slot is a supplied computation evaluated at most once, on its first value demand, or never (CALL-02, CALL-06). Re-spreading a known collector slice transfers its computations unevaluated (VAR-03).
 
 **Qualifications**
 - A same-line item after a spread needs a comma (`A*, B`); without it `A* B` is multiplication. An attached `A*` at the end of a line already ends its item (SYN-11).
@@ -789,7 +802,7 @@ A*,
 ```
 ⇒ `S[S[1, 2], L[0, 1, 2, S[]], L[1, 2, S[]], 3, 1, 2, 9]`
 
-The same `A*` becomes a captured sequence (the property body), list elements, collected items, two fixed arguments, and two root rows; the unspread `()` stays one visible item in both the list and the collector. `[trace(1), trace(2)], (trace(3), trace(4)), trace(5)` logs `trace(1)` to `trace(5)` in written order. With `F(x, y) = y, x`, `F(trace(1), trace(2))` is `(2, 1)` after `trace(2), trace(1)` (the body's rows are in order, the argument computations run in demand order), and with `F(x, y) = x`, `F(1, trace(2))` never runs `trace(2)`. A known collector slice is transferred, an arbitrary spread is evaluated: with `F(a, b) = a` and `Fwd(*xs) = F(xs*)`, `Fwd(trace(1), trace(2))` logs only `trace(1)`, while `Mk(a, b) = [a, b]` / `F(Mk(trace(1), trace(2))*)` logs both. Spread formation precedes ordinary demand in every callable: `range(trace(1), trace(3)*)` and `F(trace(1), trace(3)*)` with `F(a, b) = a, b` both log `trace(3)` then `trace(1)`.
+The same `A*` becomes a captured sequence (the property body), list elements, collected items, two fixed arguments, and two root rows; the unspread `()` stays one visible item in both the list and the collector. A capture and the rows evaluate in written order (`(tick(), tick(), (), tock())` gives `(1, 2, (), 1)`, SUP-06), while a list row's remaining positions are read when the run materializes its assembled output: `[trace(1), [trace(2), trace(3)]], trace(4)` is `S[L[1, L[2, 3]], 4]` after `[trace(4), trace(1), trace(2), trace(3)]` (RUN-07). With `F(x, y) = y, x`, `F(trace(1), trace(2))` is `(2, 1)` after `trace(2), trace(1)` (the body's rows are in order, the argument computations run in demand order), and with `F(x, y) = x`, `F(1, trace(2))` never runs `trace(2)`. A known collector slice is transferred, an arbitrary spread is evaluated: with `F(a, b) = a` and `Fwd(*xs) = F(xs*)`, `Fwd(trace(1), trace(2))` logs only `trace(1)`, while `Mk(a, b) = [a, b]` / `F(Mk(trace(1), trace(2))*)` logs both. Spread formation precedes ordinary demand in every callable: `range(trace(1), trace(3)*)` and `F(trace(1), trace(3)*)` with `F(a, b) = a, b` both log `trace(3)` then `trace(1)`.
 
 ### SUP-02 — Spread opens exactly one boundary of its operand's value; any other value supplies itself
 
@@ -802,6 +815,7 @@ The same `A*` becomes a captured sequence (the property body), list elements, co
 
 **Qualifications**
 - `A[0]*` is `(A[0])*`, and a multi-selection spreads its chosen elements: `A[0, 1]*` (SEQ-04).
+- Over a list, the spread reads the positions of the level it opens, in order, and supplies their values; deeper lists keep their own positions (SEQ-02): `F(*xs) = xs.count` / `F([1, 1 / 0]*)` is `DivisionByZero`, while `F([1, 1 / 0])` is `1`, and `[[trace(1)], trace(2)]*` is `S[L[1], 2]` after `[trace(2), trace(1)]`.
 - An unspread output-less argument is `MissingOutput` blamed at the argument (`Coll({})`, CALL); once the call is a spread operand (`Coll({})*`) that blame is kept under the spread frame.
 - Only the operand's own `MissingOutput` is rewritten: with `F(x, y) = x`, `F(1)*` is `ArityMismatch`, and `Coll((1 + 'a')*)` is `TypeMismatch`.
 - A loop step's top-level spread output row supplies its items exactly as everywhere: `Step((a, b)) = { (b, a + b)* }` supplies two next-state slots, which its one-pattern head cannot rebind, so `Step((0, 1)).repeat(3)` is `ArityMismatch`; `Step((a, b)) = (b, a + b)` keeps one slot (`(2, 3)`); the flat two-row `Step((a, b)) = b, a + b` is the same `ArityMismatch`.
@@ -915,7 +929,7 @@ With `A = [1, 2]`, each of `A* + 1`, `1 < A*, 0`, `-A*, 0` and `A* == A*, 0` is 
 
 **Qualifications**
 - `()` is the empty-sequence node, not a capture; `((1, 2))` is the pair itself and `(())` is `()`. The rule deciding which groups survive is C#-only; Lean sees only the resulting `.capture`.
-- A list literal is the other materialization and is exact (SEQ-02).
+- A list literal is the other materialization. It is exact, and it evaluates its ordinary slots only when they are read, while a capture evaluates every slot when it is formed: `[10, 1 / 0][0]` is `10`, and `(10, 1 / 0)[0]` is `DivisionByZero` (SEQ-02).
 - A capture element is a value role for implicit-parameter lifting (PAR-07): with `A = x + 1`, `F = (A + 1, 2)` / `F(3)` is `(5, 2)` and `F = (A, 2)` / `F(3)` is `(4, 2)`.
 
 ```katlang
@@ -1108,15 +1122,15 @@ A supplied computation runs in the caller's environment.
 - **Which callables are builtins.** Only the 22 prelude builtins are builtin callees. Math functions, their lowercase aliases, `random`/`randomInt` and host operations are C#-only prelude user wrappers, so they are user callees (CALL-02). When the native runs, a Math or random wrapper demands its arguments in parameter order and requires each to be a number before demanding the next (`pow(trace('a'), trace(1))` is `TypeMismatch` after `[trace('a')]`); a host operation demands all its arguments in parameter order before the host is invoked.
 - **Non-sequence builtins** (`if`, `while`, `repeat`, `range`, `atoms`): the builtin demands its value slots (through CALL-05) or invokes its step slots in its own order, and a slot it does not select is never evaluated. Each value slot is demanded and validated before the next one is demanded: the `if` condition before any branch, and then only the selected branch (BOOL-05); `repeat`'s count only after the inert capture of its `meta step` and the preparation of the captured call's supply, whose explicit spreads open first, never demanding the non-spread initial cells (LOOP-01, LOOP-05); the `range` start before the stop.
 - **Collection builtins** (a collection plus controls), each slot by the role its position has in the builtin's metadata:
-  - a value slot, which is the collection and every value or whole-number control (`contains`'s `item`, `take`/`skip`'s `count`, `reduce`'s `initial`), is demanded once, when the builtin executes, the collection first (through CALL-05 for a callable-shaped argument); its outcome, a value or a failure, is final and never retried (CALL-06);
-  - a callback slot (the `map` mapper, the `filter` predicate, the `reduce` reducer) is never VALUE-demanded: its callable identity is projected only when the builtin first invokes it, per element, so an empty collection never projects it (HO-02, HO-04; NEED-06). A callback slot with no callable identity reports `NotAnAlgorithm` at that point;
+  - a value slot, which is the collection and every value or whole-number control (`contains`'s `item`, `take`/`skip`'s `count`), is demanded once, when the builtin executes, the collection first (or its retained slice for a selective observer, NEED-07; CALL-05 for a callable-shaped argument); its outcome, a value or a failure, is final and never retried (CALL-06). Demanding a list reads none of its positions: the builtin reads them by its own rule (COLL-04). `reduce`'s `initial` is a value slot whose demand is deferred: binding keeps it undemanded, and the fold demands it at most once, when it reaches its start (HO-02);
+  - a callback slot (the `map` mapper, the `filter` predicate, the `reduce` reducer) is never VALUE-demanded: its callable identity is projected only when the builtin first needs to invoke it — when a `map` position or a `filter` candidate is first read, or when a fold over a nonempty collection starts (COLL-04, HO-02) — so an empty collection, and a stage that no consumer reads, never projects it (HO-04; NEED-06). A callback slot with no callable identity reports `NotAnAlgorithm` at that point;
   - a spread slot is supply formation: its operand is evaluated at once and either supplies exactly its items, which take the roles of the positions they land on, or its failure, of any kind, is the call's failure, raised before the arity check and before any later slot (SUP-02);
   - a surplus position (past the signature) makes the arity check fail before any slot is demanded.
 
 **Qualifications**
 - `tick` is a builtin with no slot (RUN-09).
 - Laziness belongs to the resolved builtin identity: a user `if` or a parameter named `if` is an ordinary callee (RES-06), which demands what its own body and patterns demand (BOOL-05).
-- No callee makes an already-built value lazy: in `if(true, Risky*)`, `Risky` is fully evaluated while the supply is formed.
+- No callee makes an already-built value lazy: in `if(true, Risky*)`, `Risky` is evaluated, and the level its spread opens read, while the supply is formed.
 - Cardinality comes first for every callee category (NEED-05): `count(trace(1), trace(2))` and `map(trace(1), trace(2), trace(3))` are `ArityMismatch` with no host event, and `count(1 / 0, 2)` and `F(a) = a` / `F(1 / 0, 2)` are both `ArityMismatch`. A failed spread is still the first failure: it is raised during formation, so no arity verdict outranks it (`BadT = 1 + 'a'` / `take(1 / 0, BadT*)` is `TypeMismatch`).
 - A value slot that is demanded and reaches a resource limit ends the run at once (RUN-03), exactly like the same argument read by a user-defined consumer. A slot that is never demanded reaches nothing, so a wrong-arity call's verdict precedes any limit its slots would reach.
 
@@ -1136,7 +1150,7 @@ Per-slot validation order:
 
 Slot roles:
 - `A = tock()` / `map([], A)` is `L[]` with no host event, and `L = L + 1` / `map([], L)` is `L[]`: a callback slot is never value-evaluated merely because it was supplied. `map([], 5)` is `L[]`, while `map([1], 5)` is `NotAnAlgorithm`.
-- `reduce([], {x + y}, trace(1) / 0)` is `DivisionByZero` after one trace: `initial` is a value slot, demanded once.
+- `reduce([], {x + y}, trace(1) / 0)` is `DivisionByZero` after one trace: an empty fold demands `initial` once. `Pick(item, acc) = item` / `reduce([1, 2], Pick, 1 / 0)` is `2`: a fold whose steps never reach the start never demands it.
 - `Bad = 1 / 0` / `take(Bad*)` is `DivisionByZero`, and so is `Bad = 1 / 0` / `reduce([], Bad*, 0)`: a failed spread is the call's failure before the arity check.
 
 ### CALL-04 — Arity counts supplied items, and a fixed parameter binds its item unchanged in every call form
@@ -1220,7 +1234,7 @@ An invoking slot does not demand: `Only(*xs) = xs.count` / `map([1, 2], Only)` i
 - A clause family demands exactly what its clauses' patterns inspect (NEED-04, PAT-07): `Choose(true, yes, no) = yes` / `Choose(false, yes, no) = no` / `Choose(true, trace(1), trace(2) / 0)` is `1` after `[trace(1)]`.
 - `0.Div` and `Div(0)` are both suspended computations with no callable identity (DOT-09), so as unused arguments they behave alike.
 - What a repeated name demands at each occurrence is NEED-04's (PAT-09). A slot it demands still runs at most once, and a later demand reads the completed failure without re-evaluating it: `Bad = trace(1) / 0` / `Q(x, x) = x` / `Q(Bad, 7)` is `DivisionByZero` after one trace, and so is `Bad = trace(1) / 0` / `Q(x, x) = x` / `Q(7, Bad)`. A slot that reaches a resource limit there ends the run.
-- A builtin decides which of its slots it demands, and in what order (CALL-03). A builtin value slot establishes its outcome once, exactly like a user argument slot, and it demands its computation once, when the builtin executes, exactly like a user parameter read (`reduce`'s `initial` included); a callback slot is never value-evaluated; a failed spread is the call's failure. A parameter reaching a builtin value slot is read through this rule: `Add(a, b) = a + b` / `Bad = trace(1) / 0` / `G(v) = reduce([1], Add, v)` / `G(Bad)` traces once.
+- A builtin decides which of its slots it demands, and in what order (CALL-03). A builtin value slot keeps the outcome of its first demand, exactly like a user parameter read; `reduce`'s `initial` is demanded at most once, when its fold reaches the start (HO-02); a callback slot is never value-evaluated; a failed spread is the call's failure. A parameter reaching a builtin value slot is read through this rule: `Add(a, b) = a + b` / `Bad = trace(1) / 0` / `G(v) = reduce([1], Add, v)` / `G(Bad)` traces once.
 - A demanded limit ends the run at once and an undemanded slot reaches no limit, which leaves the at-most-once law untouched: an ordinary failure is evaluated once, recorded and never re-derived, and a limit simply ends the run.
 - Blame is presentation (RUN-06): a named argument's failure keeps the report its own evaluation made (`F(a) = sum(a)` with `F(NoOut)` reports "Property 'NoOut' has no defined output", as `sum(NoOut)` does), while an unnamed written argument read through a parameter keeps the parameter blame.
 
@@ -1265,7 +1279,7 @@ With a computation that reaches a resource limit, `Use(x) = 0` and `Use(x) = if(
 
 **Qualifications**
 - Clause-family binders bind both channels of their cells, demanding only what the family's patterns inspect (PAT-07, NEED-04): `Inc(x) = x + 1` / `App(f, 0) = 0` / `App(f, n) = f(n)` / `R(z) = App(Inc, 5)` / `R(0)` is `6`. Written at the inferring root, `App(Inc, 5)` is `UnresolvedImplicitParams`: a family argument is a value role, so the root lifts `Inc` (PAR-07).
-- Callback parameters bind the ordinary Ready item cells the builtin supplies: each element is a VALUE with no CALLABLE identity (HO-02).
+- Callback parameters bind the cells the builtin supplies: each element is a Ready VALUE with no CALLABLE identity, and a `reduce` accumulator is a deferred VALUE-only cell with no CALLABLE identity, invocation plan or retained slice (HO-02).
 - An invoking builtin slot reads a forwarded parameter's algorithm channel (HO-04).
 - An explicit call `g()` re-runs the algorithm and never reads or reuses the VALUE outcome of the parameter's cell (PROP-06).
 
@@ -1851,7 +1865,7 @@ Twice(tick()), Stable(randomInt(1, 1000000))
 - Only executed supply opening, inspecting patterns and semantic consumers demand computations.
 - Effects, random draws, suspensions and failures follow first-demand order. Supply positions do not prescribe effect order.
 - Plain unused bindings execute nothing.
-- Operators, output rows, collection construction and other consumers keep their established internal order and strictness.
+- Operators, output rows, collection construction and other consumers keep the internal order and demand policy their own laws fix: `and` and `or` evaluate their right operand only when the left one does not decide (BOOL-04), and a list literal and the `map`, `filter` and `take` stages evaluate a position only when it is read (SEQ-02, COLL-04).
 - Failure stops subsequent work on that path.
 - No evaluation may speculate on an undemanded computation.
 - `tick()` (RUN-09) makes executed demands observable and adds no law. Each actual execution is an effect like a host call: an undemanded supply runs nothing, a supplied `tick()` demanded twice is one cell outcome, a bare `tick` reference is CALLABLE transport only, and the effect is never rolled back by a later failure.
@@ -1870,7 +1884,7 @@ Swap(tick(), tick()), Ignore(tick()), tick()
 - After cardinality validation, patterns are traversed left to right, recursively in written order.
 - A non-repeated plain binder retains its complete cell: it neither projects CALLABLE nor demands VALUE.
 - A literal demands its position.
-- A structural pattern demands the whole ordinary eager value, checks kind and shape, and inspects ready components. Matching creates no lazy collection element, and an opened ready child never regains CALLABLE.
+- A structural pattern demands the supplied value and checks its kind and cardinality before binding its fields. Checking a `filter` result's cardinality can demand candidates. A sequence's elements are values. A list's positions stay deferred: binders and collecting binders bind the original positions, and a literal, a nested pattern, a repeated-name inspection or a later use can demand a field (SEQ-02): `P([a, b]) = b` / `P([1 / 0, 2])` is `2`. Every opened child has only a VALUE channel.
 - Collector positions establish exact slice boundaries without reading slice elements. The same traversal rule applies to their fixed prefix and suffix and to nested patterns.
 - Each clause attempt uses the same supply cells. A non-match may try the next clause and retains previous outcomes. A runtime failure during required inspection aborts dispatch and is never a non-match. A successful branch retains both channels of its bound cells.
 
@@ -1948,7 +1962,7 @@ K(1)
 
 **Results are calculation values**
 - A supplied input may expose VALUE and CALLABLE, and binding, transport, forwarding and collector-slice opening preserve both.
-- Result construction demands VALUE and produces data: output rows, `if` and clause selection, list and sequence construction, selection, spreading a result, a loop's final state and a property's value. Ready data carries no callable identity.
+- Result construction demands VALUE and produces data: output rows, `if` and clause selection, sequence construction, selection, spreading a result, a loop's final state and a property's value. A list literal defers each ordinary slot to a position whose VALUE a reader demands (SEQ-02). No data carries callable identity, a list position included.
 - CALLABLE projection exists only for written references: a name, a transported parameter, an inline block, a structural dot path, an alias and an `.Algorithm` link. It never exists for a call, selection, collection or capture.
 - So a call result cannot be invoked, and a callable read as a result is its zero-supply VALUE demand.
 - An invocation must satisfy its supply contract. An undersupplied call is an arity failure, never a partially applied callable. KatLang has no implicit partial application, and collector arity keeps its own rules.
@@ -1990,10 +2004,12 @@ Box.V, (Box.V)(), Box.V
 - Explicit `E*` opens one supply level. An arbitrary `E` is evaluated during supply formation to discover its ordinary value and items, and those items become ready cells.
 - An existing collector already is an exact, known-cardinality slice: opening it transfers its element cells directly, without VALUE materialization, and opens no element value.
 - In an argument or selector supply, a spread whose last star opens an argument view transports the captured plan's original cells, and a star that would open a view into values is `TypeMismatch` (CR-11).
-- A postfix selection forms its selector supply by the same law (SEQ-05). After the receiver's one VALUE demand, every explicit spread selector runs during formation and contributes its items, while each ordinary selector stays a suspended computation, demanded left to right only when the selection reaches it.
+- A postfix selection forms its selector supply by the same law (SEQ-05). After obtaining the receiver's retained slice or its VALUE, every explicit spread selector runs during formation and contributes its items, while each ordinary selector stays a suspended computation, demanded left to right only when the selection reaches it.
 - A collector's ordinary VALUE demand materializes all its cells left to right into one exact eager list, preserving nested and empty values as elements. An empty slice yields `[]`.
-- `.count`, `.first`, `.sum`, selection and ordinary collection consumers receive that complete value. No shape-only count, lazy list node or lazy element rule exists.
-- A collector passed without opening is one collection-valued computation. Demanded capture or list reconstruction uses the established eager value boundaries.
+- Every consumer of that VALUE (`.sum`, `.skip`, `.map`, a list or capture element, a structural pattern, an output row, a result boundary) receives the complete list: `F(*xs) = xs` / `F(1, 1 / 0)` is `DivisionByZero`, and a written list holding a collector's spread items holds their values (`F(*xs) = [xs*][0]` / `F(10, 1 / 0)` is `DivisionByZero`).
+- Five observers read a retained collector's slice instead of its VALUE (owner-approved November 2026, `772d936e`): `count` reads its length and demands no element; `first` and `last` check that a position exists and demand only that element; postfix selection validates each selector before it demands its one element; and `take` validates its count before it demands exactly its prefix. They reach the slice through a transparent reference too, while a brace carrier is a computed value that they read whole. `CountItems(*xs) = xs.count` / `CountItems(1 / 0)` is `1`, and `F(*xs) = xs[1], xs[1]` / `F(tick(), tick())` is `S[1, 1]`.
+- A list's own positions are a different rule (SEQ-02, COLL-04): they are evaluated on demand wherever the list goes, while a collector's VALUE contains all its top-level items. Nested lists keep their own positions.
+- A collector passed without opening is one collection-valued computation. A capture demands it when forming the slot. A list literal holding it in an ordinary slot demands it when that position is read (SEQ-02). A spread in either construct reads it during construction (SUP-02).
 
 **Qualifications**
 - *C#-only:* every expanded supply is bounded before its items are retained or wrapped in ready cells. An overflowing supply still forms, count-only, to its end, and is then refused terminally, with ordinary slots undemanded (RUN-03).
@@ -2013,7 +2029,7 @@ Ignore(tick()*), Fwd(1 / 0), tick()
 - Bare forwarding keeps its selection by binding name and compatible pattern or structure, with its ownership and source-kind rules (FWD-02).
 - Forwarding transfers complete cells with their available VALUE and CALLABLE channels, or exact collector slices, preserving identity, provenance, memoized outcome and caller ownership.
 - A collecting source opened for a collecting destination transfers its slice. A fixed source stays one item. Where the contract permits a collecting source for a fixed destination, its collector cell passes as one collection-valued computation, not as expanded slots.
-- Incompatible structure is still refused statically. A structural reconstruction is itself demandable, and its evaluation, if required, uses ordinary eager construction.
+- Incompatible structure is still refused statically. A structural reconstruction uses the demand rule of the corresponding written construct. A sequence capture evaluates its slots at construction. A list literal forms its spreads at construction and defers its ordinary positions (FWD-02, SEQ-02).
 - Alias indirection introduces neither a force nor a wrapper memo domain.
 - Unnameable families stay callable and aliasable with call-by-need, but have neither a by-name forwarding contract nor a formula-lifting signature.
 - Explicit `F(x)` transports `x`'s cell. That does not equate every static or property aspect of explicit calls with bare forwarding.
@@ -2563,13 +2579,13 @@ F(0, 9), F(0, 1, 2), F(0, (1, 2), 3, 4), G((1, 2))
 
 `C1(a, *p) = a` / `C2(b, *q) = b` / `K = C1 + C2` / `1` is `InvalidCollectingBinding`, whether or not `K` is called. `C1(a, *p) = a` / `C3(b, *p) = b` / `K = C1 + C3` / `K(1, 2, 3)` is `4`: the signature is `K(a, *p, b)`.
 
-### VAR-03 — A collecting binding preserves the supplied argument cells: re-spreading a known slice transfers them with their available capabilities, and only reading the collected list demands their values
+### VAR-03 — A collecting binding preserves its cells for re-spread, selective reads demand only the needed cells, and a whole read demands every cell
 
-*Resolved (audit finding A-2, owner decision November 2026): a transparent reference to a retained collector cell is a known slice, written as a name or as an accessible member path. With `Coll(*ys) = 0`, `F(*xs) = { A = xs` / `Coll(A*) }` makes `F(1 / 0)` `0`, as does `Box = { public A = xs` / `0 }` with `Coll(Box.A*)`, in C# and Lean alike. This changed the earlier behavior of both, where it was `DivisionByZero`. `Pass(A)` supplying an ordinary parameter stays outside the rule.*
+*Resolved (audit finding A-2, owner decision November 2026): a transparent reference to a retained collector cell is a known slice, written as a name or as an accessible member path. With `Coll(*ys) = 0`, `F(*xs) = { A = xs` / `Coll(A*) }` makes `F(1 / 0)` `0`, as does `Box = { public A = xs` / `0 }` with `Coll(Box.A*)`, in C# and Lean alike. This changed the earlier behavior of both, where it was `DivisionByZero`. `Pass(A)` supplies one argument. A later `v*` inside `Pass(v)` can still reach that slice (NEED-07).*
 
 - A collecting binding `*name` at the top level of a parameter list binds an exact slice of the supplied argument cells (NEED-01): the cells VAR-02 allocates to it, in supply order.
-- A nested structural collector (`F((x, *r))`, `F((*xs))`, `F([*xs])`) and a deconstruction collector (`x, *r = …`) instead collect elements of a value that their pattern (NEED-04) or the unpacking receiver (VAR-05) has already demanded whole. Those elements are ready values without CALLABLE identity, so the laziness below does not apply to them: `P((x, *r)) = x` / `K(z) = P((1, 1 / z))` / `K(0)` is `DivisionByZero`, while `P(x, *r) = x` / `K(z) = P(1, 1 / z)` / `K(0)` is `1`.
-- Three operations follow, and only the last demands any element's VALUE.
+- A nested structural collector (`F((x, *r))`, `F((*xs))`, `F([*xs])`) and a deconstruction collector (`x, *r = …`) instead collect elements of a value that their pattern (NEED-04) or the unpacking receiver (VAR-05) has demanded: a sequence's elements are values, and a list's are its positions, collected as VALUE-only computations that run when read (SEQ-02). A collector of those positions retains their slice. Each opened child supplies only its value (NEED-04): `P((x, *r)) = x` / `K(z) = P((1, 1 / z))` / `K(0)` is `DivisionByZero`, while `P(x, *r) = x` / `K(z) = P(1, 1 / z)` / `K(0)` is `1`, and `P([a, *rest]) = rest.count` / `P([1, 1 / 0, 1 / 0])` is `2`.
+- Collecting and re-spreading a retained slice demand no element. A selective observer demands the cells it needs (NEED-07).
 - **Collecting.** Binding the slice demands no element's VALUE and projects no element's CALLABLE identity. An unused collected argument is never evaluated, whether it is a callable that requires arguments, a failing calculation or an output-less block.
 - **Re-spreading a known slice.** `name*`, where the parameter binding retains a collector cell (of the current body or an enclosing one, or transported whole through a fixed parameter), transfers the original cells into the new supply without forcing them (NEED-07, NEED-08). A name that reaches such a parameter through transparent references only (`A = xs`, `B = A`, FWD-03) is the same known slice.
   - Each cell keeps the capabilities it was supplied with: its VALUE computation and, where it has one, its CALLABLE identity. A callable that flows through a collector and is re-spread can be invoked again, every invocation is fresh (NEED-06), and a later VALUE demand runs the original computation once (NEED-02).
@@ -2577,14 +2593,14 @@ F(0, 9), F(0, 1, 2), F(0, (1, 2), 3, 4), G((1, 2))
   - This transfer belongs to supply formation: a call's arguments, a loop's initial state included. An output row `name*`, a loop step's row included (LOOP-03), is result construction: it demands each element's VALUE, left to right with the other rows, and its items carry no CALLABLE identity (NEED-06, LOOP-02).
 - **Reading the collector as a value.** An ordinary read of `name` materializes one exact list (VAR-01): elements are demanded left to right by their own VALUE contracts (NEED-07), success requires every element, and the read stops at and reports the first failure. A callable element gives its own zero-argument demand verdict (CALL-05), the same one it gives when value-demanded through a fixed parameter; there is no collector-specific error.
 - **No capability is invented.** The collector itself is one collection-valued computation with no CALLABLE identity: invoking it unspread is `NotAnAlgorithm`. A value, a capture, or a computed or selected result that passes through a collector stays value-only (NEED-06).
-- **Only a known slice transfers cells.** Any other spread operand (a list literal, a call result, a property that is no such transparent reference, a selection, a member path written at the spread, a structural carrier `A = { xs }`, or a fixed parameter holding an ordinary list value or a callable rather than a transported collector cell) is evaluated during supply formation, and its items become ready values (NEED-07). Spread items are never reopened (SUP-03), and nothing spreads recursively.
+- **Only a known slice transfers cells.** Any other spread operand (a list literal, a call result, a property that is no such transparent reference, a selection, a member path that does not reach a retained collector by transparent references, a structural carrier `A = { xs }`, or a fixed parameter holding an ordinary list value or a callable rather than a transported collector cell) is evaluated during supply formation, and its items become ready values (NEED-07). Spread items are never reopened (SUP-03), and nothing spreads recursively.
 - An error therefore arises at the operation that demands the failing computation. Independently required checks are the exception: static front-end validation (NEED-05) and the supply formation of an arbitrary spread. Supply cardinality (VAR-02), bare forwarding's selection by binding name and compatible pattern (FWD-02), parameter ownership (PAR-07) and the structural-pattern kinds (PAT-06) are unchanged.
 
 **Qualifications**
 - Collectors and fixed parameters agree on unused arguments: `Bad = 1 / 0` / `Fix(x) = 1` / `Ignore(*xs) = 1` / `Fix(Bad), Ignore(Bad)` is `S[1, 1]`. An unused output-less block is no error either: `Coll(*xs) = 1` / `Coll({ X = 1 })` is `1`, while reading it, `Coll(*xs) = xs` / `Coll({ X = 1 })`, is `MissingOutput`.
 - A collector of an enclosing body re-spread inside a nested block is still a known slice: `Inc(x) = x + 1` / `Apply(f) = f(9)` / `Fwd(*fs) = { Inner = Apply(fs*)` / `Inner }` / `Fwd(Inc)` is `10`.
 - A fixed parameter retaining an existing collector cell keeps that cell's known slice: `Inc(x) = x + 1` / `Apply(f) = f(9)` / `Pass(v) = Apply(v*)` / `Outer(*fs) = Pass(fs)` / `Outer(Inc)` is `10`. Spreading a fixed parameter that holds an ordinary value or callable is an arbitrary spread, raised during supply formation although the callee never reads its collector: `Inc(x) = x + 1` / `Coll(*xs) = 1` / `Pass(f) = Coll(f*)` / `Pass(Inc)` is `ArityMismatch`.
-- Callback elements and reducer accumulators are ready values too (HO-02).
+- Callback elements are ready values too, and a reducer's accumulator is a VALUE-only cell (HO-02): neither has a CALLABLE identity or a retained slice.
 - Effects follow first demand. One cell has one completion: `Use(*ys) = ys` / `Twice(*xs) = Use(xs*), Use(xs*)` / `Twice(trace(5))` is `S[L[5], L[5]]` after one `trace(5)`. Each invocation of a re-spread callable is fresh: `Apply(f) = f(9)` / `T(x) = trace(x) + 1` / `Twice(*fs) = Apply(fs*) + Apply(fs*)` / `Twice(T)` is `20` after two `trace(9)`.
 - Bare forwarding never renames a binding: `Inc(x) = x + 1` / `Apply(f) = f(9)` / `Use(*fs) = Apply(fs*)` / `Relay(*fs) = Use` / `Relay(Inc)` is `10`, while `Inc(x) = x + 1` / `Apply(f) = f(9)` / `Use(*fs) = Apply(fs*)` / `Relay(*gs) = Use` / `Relay(Inc)` supplies nothing to `fs`, so it is `Apply`'s `ArityMismatch`.
 - A loop's initial state is the captured call's own argument cells, so only the first iteration still receives a callable: `Zc(*xs) = 7` / `Ap(f) = f(1)` / `S(n, *g) = { Ap(g*), g* }` / `repeat(S(0, Zc), 1)` is `(7, 7)`, while `Zc(*xs) = 7` / `Ap(f) = f(1)` / `S(n, *g) = { Ap(g*), g* }` / `repeat(S(0, Zc), 2)` is `NotAnAlgorithm`.
@@ -2602,7 +2618,7 @@ Fwd(Inc), ApplyFirst(Inc), Ignore(Inc), Ignore(Bad)
 
 Reading the list demands each element by its own VALUE contract: `Coll(*xs) = xs` / `Only(*ys) = ys` / `K = 5` / `Coll(K), Coll(Only), Coll({ 3 })` is `S[L[5], L[L[]], L[3]]`. A callable that requires an argument gives its own verdict: `Inc(x) = x + 1` / `Collect(*xs) = xs` / `Collect(Inc)` is `ArityMismatch`, like `Inc(x) = x + 1` / `Id(x) = x` / `Id(Inc)` is `ArityMismatch`. `Coll(*xs) = xs` / `Coll(sum)` is `sum`'s own `ArityMismatch`, and `Coll(*xs) = xs` / `Fam(0) = 0` / `Fam(n) = n` / `Coll(Fam)` is `NoMatchingBranch`.
 
-The unspread collector is not callable: `Inc(x) = x + 1` / `Apply(f) = f(9)` / `Fwd(*fs) = Apply(fs)` / `Fwd(Inc)` is `NotAnAlgorithm`, and so are `Apply(fs[0])`, `Apply((fs*))` and `Fwd(5)`. Building an ordinary list demands its elements: `Inc(x) = x + 1` / `Apply(f) = f(9)` / `Fwd(*fs) = Apply([fs*]*)` / `Fwd(Inc)` is `ArityMismatch`. A read stops at the first failure: `Use(*ys) = ys` / `Fwd(*xs) = Use(xs*)` / `Fwd(trace(1), 1 / 0, trace(3))` is `DivisionByZero` after the single host call `trace(1)`.
+The unspread collector is not callable: `Inc(x) = x + 1` / `Apply(f) = f(9)` / `Fwd(*fs) = Apply(fs)` / `Fwd(Inc)` is `NotAnAlgorithm`, and so are `Apply(fs[0])`, `Apply((fs*))` and `Fwd(5)`. The explicit `fs*` in this list demands the collector's items when the list is built (SUP-02): `Inc(x) = x + 1` / `Apply(f) = f(9)` / `Fwd(*fs) = Apply([fs*]*)` / `Fwd(Inc)` is `ArityMismatch`. A read stops at the first failure: `Use(*ys) = ys` / `Fwd(*xs) = Use(xs*)` / `Fwd(trace(1), 1 / 0, trace(3))` is `DivisionByZero` after the single host call `trace(1)`.
 
 ### VAR-04 — No binder carries supply provenance: binding sees only the supplied items
 
@@ -2646,6 +2662,7 @@ Coll((1, 2)*, 3), Coll(1, 2, 3), P.Coll, Coll(P), Fwd(P), Fwd(P*), F(P*, 3), F(1
 - A single target `x = RHS` is an ordinary property: it captures and does not open.
 - Two collecting targets are `InvalidCollectingBinding`.
 - A count mismatch is reported only when a target is used (VAR-06).
+- Unpacking a list checks kind and cardinality before binding targets. Checking a filtered list's cardinality can run predicates. Each fixed target then demands its bound position when read (SEQ-02): `a, b = [trace(1), 1 / 0]` / `a` is `1` after `[trace(1)]`. A right-hand side that reads a collecting binding demands that collector's VALUE first, which runs every collected computation (NEED-07).
 - An argument view is today neither a sequence nor a list, so it is one item: `Capture(meta op) = op` / `F(a, b) = a + b` / `R = Capture(F(1, 2))` / `x, y = R.Arguments` / `x` is `ArityMismatch`, and `Capture(meta op) = op` / `F(a, b) = a + b` / `R = Capture(F(1, 2))` / `*all = R.Arguments` / `count(all)` is `1`. Spreading the view on the right-hand side is the value-position `TypeMismatch` (CR-11): `Capture(meta op) = op` / `F(a, b) = a + b` / `R = Capture(F(1, 2))` / `x, y = R.Arguments*` / `x` is `TypeMismatch`.
 
 ```katlang
@@ -4596,7 +4613,7 @@ F(10), tick()
 
 ## BOOLCMP — Booleans, truth, comparison chains, and builtin `if`
 
-KatLang has a Boolean value kind. Only that kind has a truth value, and Booleans and numbers never convert into each other. The six comparison operators share one tier and form **chains** whose meaning is the conjunction of adjacent links. A chain evaluates every operand exactly once, left to right, goes on past a `false` link and stops at the first error. `==`/`!=` is total structural equality, while ordering is defined only on numeric scalars. Builtin `if` is the language's one lazy selector: it demands its Boolean condition, then only the selected branch.
+KatLang has a Boolean value kind. Only that kind has a truth value, and Booleans and numbers never convert into each other. The six comparison operators share one tier and form **chains** whose meaning is the conjunction of adjacent links. A chain evaluates every operand exactly once, left to right, goes on past a `false` link and stops at the first error. `==`/`!=` is total structural equality, while ordering is defined only on numeric scalars. Builtin `if` is the language's one lazy selector: it demands its Boolean condition, then only the selected branch. `and` and `or` evaluate their right operand only when their left operand does not decide the result (BOOL-04).
 
 ### BOOL-01 — `true`/`false` are a scalar kind of their own, written only as reserved literals, with no Boolean-specific structural rules
 
@@ -4623,7 +4640,7 @@ F(1 < 2), F(false), F(1), true == 1, [true, 1], (true), count((true, false))
 
 *Open: Q-54, whether the formal singleton clause of the truth view is reachable from source.*
 
-- Every position that needs a condition reads the one Boolean view, which accepts a Boolean value and nothing else. The positions are the builtin `if` condition, each `filter` predicate result, the `while` continuation flag (the step's last output), and every operand of `not`, `and`, `or` and `xor`.
+- Every position that needs a condition reads the one Boolean view, which accepts a Boolean value and nothing else. The positions are the builtin `if` condition, each `filter` predicate result, the `while` continuation flag (the step's last output), every operand of `not` and `xor`, the left operand of `and` and `or`, and their right operand when it is evaluated (BOOL-04).
 - Everything else is rejected with `TypeMismatch`: numbers (0, nonzero, NaN), strings, `()`, lists (`[true]` included) and multi-item sequence values (`(true, true)` and `(true, ())` included).
 - There is no 0/nonzero truth, no first-atom flattening and no truth for collections. A predicate or flag must be exactly one Boolean value.
 - A non-Boolean `while` flag is reported at the row that supplied the flag.
@@ -4659,26 +4676,30 @@ sum(map([3 > 1, 2 > 5, true], ToNum)), atoms((true, 1, [2, false])), count((true
 
 `true + 1`, `-true`, `true < false`, `range(1, true)`, `sqrt(true)`, `sum((1, true))`, `max((true, 1))`, `take((1, 2, 3), true)` and, with `Inc(x) = x + 1`, `Inc(0).repeat(true)` are all `TypeMismatch`. So is `Flag.string` for `Flag = 3 > 2`.
 
-### BOOL-04 — `and`/`or`/`xor`/`not` are strict Boolean operators: both operands are evaluated, left to right, before either is validated; there is no short circuit
+### BOOL-04 — `and` and `or` evaluate their right operand only when their Boolean left operand does not decide; `xor` evaluates both operands, left to right, before validating either; `not` takes one Boolean
 
-*Open: Q-57, the rationale for the non-short-circuit rule and for the `xor` tier is not recorded.*
-
-- For `a and b`, `a or b` and `a xor b`, `b` is always evaluated, whatever `a`'s value. No logical operator skips an operand; `if` is the only lazy selector (BOOL-05). The general evaluate-then-validate order of operators is OP-03.
-- After both operands are evaluated, the left operand must be a Boolean, then the right operand, and only then does the operator apply. An error while evaluating `b` therefore takes precedence over a non-Boolean `a`.
-- `not a` evaluates `a`, which must be a Boolean.
-- Every result is a Boolean.
+- **`and` and `or`** (issue #202). The left operand is evaluated once and must be a Boolean (BOOL-02). Its failure, or its rejection, is the expression's outcome before any work on the right operand.
+- When the left operand decides the operator — `false and _` is `false`, `true or _` is `true` — that Boolean is the result and the right operand is not evaluated: it runs no effect, draw or host call, raises no failure, is never checked for a Boolean, charges nothing, and demands no parameter or property that only it reads.
+- Otherwise the right operand is evaluated once and must be a Boolean, and it is the result.
+- **`xor`** needs both operands. It evaluates the left and then the right operand, and only then requires the left and then the right one to be a Boolean, so an error while evaluating its right operand takes precedence over a non-Boolean left one (OP-03).
+- **`not`** evaluates its operand, which must be a Boolean.
+- Every result is a Boolean. Only evaluation skips: both operands of each binary logical operator are parsed, resolved and elaborated as written, so a skipped operand still takes part in parameter inference, forwarding and lifting, and still reports its front-end errors (NEED-05).
 
 **Qualifications**
-- Guarded evaluation is written with `if`: `x != 0 and 10 / x > 1` fails for `x = 0` instead of returning `false`.
-- The planned loop agrees. With `S(a) = a + 1, a < 3 or 1 / 0 == 1`, `S(0).while` is `DivisionByZero`.
-- Where `not` sits on the precedence ladder and the parse error for a misplaced `not` are OP-01 and OP-02. `()` is never an operator identity (OP-04, VAL-04); as a logical operand it is a non-Boolean rejected by BOOL-02.
+- The short circuit belongs to `and` and `or` only. Arithmetic operators never short-circuit (OP-03), a comparison chain evaluates every operand past a `false` link (CMP-02), and builtin `if` stays the one lazy selector (BOOL-05). A guard can be written with `and` as well as with `if`: `Safe(n, d) = d != 0 and n / d > 1` never divides by zero.
+- Every route agrees, and the planned loop never enters a skipped operand's plan: `Step(s) = s + 1, s < 5 and 60 / (5 - s) > 0` / `while(Step(0))` is `5`, and with `60 / (4 - s)` it is `DivisionByZero`, on every strategy.
+- Where `not` sits on the precedence ladder and the parse error for a misplaced `not` are OP-01 and OP-02. `()` is never an operator identity (OP-04, VAL-04); as an evaluated logical operand it is a non-Boolean rejected by BOOL-02.
 
 ```katlang
-trace(false) and trace(true), trace(true) or trace(false), true xor true, not false
+false and tick() == 1, true or tick() == 1, tick()
 ```
-⇒ `S[false, true, false, true]`
+⇒ `S[false, true, 1]`
 
-The host log is `trace(false), trace(true), trace(true), trace(false)`. `false and 1 / 0 == 0` is `DivisionByZero`. `trace(1) and 1 / 0 == 0` is `DivisionByZero` after `trace(1)`: the right operand's error wins over the non-Boolean left. `1 and true`, `true and 1` and `'x' and true` are `TypeMismatch`, naming the left, the right and the left operand respectively.
+Neither right operand runs, so the last row takes the run's first tick. `tick() == 1 and tick() == 9 and tick() == 3, tick()` is `S[false, 3]`: the chain stops at its first `false`. `true xor tick() == 1, tick()` is `S[false, 2]`: `xor` evaluates its right operand whatever the left one is.
+
+`Safe(n, d) = d != 0 and n / d > 1` / `Safe(10, 0), Safe(10, 2)` is `S[false, true]`. `false and 1 / 0 > 0` is `false` and `true or 1 / 0 > 0` is `true`, while `true and 1 / 0 > 0` and `false or 1 / 0 > 0` are `DivisionByZero`. A parameter that only a skipped operand reads is never demanded: `F(a, b) = a and b` / `F(false, 1 / 0 > 0)` is `false`, and with `or` in place of `and` it is `DivisionByZero`.
+
+The left operand is judged first: `1 and 1 / 0 > 0` is `TypeMismatch` and the division never runs, while `1 / 0 > 0 and 1` is `DivisionByZero`. `1 and true`, `true and 1` and `'x' and true` are `TypeMismatch`, naming the left, the right and the left operand respectively, while `false and 1`, `true or 'x'` and `false and ()` are `false`, `true` and `false`: a skipped operand's kind is never checked. `false xor 1 / 0 > 0` is `DivisionByZero`, and `true xor 1` is `TypeMismatch`. `F = false and missing` makes `missing` a parameter of `F`, and `F(x) = false and missing` / `F(1)` is `UndeclaredIdentifier`.
 
 ### BOOL-05 — Builtin `if` demands its Boolean condition first, then exactly the selected branch; the unselected branch is never demanded
 
@@ -4759,6 +4780,7 @@ The planned loop agrees: `W(n) = n + 1, 0 <= trace(n) < 3` / `W(0).while` is `3`
 - Values of different kinds are simply unequal: a Boolean never equals a number, a list never equals a sequence, and `[] != ()`.
 - Equality compares canonical values: redundant grouping has already normalized (`(7) == 7`, `(()) == ()`). It never opens a value; there is no element-wise comparison.
 - `contains` and `distinct` use the same equality (COLL-07), and so does repeated-name pattern binding (PAT-09).
+- Equality reads both operands whole, the left one first, before it compares: every position of a list evaluated on demand is read, depth first (SEQ-02), so a failing element fails the comparison even where earlier elements already differ. `[1, 1 / 0] == [2, 3]` is `DivisionByZero`, and `[trace(1)] == [trace(2)]` is `false` after `[trace(1), trace(2)]`.
 
 **Qualifications**
 - Only values can be compared. `A = {}` / `A == ()` is `MissingOutput`, because `{}` has no output (VAL-05). `A* == A*` is the parse failure `MisplacedSpread` (SUP-05), while the grouped `(A*) == A` is `true`.
@@ -4864,13 +4886,13 @@ not x > 3, not true and false, not 1 < 2 < 3
 
 `1 + not x` and `-not true` are the parse failure `UnexpectedToken`. With `x = 2`, `(not x) > 3` is `TypeMismatch`.
 
-### OP-03 — An operator evaluates its operands in source order, then validates, then applies; the first error ends evaluation
+### OP-03 — Arithmetic operators evaluate operands in source order before checking their kinds
 
-- Scope: the arithmetic operators `+ - * / div mod ^` and prefix `-`. The logical operators follow the same evaluate-then-validate order (BOOL-04). Comparison chains have their own incremental rule (CMP-02).
-- An application evaluates its left operand to a value, then its right operand, each at its value boundary (VAL). Only then does it validate the operand kinds (OP-04): the string checks first, then the left operand, then the right. Then it applies the zero-divisor rule (OP-06) and computes the result.
+- Scope: the arithmetic operators `+ - * / div mod ^` and prefix `-`. `xor` follows the same evaluate-then-validate order, while `and` and `or` judge their left operand before the right one is evaluated (BOOL-04). Comparison chains have their own incremental rule (CMP-02).
+- A binary arithmetic application evaluates its left operand to a value, then its right operand, each at its value boundary (VAL). Only then does it validate the operand kinds (OP-04): the string checks first, then the left operand, then the right. Then it applies the zero-divisor rule (OP-06) and computes the result.
 - Evaluation follows the source order of the operands whatever the associativity or precedence. A subexpression's operator is applied as soon as both of its operands are available.
 - Every operand is evaluated exactly once. The first error, in an operand's evaluation, in validation or in the application, ends the expression; operands not yet evaluated are never evaluated.
-- Arithmetic operators, like the logical ones, never short-circuit.
+- Arithmetic operators never short-circuit; of the logical operators, only `and` and `or` do (BOOL-04).
 - The order is identical on every execution path, the async twin and the planned loop included.
 
 **Qualifications**
@@ -5330,16 +5352,24 @@ Get(A), Get(Lib), Nav(C), Call(C)
 ### HO-02 — The callback law: each element is one ordinary argument, and each callback call is the ordinary call
 
 - `map(c, F)` and `filter(c, F)` call `F(element)`, with each element of the bound collection's one-level view (COLL-03) as ONE ordinary argument.
-- `reduce(c, F, initial)` calls the ordinary two-argument `F(element, accumulator)`. The accumulator is one argument. It starts at `initial` and is threaded left to right.
+- `reduce(c, F, initial)` calls the ordinary two-argument `F(element, accumulator)` and associates to the left: `reduce([a, b], F, i)` is `F(b, F(a, i))`. The accumulator is one argument, a deferred cell whose demand runs the preceding step, or demands `initial` for the first step (below).
 - Each call binds through the ordinary binder: same arity rule, exact collector law (VAR-01), nested-pattern opening (PAT-08), repeated-name verdict (NEED-04) and failure order (PAT-10) as the direct call.
-- The collection operation decides only three things: how many values it supplies (1 or 2), how often it invokes (once per element, left to right, never for an empty collection), and what it does with the result (HO-03). The binding rule for a supplied value is never its own.
+- The collection operation decides only three things: how many values it supplies (1 or 2), which invocations it makes, and what it does with the result (HO-03). `map` invokes at most once per position, when that position is first read; `filter` at most once per candidate, in source order, as far as its consumers discover (COLL-04); `reduce` invokes its last step, and an earlier step only when a later one demands its accumulator; none invokes for an empty collection. The binding rule for a supplied value is never its own.
 - The callee may be a user algorithm or a block, a clause family (through ordinary dispatch), a builtin (receiving the prepared values as its ordinary arguments), a Math function, a host operation, or an alias of one of these.
+- **`reduce` demand** (issue #203). `reduce` forms its supply and checks its three-argument arity like every call, then demands the collection and reads every top-level position in order before projecting the reducer or running any step (COLL-04). A failure there ends the fold. If a position yields a nested list, that list retains its own deferred positions.
+  - For an EMPTY collection it demands `initial` once and returns it; the reducer is never projected.
+  - For a NONEMPTY collection it projects the reducer and demands ONLY THE LAST STEP. Each invoked step is the ordinary call over its already evaluated element and one deferred accumulator.
+  - A demanded accumulator is evaluated once and keeps its value or its ordinary failure. Forwarding passes it unevaluated, and reads and pattern inspections share its completion. A reducer that ignores its accumulator skips every step that only the accumulator would reach, and `initial` with them, and effects follow actual demand.
+  - The accumulator is demanded through the existing binder and argument roles: a plain binder does not demand it, a pattern that inspects the accumulator demands it during binding or clause selection, and a strict builtin or a host operation demands it as its ordinary argument.
+  - An accumulator is VALUE-only: it has no CALLABLE identity, it is no invocation plan (a `meta` parameter refuses it), and it retains no slice. The start is a new cell over the original `initial` computation, demanded at most once, and a demanded failure of `initial` keeps the initial-accumulator report. A written spread in the `initial` slot is supply formation and runs whether or not the slot is demanded.
+  - A demanded step's failure keeps its own position and is the fold's failure; the fold adds one reduce-step frame, however many accumulators the demand crossed, which is presentation (RUN-06). A skipped step charges nothing and reaches no limit.
 
 **Qualifications**
 - Callback parameters bind values only: an element never carries an algorithm channel.
 - An element is one argument whatever its value, `()` included: `Cnt(*xs) = xs.count` / `K(x) = 7` / `P(x) = true` / `filter([(), 1], P), map([()], K), map([(), 5], Cnt)` is `S[L[S[], 1], L[7], L[1, 1]]`. Inside the callee the element behaves as in the direct call: `W(x) = (x, 1).count` / `W(()), map([()], W)` is `S[2, L[2]]`.
 - A callback element is opened only by the callee's own structural pattern of the element's kind (PAT-06), in an ordinary callable and a clause family alike. A sequence pattern given a list element is `TypeMismatch` in an ordinary callee and a non-match of that clause in a family, and `NoMatchingBranch` when no clause matches. `LF([a, b]) = a * b` / `LF(n) = n` / `map([[2, 3], 4], LF)` is `L[6, 4]`.
 - A loop step is not a callback. A step receives the k-slot state as k supplied arguments and its rows are the next state (LOOP-02, LOOP-03), while a callback receives one element (two for `reduce`) and returns one value (HO-03). Both invoke the callable through its ordinary call, so the same families and builtins are valid in both (LOOP-08).
+- *C#-only:* how a fold executes — fold continuations accounted apart from call nesting, suspended steps kept on the heap and run on the demanding thread, and the streamed route of a reducer that leads with its accumulator — is host policy (RUN-03).
 
 ```katlang
 AddPair((x, y)) = x + y
@@ -5351,24 +5381,27 @@ map([(1, 2), (3, 4)], AddPair), map([(10, 7), 20], Cnt), reduce([9], Acc, ((1, 2
 ⇒ `S[L[3, 7], L[1, 1], L[S[S[1, 2], 3]], L[L[S[1, 2]]], L[3]]`
 
 ```katlang
-map([1, 2, 3], {trace(x) * 10}), filter([4, 5], {trace(y) > 4}), reduce([6, 7], {trace(e) + a}, 0), map([], {trace(z)})
+Only(*xs) = tick() + xs.count
+map([1, 2], Only), Only
 ```
-⇒ `S[L[10, 20, 30], L[5], 13, L[]]`, with host log `[trace(1), …, trace(7)]`: element order, and no invocation for `[]`.
+⇒ `S[L[3, 4], 1]`: building the list invokes nothing, so the bare `Only` takes the first tick, and reading the result then invokes the callback once per position, in order.
+
+`filter([1, 2, 3], { x + tick() * 0 > 1 }).count, tick()` is `S[2, 4]`: counting discovers every match, with one predicate call per candidate. `Pick(item, acc) = item` / `reduce([1, 2], Pick, 1 / 0)` is `2`, and so is `R(item, acc) = if(item == 1, 1 / 0, item)` / `reduce([1, 2], R, 0)`, while `R(item, (a, b)) = item` / `reduce([1, 2], R, 1 / 0)` is `DivisionByZero`: the inspecting pattern demands the start. `Pick(item, acc) = item` / `reduce([1 / 0, 2], Pick, 0)` is `DivisionByZero`, and `reduce([], 1 / 0, 7)` is `7`. With `Inc(x) = x + 1` and `Call(item, acc) = acc(item)`, `Call(1, Inc)` is `2`, while `Probe(u) = reduce([1], Call, Inc)` / `Probe(0)` is `NotAnAlgorithm`: an accumulator has no callable identity.
 
 `Add(x, y) = x + y` / `map([(1, 2)], Add)` is `ArityMismatch`, exactly as `Add(x, y) = x + y` / `Add((1, 2))` is `ArityMismatch`. `Sub(e, acc) = acc - e` / `reduce([1, 2, 3], Sub, 100), Sub(3, Sub(2, Sub(1, 100)))` is `S[94, 94]`.
 
 ### HO-03 — A callback returns its ordinary call result: `map` stores it as one element, `reduce` passes it as the next accumulator; `filter` needs a Boolean
 
 - **`map` and `reduce`.** Each callback invocation is the ordinary call (HO-02), and what it returns is the ordinary call result: the ONE value the call boundary delivers (VAL-06). Several written rows, or a spread row's several items, arrive as one sequence value, and `()` and `[]` are ordinary values. Every successful invocation is accepted: `map` stores the value as ONE element of its result list, and `reduce` passes it whole as the next accumulator, the last one being `reduce`'s result. No callback result is spread or opened, and no cardinality or non-empty check applies to it.
-- **Failure.** A failure of the invocation (binding per HO-02, dispatch, a demanded value, `MissingOutput` for an algorithm without output rows per VAL-05, a resource limit) is the operation's failure at that element, and no later element is processed.
+- **Failure.** A failure of the invocation (binding per HO-02, dispatch, a demanded value, `MissingOutput` for an algorithm without output rows per VAL-05, a resource limit) is the failure of the position, candidate or step that made it, raised to the consumer that demanded it: a whole read stops there, a `filter` discovery retains an ordinary failure at its frontier (COLL-04), and a demanded fold step fails the fold (HO-02). A resource limit ends the run, including reads of earlier matches (RUN-03).
 - **`filter`.** A `filter` predicate result must be a Boolean (BOOL-02).
-- **Unfolding.** For pure, deterministic, total computations, `map(L, F)` has the same result value as `[F(L[0]), …, F(L[n-1])]`, and `reduce([a, b], R, i)` has the same result value as `R(b, R(a, i))`. This holds for a user algorithm, a clause family (its selected clause's ordinary call, PAT-11), an alias, a builtin, a Math member and a host operation alike.
+- **Unfolding.** For pure, deterministic, total computations, `map(L, F)` has the same result value as `[F(L[0]), …, F(L[n-1])]`, and `reduce([a, b], R, i)` has the same result value as `R(b, R(a, i))`. This holds for a user algorithm, a clause family (its selected clause's ordinary call, PAT-11), an alias, a builtin, a Math member and a host operation alike. The `reduce` equation also describes when one step demands the preceding step or the start as a VALUE. It assumes the same element values and VALUE-only accumulator uses (HO-02). The fold reads its collection's top-level positions first. A written argument in the nested calls can additionally carry a callable, a capturable invocation or a retained collector slice, capabilities the fold's accumulator does not carry.
 
 **Qualifications**
-- The unfolding equations compare result values only. They guarantee nothing about effect order, argument demand, random draws, resource consumption or error timing. Demand and evaluation order stay as established: `reduce` demands its `initial` once and finishes each step before the next, `map` demands its collection first, and an expanded ordinary call can skip unused arguments and inner calls. `R(x, acc) = x` / `reduce([1, 2], R, 1 / 0)` is `DivisionByZero`, while `R(x, acc) = x` / `R(2, R(1, 1 / 0))` is `2`.
+- For `map` the equation compares result values only: it guarantees nothing about effect order, argument demand, random draws, resource consumption or error timing. A mapped position reads its source position before its transform runs, while an expanded ordinary call can skip an unused argument: `L = [1 / 0, 2]` / `F(x) = 0` / `map(L, F)` is `DivisionByZero`, while `[F(L[0]), F(L[1])]` is `L[0, 0]`. For `reduce` the demand of the accumulators agrees as well: `R(x, acc) = x` / `reduce([1, 2], R, 1 / 0)` and `R(2, R(1, 1 / 0))` are both `2`. The elements still differ: `Sub(x, acc) = x - acc` / `[tick(), tick()].reduce(Sub, 0), Sub(tick(), Sub(tick(), 0))` is `S[1, -1]`.
 - `()` is an ordinary element and accumulator. It never means "skip this element" or "keep the previous accumulator", and `filter` is the way to omit elements.
 - A callback with an unintended extra output row is valid and yields a sequence value the author did not mean, exactly as its direct call would. An error, if any, arises where that value is used: `Net(x) = x, x * 2` / `sum(map([1, 2], Net))` is `TypeMismatch`.
-- `reduce`'s `initial` is a value slot (HO-04), and with an empty collection it is the result: `Sub(e, acc) = acc - e` / `reduce([], Sub, 7)` is `7`.
+- `reduce`'s `initial` is a value slot whose demand is deferred (HO-04, HO-02); with an empty collection it is demanded once and is the result: `Sub(e, acc) = acc - e` / `reduce([], Sub, 7)` is `7`.
 - A loop step's rows are its next state, not a call result (LOOP-03): `Step(x) = x, x` / `Step(5).repeat(1), map([5], Step)` is `S[S[5, 5], L[S[5, 5]]]`.
 - A callback body whose row is a completed loop returns that loop's one value (LOOP-07), and so does its spread: `Fib(x, y) = y, x + y` / `[0, 1].map({ Fib(x, 1).repeat(2) }), [0, 1].map({ Fib(x, 1).repeat(2)* })` is `S[L[S[1, 2], S[2, 3]], L[S[1, 2], S[2, 3]]]`.
 
@@ -5386,9 +5419,9 @@ R(x, acc) = x, acc
 R(x, acc) = tick() * x + acc
 reduce([1, 2], R, 0)
 ```
-⇒ `5`, while `R(2, R(1, 0))` in the same program gives `4`: the equations do not cover effects.
+⇒ `4`, and so is `R(2, R(1, 0))` in a fresh run: the step for `2` runs first, draws `1` and then demands its accumulator, exactly as the nested calls do.
 
-`L = [tick(), tick()]` / `F(x) = tick()` / `map(L, F)` is `L[3, 4]`, while `L = [tick(), tick()]` / `F(x) = tick()` / `[F(L[0]), F(L[1])]` is `L[1, 2]`. `Lib = { public V = 1 }` / `F(x) = Lib` / `map([1], F)` is `MissingOutput`: an algorithm without output is never `()`. `filter([1, 2], {x})` is `TypeMismatch`, and so is `P(x) = x > 1, x < 5` / `filter([2], P)`.
+`L = [tick(), tick()]` / `F(x) = tick()` / `map(L, F)` is `L[2, 4]`: each position reads its source position, then calls `F`. With the same `L` and `F`, `[F(L[0]), F(L[1])]` is `L[1, 2]`, and the elements of `L` never run. `Lib = { public V = 1 }` / `F(x) = Lib` / `map([1], F)` is `MissingOutput`: an algorithm without output is never `()`. `filter([1, 2], {x})` is `TypeMismatch`, and so is `P(x) = x > 1, x < 5` / `filter([2], P)`.
 
 ### HO-04 — Forwarding preserves the algorithm channel: invoking slots call the named callable, value slots read its value
 
@@ -5396,7 +5429,7 @@ reduce([1, 2], R, 0)
 - Each invocation is an ordinary call, evaluated afresh. It never reads or populates the property cache, and never adds a separate value demand.
 - Supplying a callable to an invoking slot evaluates nothing: an unused callback has no effect, draws nothing, cannot fail and cannot recurse. `Apply(f, xs) = map(xs, f)` therefore selects exactly the callable `map(xs, F)` selects, even when `F` also accepts zero arguments.
 - **Loop steps.** A loop's step slot is a `meta` parameter. Its argument is a written invocation, captured inertly, and the callable each iteration invokes is that call's callee (CR-13). An argument that is no written invocation is the META refusal at binding (`NotAnAlgorithm`, LOOP-01).
-- **Value slots.** Every VALUE slot reads the bound value through the one cached property read (PROP-05). The value slots the builtin itself demands are the collection, `reduce`'s `initial` and `repeat`'s whole-number count. Each is demanded once, when the builtin executes, and its outcome is final.
+- **Value slots.** A VALUE slot demands its supplied computation. If it names a property, PROP-05 governs its cached read. A stage first obtains its collection. `repeat` demands its count after preparing the captured supply (LOOP-01). `reduce` demands `initial` at most once, when its fold reaches the start (HO-02). Each outcome is final.
 - A loop's initial state is the captured step call's own argument cells, which take that call's roles. The loop itself never demands them (LOOP-01, NEED-01). The step's patterns and rows, or the completed loop when it forms its value, demand a cell only if they read it, at most once and with a final outcome (CALL-06).
 - A forwarded parameter is read the same way: the value slot demands its cell once, so a failing argument is evaluated once, its failure is reported, and the argument is never re-run (CALL-06).
 - **Value-only parameters.** A cell with no callable identity has no callable to invoke. An invoking slot that receives one reports `NotAnAlgorithm` when it is invoked, exactly as a user higher-order parameter does. Nothing is evaluated to find that out: projection demands no VALUE, and an empty collection never projects its callback at all (NEED-06).
@@ -5404,7 +5437,7 @@ reduce([1, 2], R, 0)
 **Qualifications**
 - Plain binding and forwarding demand nothing (NEED-01, NEED-08), so an invoking slot never causes an earlier VALUE read of its callable.
 - An explicit `f()` through a forwarded parameter is fresh. If it finds the entry of the binding its cell names empty, it is a qualifying zero-supply invocation and establishes that entry (PROP-06). An invoking slot's own invocation never establishes an entry.
-- Projection happens at the first invocation, after the collection is demanded. `map([trace(1), 2], 5)` is `NotAnAlgorithm` with host log `[trace(1)]`.
+- Projection happens at the first invocation: for `map`, when a position is first read, after its source position (COLL-04). Read as the run's result, `map([trace(1), 2], 5)` is `NotAnAlgorithm` with host log `[trace(1)]`, while `map([1], 7).count` is `1`: a stage that no consumer reads projects nothing.
 - A forwarded clause family returns its ordinary call result as a callback, exactly as when it is passed directly (HO-03, PAT-11).
 
 ```katlang
@@ -5422,7 +5455,7 @@ R(Step, [1, 2], Init), Init, reduce([1, 2], Step, Init)
 ```
 ⇒ `S[13, 10, 13]`: the value slot shares the cache, with one tick.
 
-`OccurrenceCount = filter(values, predicate).count` / `OccurrenceCount((1, 2), {n mod 2 == 0})` is `1`. `A = tick()` / `map([], A), A` is `S[L[], 1]`, and an unused step never ticks either: `A = tick()` / `A(5).repeat(0)` is `5`. `A = tick()` / `Call0(f) = f()` / `Call0(A), Call0(A), A` is `S[1, 2, 1]`, while the slot's own invocation establishes nothing: `A(*xs) = tick()` / `map([1, 2], A), A` is `S[L[1, 2], 3]`. `F(0) = 10` / `F(n) = n` / `Fwd(f, xs) = map(xs, f)` / `Fwd(F, [0, 5])` is `L[10, 5]`.
+`OccurrenceCount = filter(values, predicate).count` / `OccurrenceCount((1, 2), {n mod 2 == 0})` is `1`. `A = tick()` / `map([], A), A` is `S[L[], 1]`, and an unused step never ticks either: `A = tick()` / `A(5).repeat(0)` is `5`. `A = tick()` / `Call0(f) = f()` / `Call0(A), Call0(A), A` is `S[1, 2, 1]`. A callback slot's invocations are fresh too: `Only(*xs) = tick() + xs.count` / `map([1, 2], Only), Only` is `S[L[3, 4], 1]`, because the bare `Only` is read first and the callback calls, made when the result is read, never read its entry. `F(0) = 10` / `F(n) = n` / `Fwd(f, xs) = map(xs, f)` / `Fwd(F, [0, 5])` is `L[10, 5]`.
 
 `N = randomInt(1, 50)` / `S(x) = x + 1` / `S(0).repeat(N) == N` is `true`. `Step(x) = 5` / `Step(1 / 0).repeat(1)` is `5`, while `Step(x) = 5` / `Step(1 / 0).repeat(0)` is `DivisionByZero`. `Run(f) = repeat(f(0), 1)` / `Run(5)` is `NotAnAlgorithm`, at the first iteration. `Bad = trace(1) / 0` / `Add(x, y) = x + y` / `G(v) = reduce([1], Add, v)` / `G(Bad)` is `DivisionByZero` with host log `[trace(1)]`.
 
@@ -5498,8 +5531,8 @@ Bare `count` at the root and `reduce([1, 2], {x + y})` are `ArityMismatch`, each
 **Qualifications**
 - A dotted receiver fills `collection` as an ordinary leading argument: `A.take(2)` is `take(A, 2)` (DOT). A collecting parameter's list passed unspread is the one collection: `Q(*args) = args.sum / args.count` / `Q(1, 2, 3), Q((1, 2)*)` is `S[2, 1.5]`, while `M(*values) = map(values*, {x})` / `M(1, 2)` is an arity error (three arguments).
 - `if`, `atoms` and `range` are fixed-arity with no collection view. The initial state of `while` and `repeat` is the captured step call's own supply (LOOP).
-- The `collection` slot and the value controls (`contains`'s `item`, `take`/`skip`'s `count`, `reduce`'s `initial`) are value positions: each is demanded once through the zero-argument value-demand law (CALL), a named property is read through the property cache (PROP), and a failure is final. Callback controls receive the callable, are never VALUE-demanded, and are projected only when the builtin invokes them, so an empty collection never projects them (HO-02, NEED-06).
-- The cardinality of the formed supply is checked before any non-spread demand, for builtins and user callables alike; then the collection is demanded first, then its value controls (CALL-03). `count(1 / 0, 2)` is `ArityMismatch`, while `take('a', 1 / 0)` is `DivisionByZero`: `'a'` is a valid one-item collection, so the count is demanded next.
+- The `collection` slot and the value controls (`contains`'s `item`, `take`/`skip`'s `count`, `reduce`'s `initial`) are value positions: each is demanded at most once through the zero-argument value-demand law (CALL), `reduce`'s `initial` only when its fold reaches the start (HO-02); a named property is read through the property cache (PROP), and a failure is final. Callback controls receive the callable, are never VALUE-demanded, and are projected only when the builtin invokes them, so an empty collection, and a `map` or `filter` stage that no consumer reads, never projects them (HO-02, COLL-04, NEED-06).
+- The cardinality of the formed supply is checked before any non-spread demand, for builtins and user callables alike; each builtin then obtains its collection or retained slice (NEED-07). `skip` and `contains` read the collection's top-level positions at binding before demanding their controls. `take` validates its count before reading a position, and `reduce` defers `initial` (COLL-04, HO-02). `count(1 / 0, 2)` is `ArityMismatch`, while `take('a', 1 / 0)` is `DivisionByZero`: `'a'` is a valid one-item collection, so the count is demanded next.
 
 ```katlang
 A = 1, 2
@@ -5525,6 +5558,7 @@ sum((A*, B*)), sum((1, 2, 3)), [1, 2, 3].sum, A.count, count(A)
 - A control is one value compared whole, never viewed: `contains([(1, 2), 3], (1, 2))` is `true`, but `contains((1, 2), (1, 2))` is `false`, because the collection `(1, 2)` views as the items `1` and `2`.
 - `count({})` is `MissingOutput` blamed at the argument (CALL).
 - A parameter holds the value whole: `L(xs) = xs.count` / `L(range(1, 10)), L((1, 2, 3))` is `S[10, 3]`.
+- `count` needs the view's cardinality only: it reads no position of a list whose cardinality is known (a literal, or a `map` or `take` over known positions), and it makes a `filter` discover every match (COLL-04): `[trace(1), trace(2)].count` is `2` with an empty host log.
 - The fused `filter`→`count` pipeline reads the same view (RUN): `7.filter{x > 1}.count` is `1` and `().filter{x > 1}.count` is `0`, as on the generic path.
 
 ```katlang
@@ -5541,16 +5575,23 @@ F(G(7, 1 / 0))
 
 In the same `F`, `sum(c.Arguments)` is `TypeMismatch`.
 
-### COLL-04 — Collection-producing builtins return ONE exact list whose kind never depends on the input; observers return one scalar
+### COLL-04 — Collection-producing builtins return one exact list. Each consumer determines which positions it needs
 
 - `filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `range` and `atoms` each return ONE exact list value with emitted count 1: no items give `[]`, one item gives `[item]` (never erased to the item), many give `[a, b, …]`.
 - Kept elements are stored exactly: nested sequences and lists stay elements. The result kind never depends on the input kind or the item count.
 - `count`, `sum`, `avg`, `min` and `max` return one number, and `contains` returns one Boolean, each with emitted count 1. `first` and `last` select one stored element (SEQ-05).
 - A builtin result re-enters every receiver as ONE value. Only an explicit spread opens the list (SUP), and a list never equals a sequence (SEQ).
+- **Stages** (issue #204). After obtaining the collection, `map` and `filter` can return a list without reading a source position or projecting the callback. `take` also demands and validates its count. For example, forming the sequence receiver of `(trace(1), trace(2)).map{x + 1}.first` runs both traces, even though the consumer needs only the first mapped position.
+  - `map` preserves positions: position `i` of `map(c, f)` is `f` applied to position `i` of `c`, whatever `c`'s cardinality or discovery state. Its first read reads the source position, then projects `f` (on first use) and makes the ordinary callback call (HO-02, HO-03). A source known to be empty maps to `[]`.
+  - `filter` discovers its matches in source order, only as far as its consumers ask. It keeps the positions accepted so far and its scan frontier, so a later discovery resumes where the last one stopped and no candidate is inspected twice. Inspecting a candidate reads its value, projects the predicate on first use and calls it. An ordinary failure is kept at the frontier: every later discovery that reaches it reports it again, while the matches before it stay readable. A predicate that needs the scan it belongs to is `DemandCycle`.
+  - For an ordinary collection, `take` returns a prefix sharing its source's positions and discovery state: a count of at most `0` is `[]` and reads nothing, and a full prefix inspects no further candidate.
+- **Consumers read what they need.** `count` reads the cardinality only, known for a literal and for a `map` or `take` over known positions, discovered in full for a `filter`; `first` reads position zero; `last` finds the final position and reads it; selection reads the positions it names (SEQ-05). Every other collection builtin (`sum`, `avg`, `min`, `max`, `order`, `orderDesc`, `skip`, `distinct`, `contains` and `reduce`) reads its collection's positions in order when it binds it, and `reduce` obtains every top-level element before any step (HO-02). `contains`, `distinct` and `atoms` read whole values (COLL-07, COLL-10). A position's effects, draws and failures happen when it is read, so a position that no consumer reads never runs.
 
 **Qualifications**
 - `reduce` returns its final accumulator as one value, not necessarily a list. Its callback results, like `map`'s, are ordinary call results (HO-03).
-- A collection builtin produces its whole result before any consumer sees it: `first(map([1, 2, 3], {trace(x)}))` is `1` with host log `trace(1), trace(2), trace(3)`. This follows from HO-02 (one invocation per element, left to right, none for an empty collection) and RUN-01 (no route changes effect counts), so a lazy or short-circuiting collection builtin would be a language change (RUN-08).
+- Over a retained collector, `take` instead demands the kept cells in order when called and returns an exact list of those values (NEED-07, COLL-08).
+- A stage is one list instance, so every reader of it shares its positions and verdicts: `M = [1, 2, 3].map{trace(x)}` / `M[1], M[1], M.count` is `S[2, 2, 3]` after one `trace(2)`. The other producers read their collection when they bind it, so their result holds values: `skip([trace(1), trace(2)], 1)` is `L[2]` after both traces.
+- *C#-only:* a deferred step's failure is reported under the call that built its stage, followed by the frames of the consumer that demanded it, which is presentation (RUN-06); reservations, the release of a finished stage and stack-safe reads of stages stacked at run time are host policy (RUN-03).
 
 ```katlang
 take((1, 2, 3), 2) == [1, 2], take((1, 2, 3), 2) == (1, 2), take(((1, 2), (3, 4)), 1), range(3, 3), filter([1, 2], {x > 5}), map((1, 2), {x * 10}), distinct(((), ())), order(5)
@@ -5562,6 +5603,8 @@ G(*a) = a
 G(take((1, 2, 3), 2)), G(take((1, 2, 3), 2)*), take((1, 2, 3), 2)*
 ```
 ⇒ `S[L[L[1, 2]], L[1, 2], 1, 2]`
+
+`[1, 2].map{if(n == 1, 10, 1 / 0)}.first` is `10`, `count(map([1 / 0, 2], 7))` is `2`, `first(map([1 / 0], 7))` is `DivisionByZero`, and `first(map([1], 7))` is `NotAnAlgorithm`. `[1, 0].filter{1 / n > 0}.take(1)` is `L[1]`, while `.take(2)` and `.count` on the same stage are `DivisionByZero`. `[trace(1), trace(2), trace(3)].filter{x > 1}.first` is `2` after `[trace(1), trace(2)]`. `[1 / 0, 2].take(0)` is `L[]`, and `[1 / 0].take('a')` is `TypeMismatch`.
 
 ### COLL-05 — Numeric collection builtins accept only single numbers; the empty-collection policy is fixed per builtin
 
@@ -5621,6 +5664,7 @@ order((1.0, 1, 0.5)), orderDesc((1.0, 1)), order((0, -0)), orderDesc((0, -0)), o
 
 **Qualifications**
 - Numeric equality ignores Decimal128 quantum and zero sign, so among equal but distinguishable numbers the kept representative is the first written: `distinct((1.0, 1))` is `[1.0]` and `distinct((1, 1.0))` is `[1]`.
+- Both read their collection's positions in order when they bind it, and compare whole values, every position of an element and of the item included (CMP-03): `contains([[trace(1)], 2], [1])` is `true` after `[trace(1)]`.
 - NaN equals NaN under `==`, so `distinct` collapses NaNs and `contains((1, N), (-3) ^ 0.5)` is `true` with `N = (-2) ^ 0.5` (C#-only, spec `nan-equality-vs-ordering`).
 
 ```katlang
@@ -5643,6 +5687,7 @@ distinct((1, 2, 1, (1, 2), (1, 2), [1, 2], 'a', 'a', true, true)), contains([(1,
 
 **Qualifications**
 - A scalar collection is one item: `take(5, 1)` is `[5]`.
+- `take` validates its count before reading an element. With an ordinary list its prefix shares the source positions (COLL-04): `[1 / 0, 2].take(0)` is `L[]`, and `L = [tick(), tick()]` / `P = L.take(1)` / `P[0], L[0], tick()` is `S[1, 1, 2]`. With a retained collector, `Prefix(*xs) = xs.take(2)` / `Prefix(10, 1 / 0)` raises `DivisionByZero` as the kept cells are demanded. With an ordinary list, `[1 / 0, 2].take(2).count` is `2`. `skip` reads all top-level positions at binding, including those it discards.
 - Lean models the saturation over `Int` (`evalTakeCounted`, `evalSkipCounted`). It cannot write a fractional count, so whole-number validation is C#-only.
 
 ```katlang
@@ -5657,7 +5702,7 @@ take(Xs, 2), skip(Xs, 2), take(Xs, -1), skip(Xs, -1), take(Xs, 10), skip(Xs, 10)
 
 - `range(start, stop)` is a fixed two-argument builtin; there is no step or transform argument. Both bounds must be whole numbers. It returns ONE exact list of every integer from `start` to `stop` inclusive, ascending when `start <= stop` and descending when `start > stop`. `range(a, a)` is `[a]`, so a range is never empty.
 - A bound that is not a number is `TypeMismatch` (`range(1, 'a')`, `range(true, 3)`, `range([1], 3)`), and a non-whole number is `IllegalInEval` (`range(1.5, 3)`).
-- For written (non-spread) bounds, `start` is demanded and validated before `stop` is demanded. So `range('a', 1 / 0)` is `TypeMismatch` and `stop` is never evaluated: `range(trace('a'), trace(1) / 0)` logs only `trace('a')`. This differs from operators (OP-03: both operands, then validation). A native Math or random wrapper validates its arguments the same way, one at a time (`pow('a', 1 / 0)` is `TypeMismatch`), while a collection builtin demands its collection first, then its controls (COLL-02). Spread bounds are forced before either bound is demanded (CALL-03).
+- For written (non-spread) bounds, `start` is demanded and validated before `stop` is demanded. So `range('a', 1 / 0)` is `TypeMismatch` and `stop` is never evaluated: `range(trace('a'), trace(1) / 0)` logs only `trace('a')`. A binary arithmetic operator evaluates both operands before it validates either (OP-03). A native Math or random wrapper validates its arguments the same way, one at a time (`pow('a', 1 / 0)` is `TypeMismatch`), while a collection builtin demands its collection first, then its controls (COLL-02). Spread bounds are forced before either bound is demanded (CALL-03).
 
 **Qualifications**
 - `range((1, 5))` is an arity error because it is one argument, while `B = 1, 3` / `range(B*)` is `[1, 2, 3]`, because the spread supplies two slots (SUP). `range(1, 5, 2)` is `ArityMismatch`.
@@ -5673,6 +5718,7 @@ range(1, 5), range(5, 1), range(3, 3), range(-2, 2), range(1.0, 3), range(1, 4).
 
 - `atoms(value)` takes exactly one argument. It collects every number reachable through sequence AND list boundaries, depth-first and left to right, into ONE exact list. Strings, Booleans and call references contribute nothing, and neither does an argument view nested inside the value. An argument view given as the whole argument is refused with `TypeMismatch`.
 - It is the only builtin that opens values recursively: every other collection builtin opens exactly one level (COLL-03), and the spread marker opens one (SUP).
+- It reads the whole value: every position of every list in it, depth-first (COLL-04). `atoms([[trace(1)], trace(2)])` is `L[1, 2]` after `[trace(1), trace(2)]`.
 - The result is a list even for a single number (`atoms(7)` is `[7]`, never `7`), and `[]` when there are no numbers. Its content equals the host's numeric flattening of the same value; the two remain separate contracts.
 
 **Qualifications**
@@ -5883,7 +5929,7 @@ Only([7]), Only([[1, 2]]), ListSum([S*])
 
 A clause-family call forms its supply like every call (CALL-02): explicit spreads are opened, every other argument stays a suspended computation, and the family's cardinality is checked before any of them is demanded (NEED-05). Then:
 
-- **Ordered inspection.** The clauses are tried in written order (PAT-02), each against the same supply cells (NEED-04). A clause head is inspected left to right, recursively in written order: a literal pattern demands its argument's VALUE and compares it (PAT-05), a structural pattern demands its argument's whole value and checks its kind and shape (PAT-06, PAT-08), each occurrence of a repeated name follows NEED-04 (PAT-09), and a plain binder whose name does not repeat demands nothing.
+- **Ordered inspection.** The clauses are tried in written order (PAT-02), each against the same supply cells (NEED-04). A clause head is inspected left to right, recursively in written order: a literal pattern demands its argument's VALUE and compares it (PAT-05), a structural pattern demands its argument's value and checks its kind and shape (PAT-06, PAT-08), leaving a list's positions unread until a field inspects them (NEED-04), each occurrence of a repeated name follows NEED-04 (PAT-09), and a plain binder whose name does not repeat demands nothing.
 - **Selective demand.** A family therefore demands exactly what the inspected patterns need and, after selection, what the selected body reads. An argument that no inspected pattern and no selected body demands is never evaluated, so it cannot fail, run an effect or draw. A cell demanded during one clause attempt keeps its completed outcome for the later attempts.
 - **Mismatch versus failure.** A literal, kind, shape or repeated-name incompatibility is a non-match, and the next clause is tried. A failure raised while a required pattern demands or projects its argument aborts dispatch with that failure and is never a non-match. No matching clause is `NoMatchingBranch` (PAT-02).
 - **Both channels.** A successful clause binds each plain binder to its cell with both channels (NEED-04), so a family receives callables. A binder still shadows same-named outer bindings on every channel, and calling a binder whose argument has no callable identity is `NotAnAlgorithm`.
@@ -5915,6 +5961,7 @@ R(0)
 Written at the inferring root the same call lifts `Inc`: `Inc(x) = x + 1` / `App(f, 0) = 0` / `App(f, n) = f(n)` / `App(Inc, 5)` is `UnresolvedImplicitParams`, and `Inc(x) = x + 1` / `App(f, 0) = 0` / `App(f, n) = f(n)` / `R = App(Inc, 5)` / `R(7)` is `NotAnAlgorithm`.
 
 - Unused failing argument: `F(0, y) = 'zero'` / `F(x, y) = y` / `F(0, 1 / 0)` gives `'zero'`. A failure an inspecting pattern demands aborts dispatch: `F(0, y) = 'zero'` / `F(x, y) = y` / `F(1 / 0, 2)` is `DivisionByZero`.
+- A list argument is read by kind and cardinality first: `P([a]) = 1` / `P(x) = 2` / `P([1 / 0, 2])` gives `2`, and so does `P(0) = 1` / `P(x) = 2` / `P([1 / 0])`, whose literal rejects the list by kind without reading it.
 - Output-less argument: `F(x, 0) = 1` / `F(x, y) = 2` / `F({ }, 0)` gives `1`, because the binder `x` never demands the block.
 - Binder shadowing: `f(x) = x + 1` / `F(f, 0) = f(2)` / `F(f, n) = n` / `F(7, 0)` is `NotAnAlgorithm`.
 - Demand order: `F(0, y) = 'zero'` / `F(x, y) = y` / `F(trace(0), trace(1))` gives `'zero'` after `[trace(0)]`, and `F(0, y) = 'zero'` / `F(x, y) = y` / `F(trace(5), trace(1))` gives `1` after `[trace(5), trace(1)]`. `F((a, b), 0) = a` / `F(x, y) = y` / `F(trace((1, 2)), 5)` gives `5` after `[trace(S[1, 2])]`. `F(0) = 1` / `F(1) = 2` / `F(trace(5))` is `NoMatchingBranch` after one `trace(5)`. `F(0) = 1` / `F(1) = 2` / `F(trace(1), trace(2))` is `ArityMismatch` with no host event.
@@ -5924,7 +5971,7 @@ Written at the inferring root the same call lifts `Inc`: `Inc(x) = x + 1` / `App
 - **Where it applies.** Every ordinary parameter-pattern list: a single literal-free clause head, callback binding, loop-state binding, and the zero-argument demand's empty supply. The deconstruction helper binds through the unpacking receiver instead (VAR-05).
 - **One slot, opened once.** A structural pattern, a sequence pattern `(p1, …, pn)` or a list pattern `[p1, …, pn]`, consumes exactly one supplied argument slot. It binds its items against that slot's VALUE, opened once, and only if that value has the pattern's own kind (PAT-06):
   - a sequence pattern opens a sequence value to its immediate elements, `()` to zero;
-  - a list pattern opens a list value to its elements, `[]` to zero;
+  - a list pattern opens a list value to its positions, `[]` to zero, without reading them: its names bind the original positions, read when used (SEQ-02);
   - any other value is the pattern's kind mismatch (PAT-06), never a one-item supply.
 - **Ordinary binder inside.** The opened items are bound by the ordinary prefix/collector/suffix binder. A nested `*rest` collects exactly the remaining opened items as one list (VAR-01, VAR-02). A nested pattern opens its own item once more, again through its own kind.
 - **Call-shape syntax.** Pattern delimiters never create a runtime value boundary, and no pattern is ever unwrapped (a one-item sequence pattern is invalid, PAT-06). How the argument was written (`F(S)`, `F((S))`, `F({S})`, `F((S*))`) never matters; only its value does (SYN).
@@ -5932,7 +5979,7 @@ Written at the inferring root the same call lifts `Inc`: `Inc(x) = x + 1` / `App
 - **Only openers.** Structural patterns (and deconstruction, VAR-05) are the only binders that open an argument. Without one, a sequence or list argument stays one value.
 
 **Qualifications**
-- A structural pattern is strict: `Bad = 1 / 0` / `P((a, b)) = 1` / `P(Bad)` is `DivisionByZero`. An unused fixed binder would not demand it (CALL-06).
+- A structural pattern is strict: `Bad = 1 / 0` / `P((a, b)) = 1` / `P(Bad)` is `DivisionByZero`. An unused fixed binder would not demand it (CALL-06). A list pattern is strict in its argument's VALUE, not in its elements: `P([a, b]) = b` / `P([1 / 0, 2])` is `2`, while `P([a, b]) = a` / `P([1 / 0])` is `ArityMismatch`, because the cardinality is checked before any field.
 - Callbacks bind the same way (HO-01): `P((x, *rest)) = (x, rest)` / `map([(7, 8), (1, 2)], P)` gives `L[S[7, L[8]], S[1, L[2]]]`, and `P((x, *rest)) = (x, rest)` / `map([7], P)` is `TypeMismatch`.
 - In a clause family the same written pattern follows the same kind law and only rejects the clause (PAT-06).
 
@@ -6798,7 +6845,7 @@ A **route** is one way the C# runtime executes a program: generic or optimized, 
 - Accounting is strategy-neutral. Planned loops and fused pipelines charge exactly what the generic strategies charge: one step per iteration and per invocation, the generic expression-work checkpoints, the generic composition's item reservations and the same string units. Every limit verdict is therefore strategy-independent while the optimizations stay enabled under any limits (RUN-03).
 - The twin always pins the generic strategies.
 - The nearest look-alike is `A` versus `A()`. That is no route difference: `A()` is a different call shape with different semantics (PROP-06). Programs that differ only in spelling are other rules' laws: `(E)` and `E` (SYN-06), `x.F` and `F(x)` (DOT-03).
-- Opt-in passive observation of root properties is a host read of the entries the run already published. It evaluates, charges and draws nothing and observes no cancellation, so it changes no observation. Absence of an entry proves nothing.
+- Opt-in passive observation of root properties is a host read of the entries the run already published. It evaluates, charges and draws nothing and observes no cancellation, so it changes no observation. Absence of an entry proves nothing. For a published list, the snapshot uses a concrete form the run built, a completed one-level read, or the memoized values of all positions once cardinality has settled. It applies the same test to nested lists. An unsettled, unread, failed or cyclic part withholds the whole observation, as does a call reference or its argument view (CR-6, CR-12): `Whole = [1 + 1, 2]` / `Whole` observes `L[2, 2]`, while `Part = [1 + 1, 1 / 0]` / `Part.count` withholds `Part` (SEQ-02).
 - Lean terms are trees, so the sharing clause has no Lean counterpart. The plain/counted route is FORMAL-05.
 
 ```katlang
@@ -6885,10 +6932,12 @@ A, A, R, R, randomInt(0, 1000)
   - **Limits observe a run; they never choose how it runs.** No configured evaluation limit selects an execution strategy. The strategy comes from the program, the requested optimizations and the route, and the route from genuine host capability (an async-capable cache, an asynchronous host operation, a deferred module region), never from `EvaluationLimits`. A limit is a check, never a switch, and writing a limit's default value is the same as leaving it unset.
   - Every strategy performs the same logical accounting for every semantic budget: steps (the bulk expression-work checkpoints included), depth, materialized items and string units. A limit that is reached therefore gives the same verdict, at the same point, on every strategy. Configuring, raising or removing a limit that a run does not reach changes nothing about that run on the same host: not its value, effects, random draws, budget accounting, strategy, or whether it completes.
   - Budgets are per run. A rejected enter or reservation mutates no counter. Depth is released exactly once. Steps, items and string units are cumulative.
-  - A persistent sequence or list reserves its own immediate stored-item count exactly once, after its whole supply succeeds and before its result is built. A nested constructed value occupies one independently reserved parent item, so nesting never transfers, suppresses or duplicates a child's reservation. A canonical capture of zero or one item reserves nothing, an exact list reserves its immediate length (one included), redundant grouping creates no boundary, and completed child reservations stay charged when a later slot fails or cancellation interrupts.
+  - A materialized sequence or list accounts for its own immediate slots. A capture or exact list built from a completed supply reserves those slots before constructing its result. Lists with deferred positions follow the reservation points below. A nested constructed value occupies one independently reserved parent item, so nesting never transfers, suppresses or duplicates a child's reservation. A canonical capture of zero or one item reserves nothing, an exact list reserves its immediate length (one included), redundant grouping creates no boundary, and completed child reservations stay charged when a later slot fails or cancellation interrupts.
+  - **Lists evaluated on demand** (C#-only accounting). A list of known cardinality reserves its positions when it is built. A `filter` scan reserves its accepted positions at completion. A stage over discovered positions reserves them when it first builds a concrete form. An executed callback is charged its invocation and its work when its position is read, and an unread element incurs no evaluation charge. Building a known-size list can still reach its reservation limit. Whole-value reads keep explicit frames and observe cancellation. A result that keeps building lists while it is read whole is bounded like recursion: `F(x) = [x].map(F)` / `F(1)` is `EvaluationDepthExceeded`, while `F(1).count` is `1`.
+  - **Folds** (C#-only accounting). A `reduce` step suspended while its accumulator is evaluated is a fold continuation, accounted apart from call nesting: every step runs at the depth the fold began at, so a fold over any admitted collection stays within `MaxDepth` exactly when one step does, while recursion inside a reducer still counts. A reducer that leads with its accumulator (`acc + x`) takes a streamed route, chosen from the reducer's structure alone, with the same values, effects, ordinary failures and total charges; it charges a step's expression work when that step's body runs instead of on the way down, so a `MaxSteps` budget that runs out inside such a fold stops after more completed steps than the nested order would, with the same verdict at the same consumed total on every strategy.
   - **Semantic limits are deterministic; the host stack is an environmental backstop.** Only the error kind belongs to the language; the thresholds are host configuration. Under a given configuration, the verdict and failure point of the depth, step, per-collection, cumulative item, per-string and cumulative string limits follow from the program and the logical accounting above, identically on every route and strategy, unless the host-stack backstop stops the run first.
   - **Host-stack headroom is not semantic.** Whether and where `EvaluationStackExhausted` fires depends on the thread and its stack size, the build, the runtime and its JIT state (which changes within one process as code tiers up), the platform, the route and suspension (a suspended twin resumes on another stack). Routes may therefore disagree on whether a run stops and, when the backstop pre-empts a semantic limit on one route, on which verdict fires (RUN-01 exception 2), never on the value of a run that completes. Its firing depth is never promised, and it never depends on which limits are configured.
-- **Host cancellation is not an error.** A requested cancellation throws `OperationCanceledException` with the supplied token. It is never an `EvalError`, never a value or a recoverable binding outcome, and never a result. A supplied computation interrupted by cancellation completes as cancelled and is never restarted: a later demand of it rethrows the same cancellation (NEED-02, NEED-09). An uncancelled token changes nothing.
+- **Host cancellation is not an error.** A requested cancellation throws `OperationCanceledException` with the supplied token. Inside the C# async evaluation boundary, `EvalError.HostTermination` carries the retained exception to the entry point, which rethrows it. KatLang code cannot observe cancellation as a value or a binding verdict. A supplied computation interrupted by cancellation completes as cancelled and is never restarted: a later demand of it rethrows the same cancellation (NEED-02, NEED-09). An uncancelled token changes nothing.
 
 **Qualifications**
 - The verdict kind and the depth at which the host-stack backstop fires depend on the route and the machine. Here `A = A.string` / `A` gives `EvaluationDepthExceeded` on the synchronous route and `EvaluationStackExhausted` on the async twin, and `F(x) = if(x < 40, F(x + 1), x)` / `F(0)` gives `40` on the synchronous route and can stop with `EvaluationStackExhausted` on a non-suspending twin. Absolute thresholds are never promised.
@@ -6963,10 +7012,11 @@ Recovery is never evaluated: `A @= 1` / `A, tock()` is `UnexpectedCharacter`, an
   - arity (a wrong count is `ArityMismatch`);
   - use as a callback or loop step;
   - the zero-argument cache law: bare `op` is read once per run, while `op()` is fresh (PROP-04, PROP-06).
-- The host delegate is invoked exactly once for each KatLang-level evaluation of the wrapper. Suspension never replays it. Its arguments are the ordinary bound parameter values: callback-bound values, never same-named ambient values.
+- After its arguments succeed and pass the host boundary, the wrapper invokes the delegate exactly once. Suspension never replays it. Its arguments are the ordinary bound parameter values: callback-bound values, never same-named ambient values.
+- An argument is read whole where the operation is called, in argument order: every position of a list evaluated on demand is read, depth first, before the host is invoked, so the host never receives such a list, and a failure, limit or cancellation reached there is the call's. `trace([trace(1)].map{x + 1})` is `L[2]` after `[trace(1), trace(L[2])]`.
 - An argument containing a call reference or argument view at any depth is refused with `TypeMismatch`, and the host is never invoked with it.
 - A successful return enters the program as a canonical KatLang value, normalized and admitted before any consumer or the cache sees it. Every collection it contains, at any depth, must fit the per-collection limit by its immediate item count, and every string the per-string limit, or the run ends with that terminal resource failure (RUN-03). Admission is a size check, never a cumulative materialization charge.
-- A host exception propagates to the host unchanged and never becomes an `EvalError`.
+- The public entry rethrows the original host exception. Inside the async evaluation boundary, the terminal marker carries it to that entry (RUN-03).
 - Without a configuration, the same name is just an unresolved name and becomes an implicit parameter. A program references an operation whenever the operation's spelling occurs in it as a free name, even if the author meant an implicit parameter: the configuration then captures that name, and the program's meaning changes. Only a configuration whose names do not occur freely in the source is outcome-neutral.
 
 **Qualifications**
@@ -7053,8 +7103,8 @@ A / 3, A
 *Open: whether to unify the error category of an unresolved bare root name (Q-42): `A = x + 1` / `A` is `ArityMismatch`, while `A = x + 1` / `A + 0` is `UnresolvedImplicitParams`.*
 
 - **(a) One value or one error.** Evaluating a demanded expression gives a value or fails with one error. No value kind represents an error, and no construct inspects, catches, defaults or retries one (VAL-10).
-- **(b) Propagation.** A failure in a demanded subevaluation fails every enclosing evaluation up to the run, and later work is not started. This covers operators (OP-03), comparison chains (CMP-02), selection (SEQ-05), supply slots (SUP-01), user-call arguments (CALL-02), callback elements (HO-02: later elements are not invoked), loop iterations (LOOP-03: later iterations do not run) and root rows (VAL-07: later rows are not evaluated, and no partial output is produced from the completed ones).
-- **(c) No place defers a failure.** A supplied computation is evaluated only when demanded (NEED-01 to NEED-03), and a demanded failure is raised at once and propagates under (b). A demanded computation keeps its completed failure for any later demand of it, which reports the same failure and never re-derives it (CALL-06, NEED-02). A failed spread is raised during supply formation (SUP-02). A resource-limit failure is never deferred: wherever evaluation reaches it, it ends the run at once (RUN-03).
+- **(b) Propagation.** A failure in a demanded subevaluation fails every enclosing evaluation up to the run, and later work is not started. This covers operators (OP-03), comparison chains (CMP-02), selection (SEQ-05), supply slots (SUP-01), user-call arguments (CALL-02), callback invocations (HO-02, COLL-04: the read that meets the failure invokes no later position), loop iterations (LOOP-03: later iterations do not run) and root rows (VAL-07: later rows are not evaluated, and no partial output is produced from the completed ones).
+- **(c) No place defers a failure.** A supplied computation is evaluated only when demanded (NEED-01 to NEED-03), and a demanded failure is raised at once and propagates under (b). A list position is such a computation (SEQ-02). A demanded computation keeps its completed failure for any later demand of it, which reports the same failure and never re-derives it (CALL-06, NEED-02). A failed spread is raised during supply formation (SUP-02). A resource-limit failure is never deferred: wherever evaluation reaches it, it ends the run at once (RUN-03).
   - A failure's kind is rewritten at exactly one place: a spread reports its operand's own `MissingOutput` as `SpreadMissingOutput`, while a nested one keeps its kind (SUP-02). Context frames wrap an error without changing its kind.
   - Lookups that fail inside resolution (an argument with no algorithm channel, a receiver that is not a structural provider, the implicit-parameter promotion test) are resolution decisions, not failures of evaluated source.
 - **(d) The error's category is part of meaning.** The observable category is FORMAL-06's granularity: the innermost error, with the arity family collapsed for Lean parity. Changing a category is a Lean and C# change. Wording, span and context frames are presentation for Lean parity. FORMAL-06 stays category-only, with selected shared structured fields compared separately. All of them must still agree across C# routes, as an implementation requirement (RUN-01).
@@ -7074,6 +7124,7 @@ A / 3, A
   - An algorithm read as a value without output is `MissingOutput` (VAL-05).
   - A cyclic active dependency is `DemandCycle` (NEED-09). Fresh recursion is not a cycle and obeys ordinary limits.
   - NEED-04's repeated-name categories are that binder rule's own.
+- **(g) A run hands out only concrete values.** A list evaluated on demand exists only inside its run (SEQ-02). The run assembles its output row by row (VAL-07) and then reads it whole, left to right and depth first, while the run is still active. A named top-level property that the engine reads after the output (the root's `MinDecimalPlaces` and `MaxDecimalPlaces`, RUN-06) is read whole as it is read, and a host-operation argument where the operation is called (RUN-05). A failure, a resource limit or a cancellation reached in such a read is the run's outcome: `[1, 1 / 0]` is `DivisionByZero`, and `L = [tick()]` / `L, tick()` is `S[L[2], 1]`. The run-result boundary then refuses a call reference or argument view anywhere in the materialized value (CR-6, CR-12). Formatting receives the finished result (RUN-06).
 
 **Qualifications**
 - Which of several possible failures is reported is decided by each construct's own order: supplied arguments in the order they are first demanded (CALL-02), cardinality before any VALUE demand for every callee (CALL-03), written-order pattern inspection after the cardinality check (PAT-10), comparison chains (CMP-02).
@@ -7101,14 +7152,17 @@ The taxonomy, one witness each: `map([1, 2], 1 / 0)` is `NotAnAlgorithm`, with t
 
 ### RUN-08 — Evaluation is strict except at a closed set of demand points, and "exactly once" has enumerated exceptions
 
-- A demanded expression evaluates its subexpressions eagerly, in the orders fixed by OP-03, BOOL-04, CMP-02, SEQ-02, SEQ-05 and the consuming construct, except at the demand points below. A supplied call argument is not such a subexpression: it is a computation of the caller that runs only when demanded (CALL-02).
+- A demanded expression evaluates its subexpressions eagerly, in the orders fixed by OP-03, BOOL-04, CMP-02, SEQ-05 and the consuming construct, except at the demand points below. A supplied call argument is not such a subexpression: it is a computation of the caller that runs only when demanded (CALL-02). Neither is an ordinary list element: it is a position that runs only when read (SEQ-02).
 - Written code may go unevaluated only at these points, and nowhere else:
   - a supplied argument computation of any call (a user callee, a clause family, a builtin, a Math, random or host wrapper, a dot-call receiver), until its VALUE is first demanded; one never demanded is never evaluated (CALL-02, CALL-03, CALL-06, NEED-01, NEED-03). Binding it to a plain parameter, transporting or forwarding it, collecting it, re-spreading a known collector slice, transporting it through an argument-view spread, capturing it as a `meta` parameter's call reference and projecting its callable identity evaluate nothing. A runtime projection (a reference's `.Algorithm` link, or navigation through a parameter whose cell is a runtime projection) may demand the VALUE of other cells on its callee route, never the projected cell's own (NEED-01, NEED-06, NEED-07, NEED-08);
   - a property body, until it is demanded; a cache hit re-runs nothing (PROP-02, PROP-04);
   - a deconstruction right-hand side, until one of its targets is demanded (VAR-06);
   - the unselected branch of builtin `if` (BOOL-05);
-  - the slots a builtin does not demand: each value slot is demanded and validated before the next, after the arity check, so a slot after a failed validation is never reached (CALL-03);
-  - invoking slots, which are never value-demanded: a callback is invoked once per element (HO-02, HO-04) and a loop step once per iteration (LOOP-05, LOOP-06, LOOP-08); supplying one evaluates nothing, so an unused callback has no effect;
+  - the right operand of an `and` whose left operand is `false`, and of an `or` whose left operand is `true` (BOOL-04);
+  - a list position that no consumer reads: an ordinary element of a list literal, a `map` position, a `filter` candidate beyond the scan's frontier, and a position outside a `take` prefix (SEQ-02, COLL-04);
+  - a `reduce` step that no later step demands, together with the `initial` behind it (HO-02);
+  - builtin slots after an earlier failure in that builtin's required order of demands and validations (CALL-03, COLL-02);
+  - invoking slots, which are never value-demanded: a callback is invoked only for the positions, candidates and fold steps a consumer demands (HO-02, HO-04), and a loop step once per iteration (LOOP-05, LOOP-06, LOOP-08); supplying one evaluates nothing, so an unused callback has no effect;
   - the step of a zero-count `repeat` (LOOP-05);
   - the earlier transition rows of a condition-first `while` round whose discovered flag is false (LOOP-06). Discovery still reads rows right to left to find the last effective item, so trailing empty rows and dependencies needed by the flag may run;
   - the ordinary selectors of a postfix selection after its first failure: once the receiver is in hand, each ordinary selector is a supplied computation demanded only when the selection reaches it, left to right, so the selection stops at its first failure (SEQ-05);
@@ -7119,23 +7173,24 @@ The taxonomy, one witness each: `map([1, 2], 1 / 0)` is `NotAnAlgorithm`, with t
   - the receiver of the `.string` intrinsic (and, on the same template, of the call-reference intrinsics `Invoke` and `Arguments`, whose argument-list check precedes the receiver demand), which is demanded only once its written argument list, if any, has formed a supply of zero items. A supply of one or more items is rejected with `ArityMismatch` before the receiver or any non-spread argument is demanded (DOT-08, NEED-05). The call-reference intrinsics refuse their argument form before demanding the receiver too: bare `R.Invoke` is `IllegalInEval`, `R.Invoke(args)` forms its list like `.string` and rejects one or more items with `ArityMismatch`, and any argument list on `R.Arguments`, `R.Arguments()` included, is `IllegalInEval` with nothing formed.
 - No other place leaves a failure unraised. A computation is either never evaluated (above) or, once demanded, raises its failure at once, keeps it for any later demand without re-evaluating, and ends the run (VAL-10, RUN-07 (c), CALL-06, NEED-02). A reached resource-limit failure ends the run; its terminal completion cannot restart work or be recovered as an argument value (RUN-03, NEED-09).
 - Everything else is strict:
-  - both operands of every operator: there is no short circuit (OP-03, BOOL-04);
+  - both operands of every binary arithmetic operator and of `xor`, the operand of unary minus, and the left operand of `and` and `or` (OP-03, BOOL-04);
   - every comparison operand, eagerly past a `false` link (CMP-02);
-  - list, capture and row slots (SUP-01, SEQ-02, VAL-07);
+  - capture and row slots (SUP-01, SUP-06, VAL-07), and the spread slots of a list literal, formed when it is built (SEQ-02);
   - an arbitrary explicit spread in every call and every selector list (SEQ-05), the `.string` intrinsic's written argument list included (DOT-08): its operand is evaluated while the supply is formed, and its failure is raised there, before any arity check or binding (SUP-02, CALL-02, CALL-03, NEED-07);
-  - inspecting patterns: a literal and a structural pattern demand their argument when visited (PAT-07), and the occurrences of a repeated name are inspected as NEED-04 states (PAT-09);
+  - inspecting patterns: a literal and a structural pattern demand their argument when visited (PAT-07), a list pattern reading its kind and cardinality and a field only when it inspects one (NEED-04), and the occurrences of a repeated name are inspected as NEED-04 states (PAT-09);
   - a collector's VALUE, which demands every collected computation, left to right (VAR-03, NEED-07);
-  - collection builtins, which evaluate the whole collection: `first(map([1, 2, 3], {trace(x)}))` invokes all three elements (HO-02, COLL-04).
+  - the positions of a collection bound by any collection builtin other than `count`, `first`, `last`, `take`, `map` and `filter`, which the builtin reads in order when it binds the collection, `reduce` before any step (COLL-04, HO-02);
+  - the whole-value reads: equality, `contains`, `distinct`, a repeated name's agreement and `atoms` (CMP-03, COLL-07, COLL-10, NEED-04), the run's output, the engine's named top-level reads, and a host-operation argument (RUN-07, RUN-05).
 - No optimizer, route or future builtin may add a deferral point or evaluate a computation that was not demanded: either would be a language change, not an optimization (RUN-01, NEED-03).
 - "Each evaluated subexpression is evaluated once per evaluation of its parent" has exactly these exceptions:
   - an explicit call: `A()`, `f()` on a parameter, `R.Invoke()`, which executes the captured call afresh over the same memoized argument cells, and `R.Algorithm(args)`, a fresh ordinary call of the captured callee with exactly `args`. Each of these is fresh (PROP-06, NEED-06). The one call that is not is a zero-supply call through a runtime alias whose target has no callable identity: it answers with the alias's binding-cell VALUE and never reruns the row (FWD-04);
-  - one invocation per element or iteration for callbacks and loop steps.
-- A written call argument is no such exception: within one call a slot is evaluated at most once, and reading its parameter never evaluates it again (CALL-06).
+  - one callback invocation per newly computed mapped position, newly inspected filter candidate or demanded fold step, and one loop-step invocation per iteration.
+- A written call argument is no such exception: within one call a slot is evaluated at most once, and reading its parameter never evaluates it again (CALL-06). Nor is a list position: it is evaluated at most once per list instance (SEQ-02).
 - A failed property and a failed deconstruction right-hand side are never cached (PROP-09, VAR-06). Since a demanded failure ends the run, neither is read again in that run.
 
 **Qualifications**
-- Invoking a callable is not a value demand: an invoking slot receives the algorithm and calls it per element or iteration. Whether a bare name in a VALUE slot is read through the cache is PROP-05's rule.
-- An arbitrary spread slot of any call is fully evaluated while the supply is formed, before the arity check: in `if(true, Risky*)`, `Risky` is fully evaluated.
+- Invoking a callable is not a value demand: an invoking slot receives the algorithm and calls it per position, candidate, step or iteration. Whether a bare name in a VALUE slot is read through the cache is PROP-05's rule.
+- An arbitrary spread slot of any call is evaluated, and the level it opens read, while the supply is formed, before the arity check: in `if(true, Risky*)`, `Risky` is evaluated before the condition is demanded.
 - PROP-02 names some of these points. This rule is the complete list and supersedes it.
 - Static validation is not evaluation: static errors in undemanded code still reject the program (NEED-05, RUN-07 (e)).
 - Supplied arguments run in the order they are first demanded, after every call's spread-first formation (CALL-02, CALL-03, NEED-03).
@@ -7145,9 +7200,11 @@ Bad = trace(1) / 0
 Unused = trace(2)
 F(x, y) = x
 S(x) = trace(x)
-F(3, trace(4)), if(true, 5, trace(6)), repeat(S(7), 0), true or trace(false), first(map([8, 9], {trace(x)}))
+F(3, trace(4)), if(true, 5, trace(6)), repeat(S(7), 0)
 ```
-⇒ `S[3, 5, 7, true, 8]`, with host log `[trace(false), trace(8), trace(9)]`. `Bad` and `Unused` never run, nor do the unread argument, the unselected branch and the zero-count step. The right operand of `or` and the second `map` element run.
+⇒ `S[3, 5, 7]`, with an empty host log. `Bad` and `Unused` never run, nor do the unread argument, the unselected branch and the zero-count step.
+
+The later demand points, each pinned on its own: `false and tick() == 1, true or tick() == 1, tick()` is `S[false, true, 1]` (BOOL-04); `[trace(1), trace(2)].first` is `1` after `[trace(1)]`, and `[1, 2, 3].map{trace(x)}.last` is `3` after `[trace(3)]` (SEQ-02, COLL-04); `Pick(item, acc) = item` / `reduce([1, 2], Pick, 1 / 0)` is `2` (HO-02).
 
 ```katlang
 Bad = trace(1) / 0
@@ -7159,7 +7216,7 @@ I(Bad), I(Bad), A, A, A()
 
 Further points, each with the host log shown:
 - `Bad = trace(1) / 0` / `F(v) = v` / `F(Bad)` is `DivisionByZero` with `[trace(1)]`: reading `v` demands the slot once.
-- `p, q = trace(1), trace(2)` / `p` is `1` with `[trace(1), trace(2)]`: demanding a target evaluates the whole right-hand side.
+- `p, q = trace(1), trace(2)` / `p` is `1` with `[trace(1), trace(2)]`: demanding a target evaluates the whole right-hand side, while a list right-hand side keeps its positions: `a, b = [trace(1), 1 / 0]` / `a` is `1` with `[trace(1)]` (VAR-05).
 - `p, q = trace(1) / 0, 2` / `q` is `DivisionByZero` with `[trace(1)]`.
 - `F(x, y) = y, x` / `F(trace(randomInt(0, 1000)), randomInt(0, 1000))` is `S[699, 292]` with `[trace(292)]`: `y` is demanded first and draws first.
 - `open M` / `M = { public A = trace(1)` / `public B = 2 }` / `B` is `2` with an empty log.
@@ -7201,9 +7258,9 @@ Forms: `tick` is `IllegalInEval`; `T = tick` / `T(), T()` is `S[1, 2]`; `tick(1 
 - `random`/`Math.Random` and `randomInt`/`Math.RandomInt`, in every spelling, draw from one mutable stream owned by the run (RUN-02). It is never static, never on configuration objects, and never duplicated or reset by nested calls, callbacks, loops, suspension, or the engine's `MinDecimalPlaces` and `MaxDecimalPlaces` reads.
 - Which random calls execute, and in what order, is decided entirely by the ordinary evaluation rules:
   - supply formation, which evaluates a call's explicit spreads first, and then the order in which supplied arguments are first demanded, for every callee alike; an argument nothing demands never draws (CALL-02, CALL-03, NEED-03, NEED-07);
-  - the strictness law and its demand points (RUN-08), including lazy `if` branches (BOOL-05);
+  - the strictness law and its demand points (RUN-08), including lazy `if` branches (BOOL-05), the skipped right operand of `and` and `or` (BOOL-04), unread list positions (SEQ-02) and undemanded `reduce` steps (HO-02);
   - the zero-argument property cache: a cache hit draws nothing, while `R()` draws afresh (PROP-04, PROP-06);
-  - callback and loop iteration order;
+  - the order in which list positions, `filter` candidates and `reduce` accumulators are demanded (COLL-04, HO-02), and loop iteration order;
   - output rows before the read of `MinDecimalPlaces`, and that read before the read of `MaxDecimalPlaces` (RUN-06).
 - Every execution route that completes without a resource-limit failure (RUN-01) must therefore consume the same draws in the same order. A route stopped by a limit may have executed only an initial part of that draw sequence. Optimizers are never disabled because a seed is present.
 - A resource limit can end a run before later draws occur, but it never changes which draws a successful run makes: a limit the run reaches is terminal, so it is never absorbed into a success that consumed a different part of the stream (RUN-03). Where a limit fires may still depend on the route (RUN-01 exception 2).
@@ -7281,7 +7338,7 @@ randomInt(0, 1), randomInt(-3, -2), Math.RandomInt(0, 1000), randomInt(0, 1000)
 
 ## FORMAL — Lean/C# correspondence: authority, model coverage, and what is proved
 
-KatLang has two implementations of one meaning. The Lean model `lean/KatLang.lean` is the normative semantics of the constructs it models. The C# implementation in `src/KatLang/` adds what the model deliberately leaves out. This family states which side decides what, the observation on which they must agree, how strong the evidence for that agreement is, and the domain of trees over which every law here is stated. The per-construct laws are owned by the other families.
+KatLang has two implementations of one meaning. The Lean model `lean/KatLang.lean` is the normative semantics of the constructs it models. The C# implementation in `dotnet/src/KatLang/` adds what the model deliberately leaves out. This family states which side decides what, the observation on which they must agree, how strong the evidence for that agreement is, and the domain of trees over which every law here is stated. The per-construct laws are owned by the other families.
 
 ### FORMAL-01 — `lean/KatLang.lean` is the normative semantics of every construct it models
 
@@ -7291,7 +7348,7 @@ KatLang has two implementations of one meaning. The Lean model `lean/KatLang.lea
 - Every other artifact is subordinate: `CoreArityAlgebra.lean`, the prose documents, `AGENTS.md` and the tutorial. When one of them disagrees with `KatLang.lean`, the artifact is wrong.
 
 **Qualifications**
-- Authority covers the modeled fragment only. C#-only constructs are normative through the hand-written expectations of their canonical LanguageSpec cases and through the design rules in `docs/design/language-rules/`, never through tutorial prose (FORMAL-03, FORMAL-04).
+- Authority covers the modeled fragment only. C#-only constructs are normative through the hand-written expectations in [the canonical conformance corpus](../../conformance/features/) and through the design rules in `docs/design/language-rules/`, never through tutorial prose (FORMAL-03, FORMAL-04).
 - Lean exercises its authority over the tree the C# front end produces, which is the source-reachable elaborated core (FORMAL-08). Front-end decisions are not checked by the Lean evaluator (FORMAL-02).
 - Agreement is checked executably on bounded corpora, not proved (FORMAL-07). The corpora differ in what their guards mean. A `LanguageSpecCases` guard pins a hand-written expectation, so it checks both engines against intent. A `SemanticExplorerCases` guard pins an observation recorded from C#, so it checks agreement, not intent, and a change applied to both engines is re-pinned silently. A `SemanticGeneratedCases` guard checks Lean on each included SEM-2B case's identity-prelude members (the base, `alpha-rename` and, when present, `declaration-reorder` sources with `trace(x) = x` and `wait(x) = x` prepended) against the generator's constructed expectation, each transformation member also against the base member's observation; the host-operation programs, host events, async and optimizer paths stay C# evidence. A `FrontEndDecisionCases` guard pins a DECISION recorded from the C# front end (an owner selection, a parameter-or-resolve verdict, an open head, a family lifting signature, a slot role) against a Lean specification function, so it checks agreement on that decision, not evaluation and not intent. *(Added 2026-11-15, front-end decision differential.)*
 
@@ -7303,7 +7360,7 @@ KatLang has two implementations of one meaning. The Lean model `lean/KatLang.lea
   - four algorithm kinds: user, conditional (clause family), builtin, and alias, a transparent reference or a structural forwarding carrier (FWD-03);
   - the 22 prelude builtins;
   - parameter and branch patterns, and the semantic error kinds;
-  - run state: need cells with their invocation plans, routes and canonical callee and receiver cells, the zero-argument property cache and its active owners, runtime-alias binding cells, binding-context and lexical-activation identities, and declaration identities.
+  - run state: need cells with their invocation plans, routes and canonical callee and receiver cells, the zero-argument property cache and its active owners, runtime-alias binding cells, binding-context and lexical-activation identities, and declaration identities. A list position evaluated on demand is a need cell (`Result.deferred`), and a `filter` result is a list whose positions are discovered through verdict cells (`Result.pendingList`); neither is a seventh value kind.
 - Strings are modeled: exact equality only, no ordering or arithmetic, string literal patterns, and `.string` on canonical integer atoms. The string spelling and the rejection of a double quote are C#-only surface syntax (SYN-15): Lean has no lexer.
 - C#-only: lexing, parsing, layout, redundant-grouping erasure, recovery, and the front-end passes (implicit-parameter inference and its order, signature selection, Grace, forwarding and lifting, exposure classification, clause grouping, deconstruction lowering, load elaboration, every static diagnostic). Lean evaluates their output.
 - The Lean program of every differential case is derived mechanically from the C#-elaborated AST. It is never hand-authored, and derivation fails loudly on anything the model does not represent. A Lean/C# comparison therefore always runs the same program on both sides. A surface law (SYN) is pinned only as C# behavior plus the core AST it elaborates to.
@@ -7422,7 +7479,7 @@ Add((1, 2))
 - A Lean theorem is about Lean. There is no machine-checked bridge from any C# source to any Lean term: no extraction, no formal C# semantics, no translator. Every claim that reaches C# is therefore tested correspondence over a trusted boundary, and universal agreement of the two evaluators is open.
 - The classes of evidence are:
   1. **Production Lean:** a kernel theorem about the definitions of `lean/KatLang.lean`, with its production instance discharged. These include the production bridge of the total fuel-indexed core, the public-run bridge over the total identification, validation and wiring prefix of `runResultM`, whole-run heap discipline, the address invariant (also for the public run from every entry state that satisfies it), cache survival, and Model-C binder laws over production runs. The admitted set of that validation is characterized: it returns `ok` exactly on a declarative predicate over the identified tree (`validate_ok_iff`). No `partial` definition and no opaque printer remains in `lean/KatLang.lean`; the public-run results stay parametric only in core's layout `Std.Format.pretty` that `reprStr` runs, and read incompletion through one predicate (Q-82).
-  2. **Conditional:** a kernel theorem whose named premises are not all discharged for production. Repeated-name and supply-correspondence laws hold under completed/Ready and identity-domain premises, or over Ready supplies; a suspended argument and its Ready value are not equivalent, by design.
+  2. **Conditional:** a kernel theorem whose named premises are not all discharged for production. Repeated-name and supply-correspondence laws hold under completed/Ready and identity-domain premises, or over Ready supplies; a suspended argument and its Ready value are not equivalent, by design. Since lazy collections (formal ledger row E-24), the repeated-name model and the heap-renaming simulation are stated over CONCRETE observations and values, because a lazy value's positions are heap addresses, and the finite-loop one-round theorems assume that a step's rows are not bare list positions (`PlainRows`). The invariant that no evaluator result is a bare deferred item, which would discharge `PlainRows`, and the lazy extension of the simulation are open.
   3. **Reference kernel:** a theorem about `KatLangArityLaws/SignatureCompletion*.lean`, a model of the equation system signature selection receives. It is about that model, never about `KatLang.lean` or C#. AST-to-equation extraction is unmodeled.
   4. **Executably checked:** `#guard`s that run the Lean evaluator, and generated C#/Lean differential corpora over the same derived programs. This is bounded validation, not verification.
   5. **C# tests only:** C#-only behavior, checked only by C# tests and C#-only canonical cases (FORMAL-03, FORMAL-04).

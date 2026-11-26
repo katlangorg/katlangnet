@@ -1,5 +1,7 @@
 # KatLang Semantic Constitution: law summary
 
+> **Demand-driven evaluation: short-circuit `and`/`or` (#202), lazy `reduce` accumulators (#203), lazy collections and pipelines (#204) — 2026-11-26 (reconciliation with language changes already landed on `main`; owner decisions recorded from the record, none made here; five law titles changed, no law added, retired or renumbered; no Q, PV or X status change; uncommitted over `main` @ `c9116ed6`):** the law headings and markers follow `constitution.md`. BOOL-04 is restated for short-circuit `and` and `or` (issue #202) and loses its *(Open Q-57)* marker, because Q-57 now asks only about the `xor` tier, which OP-01 keeps; SEQ-02 and COLL-04 name the positions a list evaluates on demand (issue #204). OP-03 names its arithmetic scope, and VAR-03 distinguishes selective reads from whole reads of a collector.
+
 > **Constitution catch-up — 2026-11-15 (reconciliation with language changes already landed on `main` since 2026-11-10; owner decisions recorded from the record, none made here; ONE new law, SUP-08; VAL-12 retired; no Q, PV or X status change; over `main` @ `9ec6bf3b`):** The law headings and markers follow `constitution.md`. VAL-02, OP-14, SYN-02 and SYN-15 are restated for the one raw single-quoted string spelling (STR-03, 2026-11-11: string interpolation and double-quoted strings were removed; a `"` is `UnsupportedDoubleQuotedString`), VAL-12 is retired, and SUP-08 *(C#-only)* is the new law for declaration-level output spreading (`A(x, y)* = …`; the static form of November 2026, with the owner decisions D1 and D2 of 2026-11-14). RUN-06 keeps its heading; its body now states `MinDecimalPlaces` and `MaxDecimalPlaces` (owner decision 2026-11-12). LOOP-05 now scopes its marker to *(C#-only: non-integral count rejection)*: the repeat driver is Lean-modeled, and the draft's dated note cites the production arm and driver theorems (E-15 task, `20742ba8`). Source tasks and evidence: the draft's note of the same date and `../constitution-catch-up-20261115/`.
 
 > **Constitution marker check — 2026-11-10 (record correction; no rule text change; no owner decision; no Q, PV or X status change; over `main` @ `c48eb6f9`):** VAR-03, DOT-09 and MOD-03 no longer carry *(Open)*, in step with `constitution.md`: audit findings C-1 (DOT-09) and C-2 (MOD-03) were fixed in `a4181877`, and A-2 (VAR-03) was already recorded as resolved (`8a989f33` / `a6350e23`).
@@ -27,7 +29,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 ## SEQ — Sequences, lists, and selection
 
 - **SEQ-01** A list is a second collection kind whose own boundary is never normalized
-- **SEQ-02** A list literal builds exactly one list from its written slots
+- **SEQ-02** A list literal builds exactly one list from its written slots; each ordinary slot is a position evaluated at most once, when it is first read
 - **SEQ-03** Collections are opened only by explicit openers, one boundary at a time: the kind-blind openers open both kinds alike, and a structural pattern opens only its own kind
 - **SEQ-04** Selection chooses stored values and never opens them
 - **SEQ-05** Selection positions are the target's zero-based one-level positions, and a missing position is an error
@@ -97,7 +99,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 
 - **VAR-01** A collecting binding collects exactly its allocated items as one exact list
 - **VAR-02** One collector per pattern level; fixed positions bind from both ends first and the collector takes the exact middle *(Open Q-47)*
-- **VAR-03** A collecting binding preserves the supplied argument cells: re-spreading a known slice transfers them with their available capabilities, and only reading the collected list demands their values
+- **VAR-03** A collecting binding preserves its cells for re-spread, selective reads demand only the needed cells, and a whole read demands every cell
 - **VAR-04** No binder carries supply provenance: binding sees only the supplied items
 - **VAR-05** Assignment deconstruction is the explicit unpacking receiver *(Open Q-51 Open Q-84)*
 - **VAR-06** Deconstruction declares properties of the enclosing algorithm; its right-hand side is one row of that body, successfully evaluated at most once *(Open Q-70)*
@@ -162,7 +164,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 - **BOOL-01** `true`/`false` are a scalar kind of their own, written only as reserved literals, with no Boolean-specific structural rules
 - **BOOL-02** Only a Boolean has a truth value *(Open Q-54)*
 - **BOOL-03** A Boolean is never a number: no numeric projection, no implicit conversion
-- **BOOL-04** `and`/`or`/`xor`/`not` are strict Boolean operators: both operands are evaluated, left to right, before either is validated; there is no short circuit *(Open Q-57)*
+- **BOOL-04** `and` and `or` evaluate their right operand only when their Boolean left operand does not decide; `xor` evaluates both operands, left to right, before validating either; `not` takes one Boolean
 - **BOOL-05** Builtin `if` demands its Boolean condition first, then exactly the selected branch; the unselected branch is never demanded
 - **CMP-01** The six comparison operators form one chain of adjacent links; a chain is one Boolean, `true` iff every link holds; parentheses end a chain
 - **CMP-02** A chain evaluates every operand exactly once, left to right and incrementally; a `false` link never stops it; the first error does
@@ -174,7 +176,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 
 - **OP-01** Operators group by one fixed precedence ladder; `^` is right-associative and binds tighter than prefix minus *(Open Q-57 C#-only)*
 - **OP-02** Prefix `not` sits between the logical operators and the comparisons, and is never silently regrouped *(C#-only)*
-- **OP-03** An operator evaluates its operands in source order, then validates, then applies; the first error ends evaluation
+- **OP-03** Arithmetic operators evaluate operands in source order before checking their kinds
 - **OP-04** Arithmetic operators and Math functions take numeric scalars only: no vectorization, no identity element, no concatenation, no coercion
 - **OP-05** A number is a 34-digit decimal floating-point value, and every arithmetic result is rounded once *(C#-only)*
 - **OP-06** Division, `div` and `mod` by an evaluated zero-valued divisor is an error, never an IEEE infinity or NaN
@@ -210,7 +212,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 - **COLL-01** Each builtin has exactly one signature and one behavior contract; none is overloaded by the kind of its input
 - **COLL-02** A collection builtin binds exactly one `collection` argument plus fixed controls; argument boundaries are never altered before binding
 - **COLL-03** The bound collection is read through ONE post-binding level; `count` counts exactly those items
-- **COLL-04** Collection-producing builtins return ONE exact list whose kind never depends on the input; observers return one scalar
+- **COLL-04** Collection-producing builtins return one exact list. Each consumer determines which positions it needs
 - **COLL-05** Numeric collection builtins accept only single numbers; the empty-collection policy is fixed per builtin
 - **COLL-06** Aggregates and sorts are defined over the viewed numbers: `order` is a stable ascending sort in which equal numbers tie, and `orderDesc` is its exact reverse *(Open Q-28)*
 - **COLL-07** `distinct` and `contains` use the one structural equality of `==`, at the top level of the view
