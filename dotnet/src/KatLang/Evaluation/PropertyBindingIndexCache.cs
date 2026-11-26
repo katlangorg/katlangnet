@@ -27,7 +27,7 @@ internal sealed class PropertyBindingIndexCache
     /// <see cref="MinimumIndexedPropertyCount"/> properties on, while the scan served it below). Selection only:
     /// exposure, the access check, wiring and values stay with the caller.
     /// </summary>
-    internal Property? Lookup(IReadOnlyList<Property> properties, string name)
+    internal Property? Lookup(IReadOnlyList<Property> properties, string name, Evaluator.TransportAnalysisWork? transportWork = null)
     {
         if (properties.Count < MinimumIndexedPropertyCount)
         {
@@ -47,6 +47,7 @@ internal sealed class PropertyBindingIndexCache
             index = (new(properties.Count, StringComparer.Ordinal), null);
             foreach (var property in properties)
             {
+                transportWork?.Step();
                 // Host-built lists can contain a null name. The ordered scan compares it like any other name.
                 if (property.Name is null)
                     index.Unnamed ??= property;

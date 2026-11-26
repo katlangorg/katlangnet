@@ -570,18 +570,32 @@ internal sealed class EvaluationBudget
     /// <summary>
     /// Records the run's ONE J7 decision before evaluation starts (see <see cref="RetainsInvocationPlans"/>);
     /// a test seam keeps retention on whatever the program gate says. Fail-loud on a second decision: a
-    /// run never switches plans on or off midway.
+    /// run never switches plans on or off midway. A per-site run's transport-name analysis observes this run's
+    /// token (<see cref="TransportAnalysisWork"/>), recording into <paramref name="transportObservations"/>.
     /// </summary>
     internal void DecideInvocationPlanRetention(
-        bool programMayCapture, bool loopOnly = false, object? admittedProgram = null, int admittedTreeNodeCount = 0)
+        bool programMayCapture, bool loopOnly = false, object? admittedProgram = null, int admittedTreeNodeCount = 0,
+        FrontEndTraversalObservations? transportObservations = null)
     {
         if (_invocationPlanRetentionDecided)
             throw new InvalidOperationException("A run decides invocation-plan retention exactly once, before evaluation.");
         _invocationPlanRetentionDecided = true;
         _retainsInvocationPlans |= programMayCapture;
         if (programMayCapture && loopOnly && PlanTestSeam is null)
-            _invocationPlanState = new PerSitePlanState(usesPerSite: true, admittedProgram, testSeam: null, admittedTreeNodeCount);
+            _invocationPlanState = new PerSitePlanState(usesPerSite: true, admittedProgram, testSeam: null, admittedTreeNodeCount,
+                NewTransportAnalysisWork(transportObservations));
     }
+
+    // Only a cancellable token (or a measuring observer) needs a countdown: otherwise the analysis allocates none.
+    private Evaluator.TransportAnalysisWork? NewTransportAnalysisWork(FrontEndTraversalObservations? observations)
+        => _cancellationToken.CanBeCanceled || observations is not null ? new(observations, _cancellationToken) : null;
+
+    /// <summary>
+    /// The cancellation countdown of this run's transport-name analysis (<see cref="Evaluator.TransportAnalysisWork"/>):
+    /// every walk behind <c>Evaluator.IsUnobservedSupplySlot</c> counts its units here and observes the run's token once
+    /// per block. Null without a cancellable token (and without an observer), and before any analysis state exists.
+    /// </summary>
+    internal Evaluator.TransportAnalysisWork? TransportAnalysisWork => (_invocationPlanState as PerSitePlanState)?.Work;
 
     /// <summary>
     /// The admitted program of a per-site run (the root its structural preflight walked), whose
@@ -664,19 +678,22 @@ internal sealed class EvaluationBudget
         {
             if (_invocationPlanState is PerSitePlanState state)
                 return state;
-            var created = new PerSitePlanState(usesPerSite: false, admittedProgram: null, _invocationPlanState as InvocationPlanTestSeam);
+            var created = new PerSitePlanState(usesPerSite: false, admittedProgram: null, _invocationPlanState as InvocationPlanTestSeam,
+                work: NewTransportAnalysisWork(observations: null));
             _invocationPlanState = created;
             return created;
         }
     }
 
     private sealed class PerSitePlanState(
-        bool usesPerSite, object? admittedProgram, InvocationPlanTestSeam? testSeam, int admittedTreeNodeCount = 0)
+        bool usesPerSite, object? admittedProgram, InvocationPlanTestSeam? testSeam, int admittedTreeNodeCount = 0,
+        Evaluator.TransportAnalysisWork? work = null)
     {
         internal bool UsesPerSite { get; } = usesPerSite;
         internal object? AdmittedProgram { get; } = admittedProgram;
         internal int AdmittedTreeNodeCount { get; } = admittedTreeNodeCount;
         internal InvocationPlanTestSeam? TestSeam { get; } = testSeam;
+        internal Evaluator.TransportAnalysisWork? Work { get; } = work;
         internal Evaluator.TransportNames? InheritedNames;
         internal Dictionary<object, Evaluator.TransportNames>? TransportedNames;
         internal PartitionedMap<Evaluator.CalleeBodyKey, Evaluator.TransportNames>? CalleeNames;

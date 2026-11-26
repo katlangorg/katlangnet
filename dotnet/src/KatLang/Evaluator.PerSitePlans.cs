@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using KatLang.Evaluation;
 
 namespace KatLang;
@@ -142,6 +144,79 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// <b>The cancellation countdown of one run's transport-name analysis</b> (C#-only host policy; Lean models no
+    /// cancellation). The analysis behind <see cref="IsUnobservedSupplySlot"/> runs DURING evaluation, and its walks —
+    /// a callee's transported names (<see cref="TransportedNamesOf"/>), its builtin-aware summary
+    /// (<see cref="CalleeBuiltinSlotSummary"/>, <see cref="BuiltinSlotSummaryOf"/>) and the program's inherited-read names
+    /// (<see cref="InheritedTransportNames"/>, its tree walk and its memoized fallback alike) — can each cover the whole
+    /// admitted program. Every walk counts its UNITS here: one per child edge it follows (a child entered, answered from a
+    /// memo, or classified in place — a parameter read, a parent scope, a capture pattern), one per host-operation argument
+    /// name it reads (one wide node: <see cref="Expr.NativeCall.ArgNames"/> is no edge and no admission walk reads it), and
+    /// one per completed frame (an admitted spread spine can unwind without following another edge), one per slot
+    /// query, and one per parent level and per property indexed during a builtin head's lookup. The token is observed once per
+    /// <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> units, ONE countdown across the walks and queries of
+    /// the run (<see cref="FrontEndCancellationCheckpoint.EvaluatorTransportAnalysis"/>), so after a cancellation at most
+    /// one block of units runs before the next poll, inside one wide node or across many edges. The analysis width
+    /// (<see cref="PerSiteAnalysisWidth"/>) bounds summary sizes, the 64 patterns inspected in a value-edge test and
+    /// the 64 × 64 ownership comparisons at algorithm completion. A slot query examines heads of at most 64 patterns,
+    /// or 64 clauses of 64 items. A head lookup reads one level through the run's shared property
+    /// index (<see cref="EvaluationBudget.PropertyBindings"/>), which scans fewer than 32 properties or builds a wide
+    /// list's index once per run. The shared index publishes only after its last property.
+    /// <para>A cancellation it observes ABANDONS the analysis: nothing partial is published (a walk publishes a node's
+    /// summary, a callee's names and the run's inherited names only once complete), and every later query of the run
+    /// encounters the same cancellation without reading a memo (<see cref="ClassifySlot"/>). The cancellation is the
+    /// run's ordinary one, carrying its token: thrown on a synchronous path, retained once inside an asynchronous twin
+    /// run's boundary (<see cref="IsUnobservedSupplySlot"/>). Nothing is charged; the countdown exists only for a
+    /// cancellable token or a measuring observer, and without a cancellable token it observes nothing.</para>
+    /// </summary>
+    internal sealed class TransportAnalysisWork(FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+    {
+        private int _remaining = AstStructuralPreflight.CancellationCheckpointEdges;
+        private ExceptionDispatchInfo? _cancellation;
+
+        /// <summary>
+        /// One unit of analysis work. All measured or cancellable slot queries share one lock and countdown.
+        /// </summary>
+        internal void Step()
+        {
+            observations?.RecordEvaluatorTransportAnalysisUnit();
+            if (--_remaining == 0)
+                ObserveBlock();
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private void ObserveBlock()
+        {
+            _remaining = AstStructuralPreflight.CancellationCheckpointEdges;
+            if (cancellationToken.CanBeCanceled)
+                FrontEndTraversalObservations.ObserveCancellation(
+                    observations, FrontEndCancellationCheckpoint.EvaluatorTransportAnalysis, cancellationToken);
+        }
+
+        internal bool? ClassifySlot(Algorithm callee, int slot, EvaluationBudget budget)
+        {
+            lock (this)
+            {
+                try
+                {
+                    _cancellation?.Throw();
+                    Step();
+                    return ClassifiesUnobservedSupplySlot(callee, slot, budget);
+                }
+                catch (OperationCanceledException cancelled)
+                {
+                    // Includes cancellation thrown by a host-owned collection between our checkpoints.
+                    _cancellation ??= ExceptionDispatchInfo.Capture(cancelled);
+                    if (!budget.CarriesCancellation(cancelled))
+                        throw;
+                    budget.RetainHostTermination(cancelled);
+                    return null;
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// The resolved callee of the argument supplies the fused <c>filter</c>→<c>count</c> pipeline forms for its
     /// recognized stages (<see cref="TryEvaluateRecognizedSequencePipeline"/>): the <c>filter</c> stage's
     /// arguments and receiver, and the <c>range</c> source's bounds. Shared, allocation-free identities.
@@ -168,8 +243,18 @@ public static partial class Evaluator
     /// does not transport.</item>
     /// </list>
     /// A META builtin (<c>while</c>, <c>repeat</c>), an alias, and anything else are never unobserved.
+    /// <para>The analysis observes the run's token in bounded blocks (<see cref="TransportAnalysisWork"/>). A cancellation
+    /// it observes, or an earlier one that abandoned it, throws <see cref="OperationCanceledException"/> carrying the run's
+    /// token; inside an asynchronous twin run's boundary (<see cref="EvaluationBudget.CarriesCancellation"/>) it is retained
+    /// once instead. A host termination retained first stays the run's outcome. A null result tells the supply formation
+    /// to propagate the marker immediately, before creating this cell or reading another slot.</para>
     /// </summary>
-    internal static bool IsUnobservedSupplySlot(Algorithm callee, int slot, EvaluationBudget budget)
+    internal static bool? IsUnobservedSupplySlot(Algorithm callee, int slot, EvaluationBudget budget)
+        => budget.TransportAnalysisWork is { } work
+            ? work.ClassifySlot(callee, slot, budget)
+            : ClassifiesUnobservedSupplySlot(callee, slot, budget);
+
+    private static bool ClassifiesUnobservedSupplySlot(Algorithm callee, int slot, EvaluationBudget budget)
         => callee switch
         {
             Algorithm.Builtin(var id) => !BuiltinRegistry.GetBuiltin(id).DeclaresMetaParameter,
@@ -245,9 +330,13 @@ public static partial class Evaluator
     // the callee's own properties, then each parent level's, through the run's property index.
     private static bool ResolvesStructurallyToValueBuiltin(Algorithm.User callee, string head, EvaluationBudget budget)
     {
-        var property = budget.PropertyBindings.Lookup(callee.Properties, head);
+        var work = budget.TransportAnalysisWork;
+        var property = budget.PropertyBindings.Lookup(callee.Properties, head, work);
         for (var level = callee.Parent; property is null && level is not null; level = level.Parent)
-            property = budget.PropertyBindings.Lookup(level.Properties, head);
+        {
+            work?.Step();
+            property = budget.PropertyBindings.Lookup(level.Properties, head, work);
+        }
         return property?.Value is Algorithm.Builtin(var id) && !BuiltinRegistry.GetBuiltin(id).DeclaresMetaParameter;
     }
 
@@ -346,10 +435,12 @@ public static partial class Evaluator
             var bodies = budget.CalleeBuiltinSlotSummaries;
             if (bodies.TryGetValue(key, out var known))
                 return known;
+            var work = budget.TransportAnalysisWork;
             var builder = new BuiltinSlotSummaryBuilder();
             var firstRow = (callee.Parent is null ? 0 : 1) + callee.Opens.Count + callee.Properties.Count;
             for (var index = callee.Parent is null ? 0 : 1; AstStructuralPreflight.TryGetChild(callee, index, out var child); index++)
             {
+                work?.Step();
                 var row = index - firstRow;
                 if (child is Expr.Param or Expr.Resolve)
                 {
@@ -389,11 +480,13 @@ public static partial class Evaluator
         if (!IsBuiltinSlotWalkNode(root))
             return new(TransportedNamesOf(root, budget), null);
 
-        var frames = new List<BuiltinSlotFrame> { BuiltinSlotFrame.Enter(root, head: null, BuiltinSlotEdge.Value, slotHead: null) };
+        var work = budget.TransportAnalysisWork;
+        var frames = new List<BuiltinSlotFrame> { BuiltinSlotFrame.Enter(root, head: null, BuiltinSlotEdge.Value, slotHead: null, work) };
         while (true)
         {
             var top = frames.Count - 1;
             var frame = frames[top];
+            work?.Step(); // One child edge or one completed frame, including the drain of a deep join spine.
             if (AstStructuralPreflight.TryGetChild(frame.Node, frame.Next, out var child))
             {
                 var index = frame.Next;
@@ -414,7 +507,7 @@ public static partial class Evaluator
                     case OutputBundle { Count: <= PerSiteAnalysisWidth } arguments
                         when frame.Node is Expr.Call { Function: Expr.Resolve(var callHead) } call && ReferenceEquals(call.Args, arguments):
                         frames[top] = frame;
-                        frames.Add(BuiltinSlotFrame.Enter(arguments, callHead, BuiltinSlotEdge.Value, slotHead: null));
+                        frames.Add(BuiltinSlotFrame.Enter(arguments, callHead, BuiltinSlotEdge.Value, slotHead: null, work));
                         continue;
                     default:
                     {
@@ -426,7 +519,7 @@ public static partial class Evaluator
                         else if (IsBuiltinSlotWalkNode(child))
                         {
                             frames[top] = frame;
-                            frames.Add(BuiltinSlotFrame.Enter(child, head: null, edge, frame.Head));
+                            frames.Add(BuiltinSlotFrame.Enter(child, head: null, edge, frame.Head, work));
                             continue;
                         }
                         else
@@ -467,7 +560,8 @@ public static partial class Evaluator
         internal string? SlotHead;
         internal BuiltinSlotSummaryBuilder Summary;
 
-        internal static BuiltinSlotFrame Enter(object node, string? head, BuiltinSlotEdge edge, string? slotHead)
+        internal static BuiltinSlotFrame Enter(
+            object node, string? head, BuiltinSlotEdge edge, string? slotHead, TransportAnalysisWork? work)
         {
             var frame = new BuiltinSlotFrame { Node = node, Head = head, Edge = edge, SlotHead = slotHead };
             // As TransportFrame.Enter: a dot edge's default fallback and a host call's argument names.
@@ -475,7 +569,10 @@ public static partial class Evaluator
                 frame.Summary.AddStrict(edgeNode.Name);
             if (node is Expr.NativeCall native)
                 foreach (var name in native.ArgNames)
+                {
+                    work?.Step();
                     frame.Summary.AddStrict(name);
+                }
             return frame;
         }
     }
@@ -595,7 +692,8 @@ public static partial class Evaluator
     /// linear in the distinct nodes and edges reached: summaries saturate at
     /// <see cref="PerSiteAnalysisWidth"/> names, conservatively admitting every name. Wide heads likewise
     /// stay planned; native argument-name lists are summarized once per node, not once per incoming edge.
-    /// No CLR recursion; nothing is charged.
+    /// No CLR recursion; nothing is charged. Child edges, frame completions and native argument names each advance
+    /// the run's cancellation countdown (<see cref="TransportAnalysisWork"/>). Only completed nodes are memoized.
     /// <para>Two kinds of node are never memo keys (identity-store retention audit, 2026-11-16; unobservable,
     /// the memo is a pure function): a <see cref="CaptureParameterPattern"/>, which has no child and adds no
     /// name, so it contributes nothing — a flat-binder family's per-call user equivalent mints fresh ones on
@@ -613,11 +711,13 @@ public static partial class Evaluator
             if (memo.TryGetValue(root, out var known))
                 return known;
 
-            var frames = new List<TransportFrame> { TransportFrame.Enter(root) };
+            var work = budget.TransportAnalysisWork;
+            var frames = new List<TransportFrame> { TransportFrame.Enter(root, work) };
             while (true)
             {
                 var top = frames.Count - 1;
                 var frame = frames[top];
+                work?.Step();
                 if (AstStructuralPreflight.TryGetChild(frame.Node, frame.Next, out var child))
                 {
                     var index = frame.Next;
@@ -644,7 +744,7 @@ public static partial class Evaluator
                             else
                             {
                                 frames[top] = frame;
-                                frames.Add(TransportFrame.Enter(child));
+                                frames.Add(TransportFrame.Enter(child, work));
                                 continue;
                             }
                             break;
@@ -703,7 +803,8 @@ public static partial class Evaluator
     /// <summary>
     /// Whether <paramref name="name"/> is an INHERITED-READ name of the run's admitted program
     /// (<see cref="InheritedTransportNames"/>), so no parameter of that name is ever unobserved. Conservative
-    /// when the run recorded no program.
+    /// when the run recorded no program. The names are published only once their walk completes, so a cancelled walk
+    /// (<see cref="TransportAnalysisWork"/>) leaves the run's slot empty.
     /// </summary>
     private static bool IsInheritedTransportName(string name, EvaluationBudget budget)
     {
@@ -713,7 +814,8 @@ public static partial class Evaluator
         if (names is null)
         {
             lock (budget.TransportedNames)
-                names = budget.InheritedTransportNames ??= InheritedTransportNames(program, budget.AdmittedTreeNodeCount);
+                names = budget.InheritedTransportNames ??= InheritedTransportNames(
+                    program, budget.AdmittedTreeNodeCount, budget.TransportAnalysisWork);
         }
         return names.Value.Contains(name);
     }
@@ -731,11 +833,13 @@ public static partial class Evaluator
     /// enclosing algorithm, which either declares them or makes them inherited), so a shared subgraph is
     /// expanded once. Both name sets saturate at <see cref="PerSiteAnalysisWidth"/>, with saturation
     /// propagated as EVERY name (including across an algorithm boundary); no CLR recursion; nothing is charged.
+    /// Each child edge, completed frame and native argument name of either walk — tree or memoized fallback — is
+    /// one unit of <paramref name="work"/>, the run's cancellation countdown (<see cref="TransportAnalysisWork"/>).
     /// </summary>
-    internal static TransportNames InheritedTransportNames(object root, int treeNodeCount = 0)
-        => treeNodeCount > 0 && InheritedTransportNamesCore(root, treeNodeCount) is { } tree
+    internal static TransportNames InheritedTransportNames(object root, int treeNodeCount = 0, TransportAnalysisWork? work = null)
+        => treeNodeCount > 0 && InheritedTransportNamesCore(root, treeNodeCount, work) is { } tree
             ? tree
-            : InheritedTransportNamesCore(root, treeNodeCount: 0)!.Value;
+            : InheritedTransportNamesCore(root, treeNodeCount: 0, work)!.Value;
 
     /// <summary>
     /// <see cref="InheritedTransportNames"/>'s walk. With <paramref name="treeNodeCount"/> = 0 it memoizes every
@@ -747,18 +851,19 @@ public static partial class Evaluator
     /// enter more frames than the admitted nodes is not over that tree (an unstable host collection), and returns
     /// null so the caller falls back to the memoized walk. Both modes compute the same names on a tree.
     /// </summary>
-    private static TransportNames? InheritedTransportNamesCore(object root, int treeNodeCount)
+    private static TransportNames? InheritedTransportNamesCore(object root, int treeNodeCount, TransportAnalysisWork? work)
     {
         var memo = treeNodeCount > 0 ? null
             : new Dictionary<object, (TransportNames Pending, TransportNames Inherited)>(ReferenceEqualityComparer.Instance);
         var onPath = treeNodeCount > 0 ? null : new HashSet<object>(ReferenceEqualityComparer.Instance) { root };
         var entered = 1;
-        var frames = new List<InheritFrame> { InheritFrame.Enter(root) };
+        var frames = new List<InheritFrame> { InheritFrame.Enter(root, work) };
         (TransportNames Pending, TransportNames Inherited) outcome = (new([]), new([]));
         while (frames.Count > 0)
         {
             var top = frames.Count - 1;
             var frame = frames[top];
+            work?.Step();
             if (AstStructuralPreflight.TryGetChild(frame.Node, frame.Next, out var child))
             {
                 var index = frame.Next;
@@ -782,7 +887,7 @@ public static partial class Evaluator
                         {
                             frame.ScopeChild = scopeEdge;
                             frames[top] = frame;
-                            frames.Add(InheritFrame.Enter(child));
+                            frames.Add(InheritFrame.Enter(child, work));
                             continue;
                         }
                         else if (onPath is null)
@@ -824,14 +929,17 @@ public static partial class Evaluator
         private TransportNameBuilder _pending;
         private TransportNameBuilder _inherited;
 
-        internal static InheritFrame Enter(object node)
+        internal static InheritFrame Enter(object node, TransportAnalysisWork? work)
         {
             var frame = new InheritFrame { Node = node };
             if (node is Expr.DotCall { LexicalFallback: null } edge)
                 frame.AddPending(edge.Name);
             if (node is Expr.NativeCall native)
                 foreach (var name in native.ArgNames)
+                {
+                    work?.Step();
                     frame.AddPending(name);
+                }
             return frame;
         }
 
@@ -879,7 +987,7 @@ public static partial class Evaluator
         internal int Next;
         private TransportNameBuilder _names;
 
-        internal static TransportFrame Enter(object node)
+        internal static TransportFrame Enter(object node, TransportAnalysisWork? work)
         {
             // An algorithm's child 0 is its parent scope when it has one: never followed.
             var frame = new TransportFrame { Node = node, Next = node is Algorithm { Parent: not null } ? 1 : 0 };
@@ -888,7 +996,10 @@ public static partial class Evaluator
                 frame.Add(edge.Name);
             if (node is Expr.NativeCall native)
                 foreach (var name in native.ArgNames)
+                {
+                    work?.Step();
                     frame.Add(name);
+                }
             return frame;
         }
 

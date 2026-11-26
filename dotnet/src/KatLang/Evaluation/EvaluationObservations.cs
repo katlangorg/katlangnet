@@ -58,6 +58,16 @@ internal sealed class EvaluationObservations
     public FrontEndTraversalObservations? DeferredAdmissionTraversal { get; init; }
 
     /// <summary>
+    /// Optional observer of a per-site run's transport-name analysis during evaluation (<c>Evaluator.TransportAnalysisWork</c>):
+    /// its units of work (<see cref="FrontEndTraversalObservations.EvaluatorTransportAnalysisUnits"/>) and each cancellation
+    /// checkpoint it reaches (<see cref="FrontEndCancellationCheckpoint.EvaluatorTransportAnalysis"/>), whose
+    /// <see cref="FrontEndTraversalObservations.CheckpointReached"/> hook a test uses to cancel at a known block. Written only
+    /// by its run's analysis, whose walks hold the run's analysis lock. Supplied by the measuring test; <c>null</c> records
+    /// nothing, and a run without per-site retention never writes it.
+    /// </summary>
+    public FrontEndTraversalObservations? TransportAnalysisTraversal { get; init; }
+
+    /// <summary>
     /// Number of COMPLETE assignment-deconstruction binding computations begun during this run. A
     /// deconstruction group binds its shared N-capture pattern once per shared-bind execution (group,
     /// actual pattern list and source entry — <c>DeconstructionBindingExecution</c>; since OD-1 no reader

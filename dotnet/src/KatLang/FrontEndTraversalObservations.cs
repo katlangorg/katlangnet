@@ -1305,6 +1305,17 @@ internal sealed class FrontEndTraversalObservations
         => DeferredRegionPrefixEdges = checked(DeferredRegionPrefixEdges + 1);
 
     /// <summary>
+    /// Units of work the transport-name analysis of a per-site run did (<c>Evaluator.TransportAnalysisWork</c>, observed
+    /// only through a run's transport-analysis observer): slot queries, child edges (including memo hits and in-place
+    /// reads), frame completions, native argument names, builtin lookup parent levels and properties indexed for those
+    /// lookups. Summed over every walk and query of the run.
+    /// </summary>
+    public long EvaluatorTransportAnalysisUnits { get; private set; }
+
+    internal void RecordEvaluatorTransportAnalysisUnit()
+        => EvaluatorTransportAnalysisUnits = checked(EvaluatorTransportAnalysisUnits + 1);
+
+    /// <summary>
     /// The capacity hints the structural preflight's height tables were created with, summed over the walks this
     /// observer saw. An evaluator run's admission walk is handed the node count an earlier walk of the same run
     /// counted (the synchronous entry guard's, or the async entry's tree fact), and 0 when none was made. Capacity
@@ -1591,8 +1602,8 @@ internal sealed class FrontEndTraversalObservations
 /// The bounded blocks of elaboration work at whose start the passes observe the source-processing
 /// token (2.06; see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>), the blocks of
 /// semantic-model construction at whose start the builder observes the token of its cancellable entry,
-/// and the blocks of an evaluator run's route selection, structural admission and validation walks and of its
-/// deferred-body admissions, which observe the run's evaluation token.
+/// and the blocks of an evaluator run's route selection, structural admission and validation walks, of its
+/// deferred-body admissions and of its per-site transport-name analysis, which observe the run's evaluation token.
 /// </summary>
 internal enum FrontEndCancellationCheckpoint
 {
@@ -1666,6 +1677,13 @@ internal enum FrontEndCancellationCheckpoint
     /// evaluation token.
     /// </summary>
     EvaluatorDeferredAdmission,
+    /// <summary>
+    /// Every <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> units of a per-site run's transport-name
+    /// analysis (<c>Evaluator.TransportAnalysisWork</c>; units as <see cref="FrontEndTraversalObservations.EvaluatorTransportAnalysisUnits"/>
+    /// counts them), one countdown across the callee, builtin-aware and inherited-read walks of every query of the run. The
+    /// analysis observes the run's evaluation token; without a cancellable token it reaches none.
+    /// </summary>
+    EvaluatorTransportAnalysis,
 }
 
 /// <summary>
@@ -1709,7 +1727,7 @@ internal sealed class ValidationWork(FrontEndTraversalObservations? observations
 
 internal static class FrontEndCancellationCheckpointKinds
 {
-    internal const int Count = (int)FrontEndCancellationCheckpoint.EvaluatorDeferredAdmission + 1;
+    internal const int Count = (int)FrontEndCancellationCheckpoint.EvaluatorTransportAnalysis + 1;
 }
 
 /// <summary>

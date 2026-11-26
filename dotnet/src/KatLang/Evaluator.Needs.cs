@@ -461,10 +461,12 @@ public static partial class Evaluator
                 if (AdmitTransient(caller.Budget, ref bound, 1, expansion: false))
                 {
                     var unobserved = boundCallee is not null && IsPlannableCall(argument)
-                        && IsUnobservedSupplySlot(boundCallee, index, caller.Budget);
+                        ? IsUnobservedSupplySlot(boundCallee, index, caller.Budget) : false;
+                    if (!unobserved.HasValue)
+                        return EvalError.HostTermination.Marker;
                     // The transport of an unavailable parameter fails the formation itself, before
                     // any later slot is formed and whether or not the receiver demands this one.
-                    if (!TrySupplyArgument(supply, argument, caller, values, unobserved))
+                    if (!TrySupplyArgument(supply, argument, caller, values, unobserved.Value))
                         return TransportRefusal(argument, caller);
                     sources?.Add(argument);
                 }

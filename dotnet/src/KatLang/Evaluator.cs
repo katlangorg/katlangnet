@@ -3959,8 +3959,10 @@ public static partial class Evaluator
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
         // J7: the run's one, immutable plan-retention decision, read by the structural preflight's
-        // walk over the admitted program, taken before any supplied cell exists.
-        budget.DecideInvocationPlanRetention(programFacts.MayCaptureCalls, programFacts.IsLoopOnly, expr, programFacts.TreeNodeCount);
+        // walk over the admitted program, taken before any supplied cell exists. A per-site run's transport-name
+        // analysis observes the run's token in bounded blocks (Evaluator.TransportAnalysisWork).
+        budget.DecideInvocationPlanRetention(programFacts.MayCaptureCalls, programFacts.IsLoopOnly, expr, programFacts.TreeNodeCount,
+            observations?.TransportAnalysisTraversal);
         // META-S3-2: a run that may reach a runtime-target alias is pre-marked before any resolver runs.
         budget.DecideRuntimeAliasReach(programFacts.MayReachRuntimeAlias, programFacts.HasDeferredModuleRegion);
         // B2c: a deferred body is admitted by the run that consumes it, at its position in this root.
