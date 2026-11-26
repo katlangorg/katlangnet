@@ -23,6 +23,11 @@ using Mode = PropertyExposureResolver.SettlementShareMode;
 /// names; distinct read sets paid snapshots nothing took again). It now holds the level's summary revision and copies
 /// nothing; a reuse tests only the changes since, against the names it read, or each name's last change when that is
 /// fewer or the interner is released.</item>
+/// <item>LIVE READ SETS (2026-11-26): a reuse still enumerated the kept settlement's names into the reusing top-level
+/// settlement, which copied each with its summary, and the level solver indexed each name per reader: M × C three times
+/// for M readers of one set of C names. A reuse now records the set by identity, the solver indexes each distinct set
+/// once under its names and its readers through their last evaluation's settlements, retires what a re-evaluation left,
+/// and wakes each reader once in the order of the readers' first evaluations, as the by-name record does.</item>
 /// <item>SEED PARTS (<c>exposure-summary-seed-logical-width</c>): a navigated member's seed was folded and its names
 /// canonicalized whole at every settlement, and copied at every parameterless level between its declaration and the
 /// reader (K² / 2 elements; depth × K² / 2 copies). A part holding required names only is now resolved once per
@@ -828,6 +833,308 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
         Assert.Equal(perRun.RequiredAncestorSettlementFrames, production.RequiredAncestorSettlementFrames);
         Assert.True(production.SettlementLiveHits > 0);
         Assert.Equal("6", Value(text));
+    }
+
+    // ── Live read sets: the level solver's dependency record ─────────────────
+
+    /// <summary>The unshared settlement with no shared open walks: no kept live settlement, so every read is recorded by name.</summary>
+    private static FrontEndTraversalObservations ByNameOracle(string source)
+    {
+        var unshared = InMode(Mode.Unshared, () => With(PropertyExposureResolver.OpenWalksPerReaderForTesting, () => Parse(source)));
+        Assert.Equal(0, unshared.Observations.SettlementLiveReadReplays);
+        Assert.Equal(0, unshared.Observations.RequiredAncestorSettlementReadSets);
+        return unshared.Observations;
+    }
+
+    /// <summary>The level solver evaluated every equation as often, and notified as many readers, as the by-name record does.</summary>
+    private static void AssertSameWakeups(FrontEndTraversalObservations byName, FrontEndTraversalObservations production)
+    {
+        Assert.Equal(byName.RequiredAncestorLevelEvaluations, production.RequiredAncestorLevelEvaluations);
+        Assert.Equal(byName.RequiredAncestorReaderNotifications, production.RequiredAncestorReaderNotifications);
+    }
+
+    /// <summary>
+    /// <see cref="LiveMemberFamily"/>'s written path inside <c>G(w)</c> with two partially overlapping shared sets:
+    /// <c>Lib.V0</c> lists <c>Cap0</c> … <c>Cap{W-1}</c>, <c>Lib.V1</c> lists <c>Cap{W/2}</c> … <c>Cap{W/2+W-1}</c>, and reader
+    /// <c>A{i}</c> reads <c>V{i mod 2}</c>. <c>Cap{changed}</c> (none for -1) is <c>K + 0</c> with <c>K = H(1) + 0</c>, and
+    /// <c>H</c> reads <c>Lib.W</c>, which lists <c>Src = w + 0</c>, declared last: <c>H</c> is settled first, while
+    /// <c>Src</c>'s summary is still empty, so that one cap gains <c>w</c> only after every reader took its set and its
+    /// readers gain it only when they are evaluated again.
+    /// </summary>
+    internal static string OverlappingSharedSets(int readers, int width, int changed)
+    {
+        var half = width / 2;
+        var v0 = string.Join(", ", Enumerable.Range(0, width).Select(j => $"Cap{j}"));
+        var v1 = string.Join(", ", Enumerable.Range(half, width).Select(j => $"Cap{j}"));
+        var source = new StringBuilder($"G(w) = {{\n  F(y) = {{\n    Lib = {{\n      public V0 = [{v0}]\n      public V1 = [{v1}]\n"
+            + "      public W = [Src]\n    }\n    K = H(1) + 0\n    H(z) = Lib.W[0] + z\n");
+        for (var j = 0; j < half + width; j++) source.Append(j == changed ? $"    Cap{j} = K + 0\n" : $"    Cap{j} = y + {j}\n");
+        for (var i = 0; i < readers; i++) source.Append($"    A{i}(z) = Lib.V{i % 2}[0] + z\n");
+        source.Append("    Src = w + 0\n    0\n  }\n  F(5)\n}\nG(7)\n");
+        return source.ToString();
+    }
+
+    /// <summary>
+    /// LIVE READ SETS. M readers take one kept live settlement whose canonical set names C summaries of the level in
+    /// progress: the open walks (<c>liveb</c>), a member through a written path (<c>pathl</c>) or through an <c>open</c>
+    /// (<c>memberl</c>). Each reuse records the set by identity (M − 1 replays, none enumerated), only the first reader's
+    /// own frames read the C names, and the dependency index holds the set under its names once: 2C + 2M − 1 entries at
+    /// its peak (C names of the first reader's settlement and one reader, C names of the set, and per later reader its
+    /// settlement under the set and the reader under its settlement), where the former index held M × C, in both
+    /// dimensions. Nothing is retired, and the level solver evaluates and notifies exactly as the by-name record of the
+    /// unshared settlement does; the metadata is the former walk's and the unshared one's, and every reader requires
+    /// <c>y</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("liveb")]
+    [InlineData("pathl")]
+    [InlineData("memberl")]
+    public void ASharedLiveReadSet_IsIndexedOnce_WhateverItsReadersAndNames(string shape)
+    {
+        foreach (var (readers, width) in new[] { (16, 16), (32, 16), (64, 16), (16, 32), (16, 64) })
+        {
+            var source = shape switch
+            {
+                "liveb" => LiveOpenFamily(readers, width),
+                "pathl" => LiveMemberFamily(readers, width),
+                _ => LiveMemberFamily(readers, width, opened: true),
+            };
+            var formerWalk = shape == "liveb"
+                ? PropertyExposureResolver.OpenWalksPerReaderForTesting
+                : PropertyExposureResolver.LiveSettlementsPerRunForTesting;
+            var (production, _) = AssertSameAsFormerWalk(source, formerWalk);
+            var byName = ByNameOracle(source);
+            AssertSameWakeups(byName, production);
+            Assert.Equal(readers - 1, production.SettlementLiveReadReplays);
+            Assert.Equal(readers - 1, production.RequiredAncestorSettlementReadSets);
+            Assert.Equal(width, production.RequiredAncestorSettlementReadEntries);
+            Assert.Equal(2L * width + 2L * readers - 1, production.RequiredAncestorDependencyPeakEntries);
+            Assert.Equal(0, production.RequiredAncestorDependencyRetirements);
+            Assert.True(byName.RequiredAncestorSettlementReadEntries >= (long)readers * width);
+            var root = Root(source);
+            for (var i = 0; i < readers; i++)
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", $"A{i}"), ("y", 0));
+            output.WriteLine($"{shape} M = {readers}, C = {width}: {production.RequiredAncestorDependencyPeakEntries} index entries at the peak, "
+                + $"{production.SettlementLiveReadReplays} replays, {production.RequiredAncestorSettlementReadEntries} stored reads; "
+                + $"by name {byName.RequiredAncestorDependencyPeakEntries} entries, {byName.RequiredAncestorSettlementReadEntries} stored reads");
+        }
+    }
+
+    /// <summary>
+    /// LIVE READ SETS, UNRELATED CHANGES. Besides <see cref="LiveMemberFamily"/>'s readers, C properties <c>U{k}(v)</c>
+    /// read a reader each, so their summaries gain <c>y</c> after every reader took the shared set, and no reader reads
+    /// them: no reader is notified, every equation is evaluated once, as with the by-name record, and the metadata is the
+    /// former walk's and the unshared one's.
+    /// </summary>
+    [Fact]
+    public void ChangesToSummariesNoSetHolds_RequeueNoReaderOfTheSet()
+    {
+        foreach (var (readers, width) in new[] { (16, 16), (64, 16), (16, 64) })
+        {
+            var caps = string.Join(", ", Enumerable.Range(0, width).Select(j => $"Cap{j}"));
+            var source = new StringBuilder($"F(y) = {{\n  Lib = {{\n    public V = [{caps}]\n  }}\n");
+            for (var j = 0; j < width; j++) source.Append($"  Cap{j} = y + {j}\n");
+            for (var i = 0; i < readers; i++) source.Append($"  A{i}(z) = Lib.V[0] + z\n");
+            for (var k = 0; k < width; k++) source.Append($"  U{k}(v) = A{k % readers}(v) + v\n");
+            source.Append("  A0(1)\n}\nF(5)\n");
+            var text = source.ToString();
+            var (production, _) = AssertSameAsFormerWalk(text, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+            AssertSameWakeups(ByNameOracle(text), production);
+            Assert.Equal(readers - 1, production.SettlementLiveReadReplays);
+            Assert.Equal(0, production.RequiredAncestorReaderNotifications);
+            // F's Lib, caps, readers and U's, the root's F and Lib's V: each evaluated once.
+            Assert.Equal(1 + width + readers + width + 2, production.RequiredAncestorLevelEvaluations);
+            var root = Root(text);
+            for (var k = 0; k < width; k++)
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", $"U{k}"), ("y", 0));
+        }
+    }
+
+    /// <summary>
+    /// LIVE READ SETS, EXACT WAKEUPS OVER PARTIALLY OVERLAPPING SETS (<see cref="OverlappingSharedSets"/>). One summary
+    /// changes after every reader took its set: in <c>V0</c> only, in both, or in <c>V1</c> only. Exactly the readers of
+    /// the sets that hold it are evaluated again (M / 2, M, M / 2, plus the changed property itself, over the run without
+    /// the change), each once; each of them requires <c>w</c> and no other reader does. The level solver evaluates and
+    /// notifies exactly as the by-name record does, its cached settlements' sets are tested by their last-change stamps,
+    /// the memberships the re-evaluated readers left are retired, and the index stays linear in M and C.
+    /// </summary>
+    [Fact]
+    public void AChangedSummary_RequeuesExactlyTheReadersOfTheSetsThatHoldIt()
+    {
+        foreach (var (readers, width) in new[] { (16, 16), (32, 16), (16, 32) })
+        {
+            var half = width / 2;
+            var unchanged = Parse(OverlappingSharedSets(readers, width, changed: -1)).Observations;
+            foreach (var (changed, inV0, inV1) in new[] { (0, true, false), (half, true, true), (half + width - 1, false, true) })
+            {
+                var source = OverlappingSharedSets(readers, width, changed);
+                var (production, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+                var byName = ByNameOracle(source);
+                AssertSameWakeups(byName, production);
+                var woken = (inV0 ? readers / 2 : 0) + (inV1 ? readers / 2 : 0);
+                Assert.Equal(woken + 1, production.RequiredAncestorLevelEvaluations - unchanged.RequiredAncestorLevelEvaluations);
+                Assert.True(production.SettlementLiveReadReplays > 0);
+                Assert.True(production.RequiredAncestorReadSetChecks > 0);
+                Assert.True(production.RequiredAncestorDependencyRetirements > 0);
+                Assert.True(production.RequiredAncestorDependencyPeakEntries < byName.RequiredAncestorDependencyPeakEntries);
+                Assert.InRange(production.RequiredAncestorDependencyPeakEntries, 1, 4L * readers + 8L * width);
+                var root = Root(source);
+                for (var i = 0; i < readers; i++)
+                {
+                    var reader = ExposureOpenChainComplexityTests.Member(root, "G", "F", $"A{i}");
+                    if (i % 2 == 0 ? inV0 : inV1)
+                        ExposureOpenChainComplexityTests.AssertRequires(reader, ("w", 1), ("y", 0));
+                    else
+                        ExposureOpenChainComplexityTests.AssertRequires(reader, ("y", 0));
+                }
+
+                output.WriteLine($"M = {readers}, C = {width}, Cap{changed} changed: {production.RequiredAncestorLevelEvaluations} evaluations "
+                    + $"({unchanged.RequiredAncestorLevelEvaluations} unchanged), {production.RequiredAncestorReadSetChecks} set checks, "
+                    + $"{production.RequiredAncestorDependencyRetirements} retired, peak {production.RequiredAncestorDependencyPeakEntries} "
+                    + $"(by name {byName.RequiredAncestorDependencyPeakEntries})");
+            }
+        }
+    }
+
+    /// <summary>
+    /// LIVE READ SETS UNDER SATURATION. Whatever the residual capacity, a set replayed before the live-read interner was
+    /// released stays in the solver's record and its stamp is still written at every change of a name it holds (the index
+    /// never consults the interner): the metadata, the evaluations and the notifications are the uncapped ones, for one
+    /// late change in a shared set (<see cref="OverlappingSharedSets"/>) and for the stale-summary witness. Over the
+    /// sweep, some capacity saturates a solve whose readers had replayed a set and whose solver tested sets afterwards.
+    /// </summary>
+    [Fact]
+    public void SaturatingTheLiveNameInterner_KeepsTheReplayedSetsExact()
+    {
+        var seam = PropertyExposureResolver.ResidualCacheCapacityForTesting;
+        var testedAfterSaturating = false;
+        foreach (var source in new[] { OverlappingSharedSets(16, 16, 8), OverlappingSharedSets(16, 16, 0), StaleSummaryWitnessReading(3) })
+        {
+            var normal = Parse(source);
+            Assert.Empty(normal.Diagnostics);
+            foreach (var capacity in Enumerable.Range(1, 16).Concat(Enumerable.Range(5, 8).Select(static power => 1 << power)))
+            {
+                var prior = seam.Value;
+                seam.Value = capacity;
+                try
+                {
+                    var limited = Parse(source);
+                    Assert.Equal(normal.Diagnostics, limited.Diagnostics);
+                    Assert.Equal(normal.Metadata, limited.Metadata);
+                    AssertSameWakeups(normal.Observations, limited.Observations);
+                    testedAfterSaturating |= limited.Observations.RequiredAncestorReadSetChecksAfterSaturation > 0;
+                }
+                finally { seam.Value = prior; }
+            }
+        }
+
+        Assert.True(testedAfterSaturating);
+    }
+
+    /// <summary>
+    /// Cancellation during a 300-name group's registration stops before the second block adds a membership. The failed
+    /// compilation cannot publish the partial index, and a fresh parse produces the complete metadata and record.
+    /// </summary>
+    [Fact]
+    public void CancellationDuringSharedSetRegistration_StopsTheSolve_AndAFreshParseExposesInFull()
+    {
+        var source = LiveMemberFamily(48, 300);
+        var expected = Parse(source);
+        using var cancellation = new CancellationTokenSource();
+        long entriesAtStart = -1;
+        long entriesAtCancel = -1;
+        FrontEndTraversalObservations observations = null!;
+        observations = new FrontEndTraversalObservations
+        {
+            CheckpointReached = (kind, ordinal) =>
+            {
+                if (kind != FrontEndCancellationCheckpoint.ExposureReadSetRegistration)
+                    return;
+                if (ordinal == 1)
+                    entriesAtStart = observations.RequiredAncestorDependencyEntries;
+                if (ordinal == 2)
+                {
+                    entriesAtCancel = observations.RequiredAncestorDependencyEntries;
+                    cancellation.Cancel();
+                }
+            },
+        };
+
+        var (resolved, _, _) = ExposureSettlementFrameChargeTests.Resolved(source);
+        var unit = resolved.CompletedStructure!.Facts;
+        var error = Assert.ThrowsAny<OperationCanceledException>(
+            () => PropertyExposureResolver.Resolve(resolved, observations, cancellationToken: cancellation.Token));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.True(unit.IsFailed);
+        Assert.True(entriesAtStart >= 0);
+        Assert.Equal(entriesAtStart + 256, entriesAtCancel);
+        Assert.Equal(entriesAtCancel, observations.RequiredAncestorDependencyEntries);
+
+        var again = Parse(source);
+        Assert.Equal(expected.Diagnostics, again.Diagnostics);
+        Assert.Equal(expected.Metadata, again.Metadata);
+        Assert.Equal(expected.Observations.RequiredAncestorDependencyEntries, again.Observations.RequiredAncestorDependencyEntries);
+    }
+
+    /// <summary>
+    /// LIVE READ SETS KEEP THE QUEUE ORDER (random witnesses of a scratch generator over levels whose members read the
+    /// level's properties, kept verbatim; 7,041 of its 60,000 programs show the same effect). A changed summary wakes
+    /// readers through siblings, settlements and sets at once, and they are queued in the order of their first evaluations,
+    /// the order the former index held each name's readers in. Queued in the order they are found instead, the same
+    /// equations are evaluated as often but in another order, so later reuses test other changes: two more live-read
+    /// checks in each witness. Every count here is the former index's (<c>82dd0370</c>), and the evaluations and
+    /// notifications are the by-name record's.
+    /// </summary>
+    [Theory]
+    [InlineData("F(y, w) = {\n  Lib = {\n    public V0 = [Q2, Q0]\n  }\n  Q0 = w + Lib.V0[0]\n  Q1 = w + A1(4)\n  Q2 = Q1 + Q2\n  Q3 = (Q0 + 5) + 9\n  A0(z) = Q1 + z\n  A1(z) = Q2 + z\n  Q1\n}\nF(5, 7)\n",
+        31, 15, 6, 5, 9, 15)]
+    [InlineData("F(y, w) = {\n  Lib = {\n    public V0 = [Q2, Q2, Q2, Q1]\n    public V1 = [Q2, Q2, y, Q0]\n  }\n  Q0 = y + (y + y)\n  Q1 = w + Q2\n  Q2 = Lib.V0[1] + Q1\n  A0(z) = Q2 + z\n  A1(z) = Q0 + z\n  (w + w)\n}\nF(5, 7)\n",
+        22, 13, 4, 6, 7, 11)]
+    [InlineData("F(y, w) = {\n  Lib = {\n    public V0 = [Q2, Q0, Q5]\n  }\n  Q0 = 2 + Lib.V0[1]\n  Q1 = Q1 + Q1\n  Q2 = Q4 + Q4\n  Q3 = Q1 + Q3\n  Q4 = Q0 + Lib.V0[0]\n  Q5 = y + Q5\n  A0(z) = Q2 + z\n  A1(z) = 8 + z\n  w\n}\nF(5, 7)\n",
+        33, 19, 9, 10, 11, 20)]
+    public void ReadersWokenTogether_AreQueuedInTheOrderOfTheirFirstEvaluations(string source, int frames, int evaluations,
+        int notifications, int liveHits, int staleDrops, int liveReadChecks)
+    {
+        var (production, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+        AssertSameWakeups(ByNameOracle(source), production);
+        Assert.Equal(frames, production.RequiredAncestorSettlementFrames);
+        Assert.Equal(evaluations, production.RequiredAncestorLevelEvaluations);
+        Assert.Equal(notifications, production.RequiredAncestorReaderNotifications);
+        Assert.Equal(liveHits, production.SettlementLiveHits);
+        Assert.Equal(staleDrops, production.SettlementShareStaleViews);
+        Assert.Equal(liveReadChecks, production.SettlementLiveReadChecks);
+    }
+
+    /// <summary>
+    /// LIVE READ SETS, ONE NAME WITH BOTH KINDS OF READER. A deconstruction's hoisted source reads <c>N</c> as a sibling
+    /// edge, and the readers of <c>Lib.V</c> read it through a shared set; <c>N</c> gains <c>w</c> late, through <c>H</c>
+    /// and <c>Src</c> (declared last). Its change wakes the sibling readers and the set's readers together: woken through
+    /// the sibling edge alone, the set's readers keep a summary without <c>w</c>. Every count is the former index's
+    /// (<c>82dd0370</c>), and the evaluations and notifications are the by-name record's.
+    /// </summary>
+    [Theory]
+    [InlineData("G(w) = {\n  F(y) = {\n    Lib = {\n      public V = [N, y]\n      public W = [Src]\n    }\n    H(z) = Lib.W[0] + z\n    N = H(1) + 0\n    R(z) = Lib.V[0] + z\n    S(z) = Lib.V[0] + z\n    a, b = N, 10\n    Src = w + 0\n    a + b\n  }\n  F(5)\n}\nG(7)\n",
+        new[] { "R", "S" }, true, 26, 20, 7)]
+    [InlineData("G(w) = {\n  F(y) = {\n    Lib = {\n      public V = [N]\n      public W = [Src]\n    }\n    H(z) = Lib.W[0] + z\n    N = H(1) + 0\n    a, b = N, 10\n    R(z) = Lib.V[0] + z\n    S(z) = Lib.V[0] + z\n    T(z) = Lib.V[0] + z\n    Src = w + 0\n    0\n  }\n  F(5)\n}\nG(7)\n",
+        new[] { "R", "S", "T" }, false, 26, 22, 8)]
+    public void ASummaryReadAsASiblingAndThroughASet_WakesBothKindsOfReader(string source, string[] readers, bool readsY,
+        int frames, int evaluations, int notifications)
+    {
+        var (production, _) = AssertSameAsFormerWalk(source, PropertyExposureResolver.LiveSettlementsPerRunForTesting);
+        AssertSameWakeups(ByNameOracle(source), production);
+        Assert.True(production.SettlementLiveReadReplays > 0);
+        Assert.Equal(frames, production.RequiredAncestorSettlementFrames);
+        Assert.Equal(evaluations, production.RequiredAncestorLevelEvaluations);
+        Assert.Equal(notifications, production.RequiredAncestorReaderNotifications);
+        var root = Root(source);
+        foreach (var reader in readers)
+        {
+            var property = ExposureOpenChainComplexityTests.Member(root, "G", "F", reader);
+            if (readsY)
+                ExposureOpenChainComplexityTests.AssertRequires(property, ("w", 1), ("y", 0));
+            else
+                ExposureOpenChainComplexityTests.AssertRequires(property, ("w", 1));
+        }
     }
 
     // ── Seed parts: navigated members whose seeds hold their predecessors ─────

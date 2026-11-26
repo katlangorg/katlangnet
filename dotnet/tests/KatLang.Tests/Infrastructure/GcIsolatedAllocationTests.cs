@@ -14,6 +14,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.AlgorithmParameterNamesTests.Projections_OfAParameterizedAlgorithm_CostOneSmallArray_AndTheCountIsFree_GcIsolatedChild",
                 "KatLang.Tests.AlgorithmParameterNamesTests.Projections_OfAZeroParameterAlgorithm_AllocateNothing_GcIsolatedChild",
                 "KatLang.Tests.AlgorithmPayloadReviewTests.WithParameters_NonUserIdentity_DoesNotAllocateDiscardedPatterns_GcIsolatedChild",
+                "KatLang.Tests.CanonicalNameSetTests.WalkNames_AllocatesNothing_GcIsolatedChild",
                 "KatLang.Tests.CollectionBuiltinDispatchTests.CallItems_AllocateExactlyTheirItemArray_GcIsolatedChild",
                 "KatLang.Tests.CollectionBuiltinDispatchTests.ControlReadingDispatch_AllocatesNoClosureOrDelegate_GcIsolatedChild",
                 "KatLang.Tests.CollectionBuiltinDispatchTests.ZeroControlDispatch_AllocatesOnlyItsCallItems_GcIsolatedChild",

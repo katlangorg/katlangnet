@@ -745,6 +745,65 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordRequiredAncestorReaderNotification()
         => RequiredAncestorReaderNotifications = checked(RequiredAncestorReaderNotifications + 1);
 
+    /// <summary>
+    /// Entries the exposure level solver created in its dependency index (<c>PropertyExposureResolver.LevelSolver</c>,
+    /// LIVE READ SETS): a sibling read under its name, a taken settlement under each name it read itself, a live-read set
+    /// under each of its names, a settlement under each set it holds, and a reader under each settlement it took. A set
+    /// shared by M readers is indexed under its C names once. Counting the first reader's direct reads too, the shared
+    /// open and member families peak at 2C + 2M − 1 entries where the former index held M × C.
+    /// </summary>
+    public long RequiredAncestorDependencyEntries { get; private set; }
+
+    /// <summary>The most entries one level solve's dependency index held at once (<see cref="RequiredAncestorDependencyEntries"/>).</summary>
+    public long RequiredAncestorDependencyPeakEntries { get; private set; }
+
+    internal void RecordRequiredAncestorDependencyEntries(long created, long held)
+    {
+        RequiredAncestorDependencyEntries = checked(RequiredAncestorDependencyEntries + created);
+        RequiredAncestorDependencyPeakEntries = Math.Max(RequiredAncestorDependencyPeakEntries, held);
+    }
+
+    /// <summary>
+    /// Dependency index entries removed because the reader's last evaluation, the settlements its readers took or the
+    /// sets those settlements hold no longer include them (<see cref="RequiredAncestorDependencyEntries"/>).
+    /// </summary>
+    public long RequiredAncestorDependencyRetirements { get; private set; }
+
+    internal void RecordRequiredAncestorDependencyRetirements(long entries)
+        => RequiredAncestorDependencyRetirements = checked(RequiredAncestorDependencyRetirements + entries);
+
+    /// <summary>
+    /// Summaries the level solver's computed top-level settlements read themselves, each kept with the summary read
+    /// (<see cref="RequiredAncestorSettlementReadSets"/> counts the live-read sets they took by identity instead).
+    /// </summary>
+    public long RequiredAncestorSettlementReadEntries { get; private set; }
+
+    /// <summary>Distinct live-read sets of reused kept settlements held by the level solver's computed top-level settlements.</summary>
+    public long RequiredAncestorSettlementReadSets { get; private set; }
+
+    internal void RecordRequiredAncestorSettlementReads(int names, int sets)
+    {
+        RequiredAncestorSettlementReadEntries = checked(RequiredAncestorSettlementReadEntries + names);
+        RequiredAncestorSettlementReadSets = checked(RequiredAncestorSettlementReadSets + sets);
+    }
+
+    /// <summary>
+    /// Live-read sets of cached top-level settlements the level solver tested, one stamp test each (the last change to a
+    /// summary the set names, <c>PropertyExposureResolver.LevelSolver</c>, LIVE READ SETS): uncharged, like the summary
+    /// comparisons it replaces.
+    /// </summary>
+    public long RequiredAncestorReadSetChecks { get; private set; }
+
+    /// <summary>Stamp checks made after this level released its live-name interner.</summary>
+    public long RequiredAncestorReadSetChecksAfterSaturation { get; private set; }
+
+    internal void RecordRequiredAncestorReadSetCheck(bool afterSaturation)
+    {
+        RequiredAncestorReadSetChecks = checked(RequiredAncestorReadSetChecks + 1);
+        if (afterSaturation)
+            RequiredAncestorReadSetChecksAfterSaturation = checked(RequiredAncestorReadSetChecksAfterSaturation + 1);
+    }
+
     /// <summary>Changed member seeds notifying an equation that read them.</summary>
     public long SummaryMemberReaderNotifications { get; private set; }
 
@@ -1029,6 +1088,15 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordSettlementLiveHit()
         => SettlementLiveHits = checked(SettlementLiveHits + 1);
+
+    /// <summary>
+    /// Reused kept live settlements whose live reads a top-level settlement recorded (<c>PendingResolution.ReplayLiveReads</c>,
+    /// LIVE READ SETS): one per reuse, by the identity of its canonical set, never one per name it read.
+    /// </summary>
+    public long SettlementLiveReadReplays { get; private set; }
+
+    internal void RecordSettlementLiveReadReplay()
+        => SettlementLiveReadReplays = checked(SettlementLiveReadReplays + 1);
 
     /// <summary>
     /// Seed-part work of exposure settlement and anchoring (<c>PropertyExposureResolver.PendingResolution</c>, SEED
@@ -1663,6 +1731,8 @@ internal enum FrontEndCancellationCheckpoint
     ExposureAlgorithm,
     /// <summary>One equation evaluation of an exposure level's fixed point (<c>LevelSolver</c>).</summary>
     ExposureLevelEvaluation,
+    /// <summary>One block of up to 256 names being indexed for a newly shared exposure read set.</summary>
+    ExposureReadSetRegistration,
     /// <summary>One frame pushed by an exposure settlement (<c>PendingResolution.Run</c>).</summary>
     ExposureSettlementFrame,
     /// <summary>One previously uncombined branch pair of a live-read name union during exposure settlement.</summary>

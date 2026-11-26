@@ -182,6 +182,78 @@ public class CanonicalNameSetTests
         Assert.True(perVariant <= 64, $"each single-name variant took {perVariant:F1} union and difference steps on average");
     }
 
+    /// <summary>
+    /// <see cref="CanonicalNameSet.WalkNames"/> visits exactly <see cref="CanonicalNameSet.Names"/>, in the same order, for
+    /// the empty set, one name, and random sets up to thousands of names (tries many branches deep), also with an early
+    /// stop.
+    /// </summary>
+    [Theory]
+    [InlineData(5)]
+    [InlineData(17)]
+    public void WalkNames_VisitsTheNamesInTheOrderNamesHas(int seed)
+    {
+        var random = new Random(seed);
+        var interner = new NameSetInterner();
+        var universe = Enumerable.Range(0, 6000).Select(i => $"w{i}").ToArray();
+        var sets = new List<CanonicalNameSet> { NameSetInterner.Empty, interner.With(NameSetInterner.Empty, ["only"]) };
+        for (var trial = 0; trial < 40; trial++)
+            sets.Add(interner.With(NameSetInterner.Empty, universe.Where(_ => random.Next(4) == 0).Take(random.Next(1, universe.Length))));
+        foreach (var set in sets)
+        {
+            var walked = new List<string>();
+            foreach (var name in set.WalkNames())
+                walked.Add(name);
+            Assert.Equal(set.Names, walked);
+
+            var stop = set.Count / 2;
+            var prefix = new List<string>();
+            foreach (var name in set.WalkNames())
+            {
+                if (prefix.Count == stop)
+                    break;
+                prefix.Add(name);
+            }
+
+            Assert.Equal(set.Names.Take(stop), prefix);
+        }
+    }
+
+    /// <summary>
+    /// <see cref="CanonicalNameSet.WalkNames"/> allocates nothing however wide the set, where every enumeration of
+    /// <see cref="CanonicalNameSet.Names"/> allocates an iterator and its stack (the exposure solver walks shared live-read
+    /// sets with it).
+    /// </summary>
+    [Fact]
+    public void WalkNames_AllocatesNothing_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var interner = new NameSetInterner();
+        var set = interner.With(NameSetInterner.Empty, Enumerable.Range(0, 4096).Select(i => $"n{i}"));
+        var length = 0;
+        foreach (var name in set.WalkNames())
+            length += name.Length;
+        foreach (var name in set.Names)
+            length += name.Length;
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 100; i++)
+            foreach (var name in set.WalkNames())
+                length += name.Length;
+        var walked = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        before = GC.GetAllocatedBytesForCurrentThread();
+        foreach (var name in set.Names)
+            length += name.Length;
+        var enumerated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(0L, walked);
+        Assert.True(enumerated > 0, "the iterator of Names allocates");
+        Assert.True(length > 0);
+        GcIsolatedAllocation.Complete();
+    }
+
     [Fact]
     public void ExtendingAWideSet_CanonicalizesOnlyTheAddedNames()
     {

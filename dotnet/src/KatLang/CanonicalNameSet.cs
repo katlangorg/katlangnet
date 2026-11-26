@@ -1,6 +1,14 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace KatLang;
+
+/// <summary>The pending nodes of one <see cref="CanonicalSetInterner{TElement}.ElementWalk"/> (see its bound).</summary>
+[InlineArray(32)]
+internal struct CanonicalTriePath
+{
+    private object? _node;
+}
 
 /// <summary>
 /// A CONTENT-CANONICAL set of names, interned by a <see cref="NameSetInterner"/>: two sets with the
@@ -26,6 +34,12 @@ internal readonly struct CanonicalNameSet : IEquatable<CanonicalNameSet>
 
     /// <summary>The set's names, in key order (an order the interner chose; callers must not depend on it).</summary>
     public IEnumerable<string> Names => NameSetInterner.EnumerateNames(Root);
+
+    /// <summary>
+    /// <see cref="Names"/> in the same order without allocating: <c>foreach</c> over the returned walk copies one
+    /// struct, where <see cref="Names"/> allocates an iterator and its stack for every enumeration.
+    /// </summary>
+    public NameSetInterner.ElementWalk WalkNames() => new(Root);
 
     public bool Equals(CanonicalNameSet other) => ReferenceEquals(Root, other.Root);
 
@@ -314,6 +328,49 @@ internal abstract class CanonicalSetInterner<TElement>(IEqualityComparer<TElemen
             {
                 yield return ((Leaf)node).Element;
             }
+        }
+    }
+
+    /// <summary>
+    /// The elements below a node in key order (<see cref="EnumerateElements"/>' order), walked without allocating: a
+    /// depth-first walk over an inline stack. Each branch of a big-endian Patricia trie over non-negative keys splits on a
+    /// lower bit than its parent, so a path holds at most 31 branches, and the walk holds at most one pending right child
+    /// per branch on the current path plus the two children it pushes last: 32 nodes.
+    /// </summary>
+    internal struct ElementWalk
+    {
+        private CanonicalTriePath _pending;
+        private int _count;
+        private TElement _current;
+
+        internal ElementWalk(Node? root)
+        {
+            _current = default!;
+            if (root is not null)
+                _pending[_count++] = root;
+        }
+
+        public readonly TElement Current => _current;
+
+        public readonly ElementWalk GetEnumerator() => this;
+
+        public bool MoveNext()
+        {
+            while (_count > 0)
+            {
+                var node = _pending[--_count];
+                if (node is Branch branch)
+                {
+                    _pending[_count++] = branch.Right;
+                    _pending[_count++] = branch.Left;
+                    continue;
+                }
+
+                _current = ((Leaf)node!).Element;
+                return true;
+            }
+
+            return false;
         }
     }
 

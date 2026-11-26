@@ -1085,6 +1085,27 @@ internal static class PropertyExposureResolver
     /// key while its component is being settled, and nothing else (COMPONENT SETTLEMENTS,
     /// <c>PendingResolution</c>). Every read from a reused computation remains in the enclosing top-level
     /// recording, so dependency validation and reader notification remain complete.</para>
+    ///
+    /// <para>LIVE READ SETS (November 26 2026; implementation only, no classification, requirement, diagnostic or Lean
+    /// rule). A top-level settlement records by name the summaries its own frames read, and by identity the canonical
+    /// live-read set of each kept live settlement it reuses (<c>PendingResolution.ReplayLiveReads</c>): until then every
+    /// reuse enumerated that set into the recording, each settlement copied every name with its summary, and the
+    /// readers index held one entry per name and reader, so M readers taking one kept settlement of C names cost
+    /// M × C three times over (the <c>liveb</c> shape at 400 × 400: 159,600 replayed names, 160,000 stored reads and
+    /// 160,000 index entries). The DEPENDENCY INDEX now holds units: a name maps to the properties whose equation reads
+    /// it as a sibling (static, indexed at their first evaluation), to the settlements taken by some reader that read it
+    /// themselves, and to the live-read sets that hold it; a set maps to the settlements that reused it, a settlement to
+    /// the readers whose LAST evaluation took it. A set is indexed under its names once, while a taken settlement holds
+    /// it, whatever number of settlements and readers share it. A reader evaluated again leaves the settlements its new
+    /// evaluation did not take, a settlement no reader takes leaves the index, and a set no indexed settlement holds
+    /// leaves it too, so a stale membership lives no longer than its reader's next evaluation, which the change that
+    /// made it stale has queued. A changed summary notifies each reader reachable from its name once, in the order of
+    /// the readers' first evaluations: which summaries a settlement reads is structural, so this is exactly the reader
+    /// set, the notification count and the queue order of the former index, which kept every reader by name in the
+    /// order of its first read. A cached settlement stands with no test while no summary has changed since it last
+    /// stood; otherwise its own reads are compared as before and each of its sets by one stamp: the change that last
+    /// changed a summary the set names, which the change itself writes on every indexed set it reaches (StillValid; one
+    /// test per set where the former comparison read up to every name, both uncharged).</para>
     /// </summary>
     private sealed class LevelSolver(
         PropertyDependencySummaryGraph graph,
@@ -1099,8 +1120,91 @@ internal static class PropertyExposureResolver
         private Dictionary<string, Settlement>? _visibleSettlements;
         private Dictionary<string, Settlement>? _pendingSettlements;
 
-        // One cached top-level settlement and the level-local summaries it read (name, set read).
-        private sealed record Settlement(RequirementSet Result, (string Name, RequirementSet Read)[] Reads);
+        /// <summary>
+        /// One cached top-level settlement (LIVE READ SETS): its result, the level-local summaries its own frames read
+        /// (name, set read), the distinct live-read sets of the kept settlements it reused, the solver's change count when
+        /// it last stood, and the readers whose last evaluation took it. Identity is the reference: two settlements with
+        /// equal parts are two units of the dependency index.
+        /// </summary>
+        private sealed class Settlement(RequirementSet result, (string Name, RequirementSet Read)[] reads,
+            CanonicalNameSet[] readSets, long standsAt)
+        {
+            public RequirementSet Result => result;
+            public (string Name, RequirementSet Read)[] Reads => reads;
+            public CanonicalNameSet[] ReadSets => readSets;
+
+            /// <summary>The solver's change count when this settlement was last known to stand (<see cref="_changes"/>).</summary>
+            public long StandsAt = standsAt;
+
+            /// <summary>The evaluation that last took it (<see cref="_evaluation"/>).</summary>
+            public int TakenAt;
+
+            // The properties whose last evaluation took this settlement; it is indexed while there are any. Most settlements
+            // have one reader (their key holds the reader's origin), kept in place until a second one joins.
+            private int _soleReader = -1;
+            private HashSet<int>? _readers;
+
+            public int ReaderCount => _readers?.Count ?? (_soleReader >= 0 ? 1 : 0);
+
+            /// <summary>The readers when there may be more than one; null while <see cref="SoleReader"/> is the only one.</summary>
+            public HashSet<int>? Readers => _readers;
+
+            /// <summary>The one reader while <see cref="Readers"/> is null (-1 for none).</summary>
+            public int SoleReader => _soleReader;
+
+            public bool AddReader(int reader)
+            {
+                if (_readers is not null)
+                    return _readers.Add(reader);
+                if (_soleReader < 0)
+                {
+                    _soleReader = reader;
+                    return true;
+                }
+
+                if (_soleReader == reader)
+                    return false;
+                _readers = [_soleReader, reader];
+                _soleReader = -1;
+                return true;
+            }
+
+            public bool RemoveReader(int reader)
+            {
+                if (_readers is not null)
+                    return _readers.Remove(reader);
+                if (_soleReader != reader)
+                    return false;
+                _soleReader = -1;
+                return true;
+            }
+        }
+
+        // Everything the dependency index holds under one name (LIVE READ SETS).
+        private sealed class NameDependents
+        {
+            public HashSet<int>? Siblings;
+            public HashSet<Settlement>? Settlements;
+            public HashSet<ReadSet>? Sets;
+
+            public bool IsEmpty => Siblings is null && Settlements is not { Count: > 0 } && Sets is not { Count: > 0 };
+        }
+
+        // One live-read set in the dependency index (keyed by its canonical set): the indexed settlements that hold it, and
+        // the solver's change count at the last change of a summary it names since it was indexed (0 before any).
+        private sealed class ReadSet
+        {
+            public readonly HashSet<Settlement> Settlements = [];
+            public long ChangedAt;
+        }
+
+        private Dictionary<string, NameDependents>? _dependents;
+        private Dictionary<CanonicalNameSet, ReadSet>? _readSets;
+        private List<Settlement>? _taking;
+        private object?[]? _taken;
+        private int _evaluation;
+        private long _changes;
+        private long _entries;
 
         public void Solve()
         {
@@ -1123,50 +1227,266 @@ internal static class PropertyExposureResolver
 
             var queue = new Queue<int>();
             var queued = new bool[properties.Count];
+            // Each property is first evaluated at its place in this order, before any is evaluated again: a reader's rank
+            // is the order of its first evaluation, the order the former index kept a name's readers in.
+            var rank = new int[properties.Count];
+            var count = 0;
             foreach (var index in DependencyFirstOrder.Of(properties.Count, i => equationOf[properties[i].Name].Index == i, StaticReads))
             {
                 queue.Enqueue(index);
                 queued[index] = true;
+                rank[index] = count++;
             }
 
-            var readers = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
-            var reads = new List<string>();
+            int[]? notifiedAt = null;
+            var change = 0;
+            List<int>? woken = null;
+            Comparison<int>? byRank = null;
             while (queue.TryDequeue(out var index))
             {
                 queued[index] = false;
                 observations?.RecordRequiredAncestorLevelEvaluation();
                 FrontEndTraversalObservations.ObserveCancellation(
                     observations, FrontEndCancellationCheckpoint.ExposureLevelEvaluation, cancellationToken);
-                reads.Clear();
-                var next = Evaluate(index, reads);
-                foreach (var readName in reads)
-                {
-                    if (!readers.TryGetValue(readName, out var nameReaders))
-                        readers.Add(readName, nameReaders = []);
-                    nameReaders.Add(index);
-                }
+                _taking?.Clear();
+                var next = Evaluate(index);
+                Take(index);
 
                 var name = properties[index].Name;
                 if (next.Equals(summaries[name]))
                     continue;
 
                 summaries[name] = next;
+                _changes++;
                 resolution.NoteSummaryChanged(name, index);
-                if (!readers.TryGetValue(name, out var dependents))
+                if (_dependents is null || !_dependents.TryGetValue(name, out var dependents))
                     continue;
-                foreach (var dependent in dependents)
+
+                // Every indexed set that names it changes now (StillValid).
+                if (dependents.Sets is { } changedSets)
+                    foreach (var set in changedSets)
+                        set.ChangedAt = _changes;
+
+                // Sibling readers alone are each held once, in the order of their first evaluations (rank order).
+                if (dependents.Settlements is not { Count: > 0 } && dependents.Sets is not { Count: > 0 })
                 {
-                    observations?.RecordRequiredAncestorReaderNotification();
-                    if (!queued[dependent])
+                    foreach (var dependent in dependents.Siblings!)
+                        Notify(dependent);
+                    continue;
+                }
+
+                // Each reader reachable from the name once, in rank order.
+                change++;
+                notifiedAt ??= new int[properties.Count];
+                (woken ??= []).Clear();
+                if (dependents.Siblings is { } siblings)
+                    foreach (var reader in siblings)
+                        Wake(reader);
+                if (dependents.Settlements is { } settlements)
+                    foreach (var settlement in settlements)
+                        WakeReaders(settlement);
+                if (dependents.Sets is { } sets)
+                    foreach (var set in sets)
+                        foreach (var settlement in set.Settlements)
+                            WakeReaders(settlement);
+                for (var i = 1; i < woken.Count; i++)
+                {
+                    if (rank[woken[i - 1]] <= rank[woken[i]])
+                        continue;
+                    woken.Sort(byRank ??= (a, b) => rank[a] - rank[b]);
+                    break;
+                }
+
+                foreach (var dependent in woken)
+                    Notify(dependent);
+            }
+
+            void Notify(int dependent)
+            {
+                observations?.RecordRequiredAncestorReaderNotification();
+                if (!queued[dependent])
+                {
+                    queued[dependent] = true;
+                    queue.Enqueue(dependent);
+                }
+            }
+
+            void Wake(int reader)
+            {
+                if (notifiedAt![reader] == change)
+                    return;
+                notifiedAt[reader] = change;
+                woken!.Add(reader);
+            }
+
+            void WakeReaders(Settlement settlement)
+            {
+                if (settlement.Readers is { } readers)
+                    foreach (var reader in readers)
+                        Wake(reader);
+                else
+                    Wake(settlement.SoleReader);
+            }
+        }
+
+        // The settlements one evaluation of `reader` took (_taking, each one that read a summary of the level) become its
+        // dependency units: it joins the ones it did not hold and leaves the ones its previous evaluation took and this one
+        // did not (LIVE READ SETS).
+        private void Take(int reader)
+        {
+            var evaluation = ++_evaluation;
+            // No settlement of this solve has read a summary of the level yet: no reader holds a unit.
+            if (_taking is null)
+                return;
+            var took = 0;
+            for (var t = 0; t < _taking.Count; t++)
+            {
+                var settlement = _taking[t];
+                if (settlement.TakenAt == evaluation)
+                    continue;
+                settlement.TakenAt = evaluation;
+                _taking[took++] = settlement;
+                if (!settlement.AddReader(reader))
+                    continue;
+                Created(1);
+                if (settlement.ReaderCount == 1)
+                    IndexSettlement(settlement);
+            }
+
+            _taking.RemoveRange(took, _taking.Count - took);
+            if (took == 0 && _taken is null)
+                return;
+            // What each property's last evaluation took, once any took a settlement with dependencies: nothing, its one
+            // settlement, or an array of several.
+            var taken = _taken ??= new object?[graph.Count];
+            var same = false;
+            switch (taken[reader])
+            {
+                case Settlement one:
+                    Leave(one);
+                    break;
+                case Settlement[] several:
+                    same = several.Length == took;
+                    for (var i = 0; i < several.Length; i++)
                     {
-                        queued[dependent] = true;
-                        queue.Enqueue(dependent);
+                        same = same && ReferenceEquals(several[i], _taking[i]);
+                        Leave(several[i]);
                     }
+
+                    break;
+            }
+
+            if (!same)
+                taken[reader] = took switch { 0 => null, 1 => _taking[0], _ => _taking.ToArray() };
+
+            // The reader leaves a settlement its previous evaluation took and this one did not.
+            void Leave(Settlement settlement)
+            {
+                if (settlement.TakenAt == evaluation || !settlement.RemoveReader(reader))
+                    return;
+                Retired(1);
+                if (settlement.ReaderCount == 0)
+                    UnindexSettlement(settlement);
+            }
+        }
+
+        private void IndexSettlement(Settlement settlement)
+        {
+            var reads = settlement.Reads;
+            for (var i = 0; i < reads.Length; i++)
+            {
+                CheckCancellation(i);
+                (Dependents(reads[i].Name).Settlements ??= []).Add(settlement);
+                Created(1);
+            }
+
+            foreach (var names in settlement.ReadSets)
+            {
+                var readSets = _readSets ??= [];
+                if (!readSets.TryGetValue(names, out var set))
+                {
+                    readSets.Add(names, set = new ReadSet());
+                    var i = 0;
+                    foreach (var name in names.WalkNames())
+                    {
+                        if ((i++ & 255) == 0)
+                            FrontEndTraversalObservations.ObserveCancellation(observations,
+                                FrontEndCancellationCheckpoint.ExposureReadSetRegistration, cancellationToken);
+                        (Dependents(name).Sets ??= []).Add(set);
+                        Created(1);
+                    }
+                }
+
+                set.Settlements.Add(settlement);
+                Created(1);
+            }
+        }
+
+        private void UnindexSettlement(Settlement settlement)
+        {
+            var reads = settlement.Reads;
+            for (var i = 0; i < reads.Length; i++)
+            {
+                CheckCancellation(i);
+                var dependents = _dependents![reads[i].Name];
+                if (dependents.Settlements!.Remove(settlement))
+                    Retired(1);
+                Release(reads[i].Name, dependents);
+            }
+
+            foreach (var names in settlement.ReadSets)
+            {
+                var set = _readSets![names];
+                if (set.Settlements.Remove(settlement))
+                    Retired(1);
+                if (set.Settlements.Count > 0)
+                    continue;
+                _readSets.Remove(names);
+                var i = 0;
+                foreach (var name in names.WalkNames())
+                {
+                    CheckCancellation(i++);
+                    var dependents = _dependents![name];
+                    if (dependents.Sets!.Remove(set))
+                        Retired(1);
+                    Release(name, dependents);
                 }
             }
         }
 
-        private RequirementSet Evaluate(int propertyIndex, List<string> reads)
+        private NameDependents Dependents(string name)
+        {
+            var all = _dependents ??= new(StringComparer.Ordinal);
+            if (!all.TryGetValue(name, out var dependents))
+                all.Add(name, dependents = new NameDependents());
+            return dependents;
+        }
+
+        private void Release(string name, NameDependents dependents)
+        {
+            if (dependents.IsEmpty)
+                _dependents!.Remove(name);
+        }
+
+        private void Created(long entries)
+        {
+            _entries += entries;
+            observations?.RecordRequiredAncestorDependencyEntries(entries, _entries);
+        }
+
+        private void Retired(long entries)
+        {
+            _entries -= entries;
+            observations?.RecordRequiredAncestorDependencyRetirements(entries);
+        }
+
+        private void CheckCancellation(int index)
+        {
+            if ((index & 255) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        private RequirementSet Evaluate(int propertyIndex)
         {
             var node = graph[propertyIndex];
             var requirements = _constants[propertyIndex] ??= sets.From(
@@ -1181,25 +1501,27 @@ internal static class PropertyExposureResolver
             // Dropping such a name classified `Y = X` as Exported beside a local-only opened `X`,
             // so the run-scoped cache handed the first activation's value to every later one.
             foreach (var dependencyName in node.SummaryVisiblePropertyDependencyNames)
-                requirements = sets.Union(requirements, Settle(dependencyName, pending: null, reads));
+                requirements = sets.Union(requirements, Settle(dependencyName, pending: null));
 
+            // Sibling reads are the summary graph's static edges, the same at every evaluation: indexed by the first.
             foreach (var dependencyIndex in node.SummarySiblingDependencyIndices)
             {
                 var dependencyName = graph.Properties[dependencyIndex].Name;
                 if (summaries.TryGetValue(dependencyName, out var summary))
                 {
-                    reads.Add(dependencyName);
+                    if ((Dependents(dependencyName).Siblings ??= []).Add(propertyIndex))
+                        Created(1);
                     requirements = sets.Union(requirements, summary);
                 }
             }
 
             foreach (var (key, pending) in node.ReferenceInputs)
-                requirements = sets.Union(requirements, Settle(key, pending, reads));
+                requirements = sets.Union(requirements, Settle(key, pending));
 
             return requirements;
         }
 
-        private RequirementSet Settle(string key, PendingReference? pending, List<string> reads)
+        private RequirementSet Settle(string key, PendingReference? pending)
         {
             var settlements = pending is null
                 ? _visibleSettlements ??= new(StringComparer.Ordinal)
@@ -1211,29 +1533,50 @@ internal static class PropertyExposureResolver
                 var result = pending is null
                     ? resolution.ResolveVisibleName(key, level)
                     : resolution.Resolve(pending, level);
-                resolution.EndRecording();
+                var readSets = resolution.EndRecording();
                 (string Name, RequirementSet Read)[] read = levelReads.Count == 0
                     ? []
                     : new (string Name, RequirementSet Read)[levelReads.Count];
                 var i = 0;
                 foreach (var readName in levelReads)
                     read[i++] = (readName, summaries[readName]);
-                settlements[key] = settlement = new Settlement(result, read);
+                observations?.RecordRequiredAncestorSettlementReads(read.Length, readSets.Length);
+                settlements[key] = settlement = new Settlement(result, read, readSets, _changes);
             }
 
-            foreach (var (readName, _) in settlement.Reads)
-                reads.Add(readName);
+            // A settlement that read no summary of the level depends on none and is no unit of the dependency index.
+            if (settlement.Reads.Length > 0 || settlement.ReadSets.Length > 0)
+                (_taking ??= []).Add(settlement);
             return settlement.Result;
         }
 
+        // Whether every summary the settlement read is still the current one: with no test while no summary has changed
+        // since it last stood, otherwise its own reads compared and each live-read set tested by its last change (LIVE
+        // READ SETS). A cached settlement is indexed: the reader that last settled its key took it, and a reader leaves it
+        // only by taking another settlement of that key, which replaces it here. So each set it holds has been indexed, and
+        // stamped at every change of a summary it names, since before the settlement last stood; a set indexed anew starts
+        // at 0, because every settlement holding it then was settled after its last change. Summaries only grow, so a
+        // changed one never equals what was read again: the stamp test is the comparison of every name it replaces.
         private bool StillValid(Settlement settlement)
         {
+            if (settlement.StandsAt == _changes)
+                return true;
             foreach (var (readName, read) in settlement.Reads)
             {
                 if (!summaries[readName].Equals(read))
                     return false;
             }
 
+            foreach (var names in settlement.ReadSets)
+            {
+                if (_readSets is null || !_readSets.TryGetValue(names, out var set))
+                    throw new InvalidOperationException("A cached settlement that holds a live-read set is indexed.");
+                observations?.RecordRequiredAncestorReadSetCheck(resolution.LiveNamesSaturated);
+                if (set.ChangedAt > settlement.StandsAt)
+                    return false;
+            }
+
+            settlement.StandsAt = _changes;
             return true;
         }
     }
@@ -1942,14 +2285,16 @@ internal static class PropertyExposureResolver
         /// UNKNOWN (<see cref="Frame.LiveReadsKnown"/>: it read live and names none), as does every frame that absorbs or
         /// reuses one, and such a settlement is never kept beyond its Run (C1's open walks, LIVE SETTLEMENTS): the ordinary
         /// settlement, which is what the sixteen-name list did past its cap. The level's own record of what its top-level
-        /// settlement read (<c>_levelReads</c>), which decides when the level solver evaluates a reader again, never depends
-        /// on the interner and stays complete.</para>
+        /// settlement read, which decides when the level solver evaluates a reader again, stays complete: the names its own
+        /// frames read (<c>_levelReads</c>) are recorded without the interner, and the set of a kept settlement it reuses
+        /// (LIVE READ SETS, <see cref="ReplayLiveReads"/>) stays valid after the interner is released.</para>
         /// Never static, and never shared: the component discovery (<see cref="SolveComponent"/>) has its own, since a frame
         /// there that reads a live summary disqualifies the component.
         /// </summary>
         private LiveReadNameInterner? _liveNameInterner;
         private int _liveNameEntries;
         private bool _liveNamesSaturated;
+        public bool LiveNamesSaturated => _liveNamesSaturated;
 
         // `set` with the live summary `name` (LIVE READS); no set (unknown) once the interner is past its capacity.
         private CanonicalNameSet WithLiveName(CanonicalNameSet set, string name)
@@ -2215,33 +2560,51 @@ internal static class PropertyExposureResolver
             }
 
             var names = settled.LiveReads;
-            if (_liveNameInterner is { } interner && changes <= names.Count && changes <= _recentSummaryChanges!.Count)
-            {
-                ledger?.Work(changes, cancellationToken);
-                memos.Observations?.RecordSettlementLiveReadChecks(changes);
+            var byChanges = TestsChanges(names, changes);
+            var units = byChanges ? changes : names.Count;
+            ledger?.Work(units, cancellationToken);
+            memos.Observations?.RecordSettlementLiveReadChecks(units);
+            if (byChanges)
                 memos.Observations?.RecordSettlementLiveChangeChecks(changes);
+            if (ChangedSince(names, revision, changes, byChanges))
+                return Stale(settled);
+            return true;
+        }
+
+
+        // Whether the changes since a revision are tested against a set's names, one interner Contains each: only while the
+        // interner and its history exist, every change is still in the history, and the changes are no more than the names.
+        // Otherwise each name's last-change stamp is tested.
+        private bool TestsChanges(CanonicalNameSet names, long changes)
+            => _liveNameInterner is not null && changes <= names.Count && _recentSummaryChanges is { } recent && changes <= recent.Count;
+
+        // Whether a summary named in `names` changed after `revision`: one of the `changes` since then is a name the set
+        // holds, or (byChanges false) one of its names has a later last-change stamp (LIVE REVISIONS).
+        private bool ChangedSince(CanonicalNameSet names, long revision, long changes, bool byChanges)
+        {
+            if (byChanges)
+            {
+                var interner = _liveNameInterner!;
                 var capacity = ChangeWindowCapacity;
                 for (var i = 0; i < changes; i++)
                 {
                     CheckWideWalkCancellation(i);
                     if (interner.Contains(names, _recentSummaryChanges![(int)((revision + i) % capacity)]))
-                        return Stale(settled);
+                        return true;
                 }
 
-                return true;
+                return false;
             }
 
-            ledger?.Work(names.Count, cancellationToken);
-            memos.Observations?.RecordSettlementLiveReadChecks(names.Count);
             var index = 0;
-            foreach (var name in names.Names)
+            foreach (var name in names.WalkNames())
             {
                 CheckWideWalkCancellation(index++);
                 if (_equations!.TryGetValue(name, out var equation) && equation.ChangedAt > revision)
-                    return Stale(settled);
+                    return true;
             }
 
-            return true;
+            return false;
         }
 
         private bool Stale(SettlementShare.Settled settled)
@@ -2251,15 +2614,19 @@ internal static class PropertyExposureResolver
             return false;
         }
 
+        // A reused kept settlement's live reads become reads of the top-level settlement in progress (LIVE READ SETS): its
+        // canonical set is recorded by identity, never enumerated, and the level solver indexes each distinct set once.
         private void ReplayLiveReads(CanonicalNameSet names)
         {
             if (_levelReads is null) return;
-            var i = 0;
-            foreach (var name in names.Names)
-            {
-                CheckWideWalkCancellation(i++);
-                _levelReads.Add(name);
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            memos.Observations?.RecordSettlementLiveReadReplay();
+            var sets = _levelReadSets ??= [];
+            // Keep one entry per identity even if a recording alternates between the same sets. A
+            // single set needs no hash table. The list preserves the order of the first replays.
+            if (sets.Count > 0 && (sets[0].Equals(names) || !(_otherReadSets ??= []).Add(names)))
+                return;
+            sets.Add(names);
         }
 
         private void CheckWideWalkCancellation(int index)
@@ -2280,20 +2647,33 @@ internal static class PropertyExposureResolver
         private Frame? _running;
 
         /// <summary>
-        /// Starts recording the level-in-progress summaries a top-level settlement reads.
-        /// A settlement with no such reads leaves its empty set available for the next one.
+        /// Starts recording the level-in-progress summaries a top-level settlement reads: by name what its own frames read
+        /// (the returned set), and by identity the live-read set of each kept settlement it reuses (<see cref="ReplayLiveReads"/>,
+        /// taken by <see cref="EndRecording"/>). A settlement with no names read leaves its empty set available for the next one.
         /// </summary>
         public HashSet<string> BeginRecording()
             => _levelReads = _emptyRecording ?? new HashSet<string>(StringComparer.Ordinal);
 
         private HashSet<string>? _emptyRecording;
+        private List<CanonicalNameSet>? _levelReadSets;
+        private HashSet<CanonicalNameSet>? _otherReadSets;
 
-        public void EndRecording()
+        /// <summary>
+        /// Ends the recording: the distinct live-read sets of the kept settlements it reused, in the order first reused.
+        /// Each stood when it was reused, and no summary changes during a recording.
+        /// </summary>
+        public CanonicalNameSet[] EndRecording()
         {
             // A nonempty recording belongs to its reader. Recycling it would make later small recordings
             // repeatedly clear a bucket array sized for the largest preceding settlement.
             _emptyRecording = _levelReads is { Count: 0 } ? _levelReads : null;
             _levelReads = null;
+            if (_levelReadSets is not { Count: > 0 } sets)
+                return [];
+            var recorded = sets.ToArray();
+            sets.Clear();
+            _otherReadSets?.Clear();
+            return recorded;
         }
 
         // The direct-chain property lookup, recording a read of the level-in-progress summary it returns.
