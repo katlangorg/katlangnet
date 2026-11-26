@@ -4337,9 +4337,9 @@ theorem EvalState.lateRefusedFor_unserved (s : EvalState) (ctx : EvalCtx) (activ
     other context it records nothing. It writes `EvalState.cellInputs` only. Called by the three input
     reads of E-22 that go through an activation — a captured parameter operation
     (`capturedParameterActivation?`), an admitted local-only property read (`noteLocalOnlyRead`)
-    and an admitted access of a local-only member (`noteMemberAccess`) — and, with the reused
-    cell's own refusal, where the reuse of a retained cell passes its recorded read on
-    (`judgeRetainedCellReuse`).
+    and an admitted access of a local-only member (`noteMemberAccess`, on a structural route or for
+    an `open`-provided name, `noteOpenAccess`) — and, with the reused cell's own refusal, where the
+    reuse of a retained cell passes its recorded read on (`judgeRetainedCellReuse`).
     A read that lands below an admitted reader's watermark WHILE a detached evaluation that detaches
     it is served (`CellRecords.lateRefused`) is REFUSED with `refusal` instead, in the state it
     started from: the read that evaluation's own detached context refuses. C#:
@@ -4633,8 +4633,10 @@ def spreadCollectorSlice? (operand : Expr) (caller : EvalCtx) : EvalM (Option (L
     has already found usable.
     `.localConditional` is never assigned to a `PropDef`; declared by a host, it is
     inaccessible. An ADMITTED access of a local-only member used its owners' activations: on the
-    structural routes it is an input read of the retained cell whose computation makes it
-    (`noteMemberAccess`, ledger R-1). C#: `Evaluator.IsAccessibleFrom`. -/
+    structural routes, and for an `open`-provided name where the selected member is consumed
+    (`noteOpenAccess`), it is an input read of the retained cell whose computation makes it
+    (`noteMemberAccess`, ledger R-1); a dotted `open` target's step is not noted.
+    C#: `Evaluator.IsAccessibleFrom`. -/
 def memberAccessible? (ctx : EvalCtx) (container : Algorithm) (p : PropDef) : Bool :=
   match p.exposure with
   | .exported => true
@@ -4696,11 +4698,13 @@ def memberAccessActivation? (ctx : EvalCtx) (container : Algorithm) (p : PropDef
     so for an exported member. Called after the access law's admissions on the STRUCTURAL routes —
     a dot access (`EvalBody.evalDotCallCounted`, `EvalBody.resolveDotReceiver?`,
     `EvalBody.projectNeedStructuralMember`, the plan route's `classifyPlanRouteWith`) and a static
-    alias path step (`aliasStepNavigateWith`). NOT on the `open` route (`openNavigateWith`,
-    `resolveAlgForOpen`, `lookupOpenProperties`): the lexical lookup is a state-free judgment of the
-    model (`KatLangArityLaws/MemberSettled.lean`, `sf_lookupLexicalPropertyRaw`), so an `open`-provided
-    local-only member a retained cell's computation uses is not recorded on the cell (ledger R-1,
-    open qualification). C#: `Evaluator.AdmitMemberAccess` in `IsAccessibleFrom`. -/
+    alias path step (`aliasStepNavigateWith`) — and, for an `open`-PROVIDED name, where the selected
+    member is consumed (`noteOpenAccess` in `lookupLexicalPropertyNoted`): the lexical lookup that
+    admitted it is a state-free judgment of the model (`KatLangArityLaws/MemberSettled.lean`,
+    `sf_lookupLexicalPropertyRaw`), so it only reports the admission (`ResolvedProperty.openRefusal`).
+    NOT for the member steps of an `open` TARGET's path (`openNavigateWith`, `resolveAlgForOpen`): a
+    target is resolved for every lookup that consults its level, and those admissions are not noted
+    (ledger R-1, open-target qualification). C#: `Evaluator.AdmitMemberAccess` in `IsAccessibleFrom`. -/
 def noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : PropDef) (refusal : Error) : EvalM Unit :=
   match ctx.inputRecord with
   | none => pure ()
@@ -6076,11 +6080,19 @@ structure ResolvedOpen where
   deriving Repr
 
 /-- A resolved property-style access with the owner and binding retained for
-    zero-argument property cache keys. -/
+    zero-argument property cache keys.
+
+    `openRefusal` is THE OPEN ROUTE'S ADMISSION (ledger R-1, November 2026): `some refusal` exactly
+    when an `open` PROVIDED the binding, whose access law (`memberAccessible?`) admitted the selected
+    member at the reading site — `refusal` is what that law reports where the member is inaccessible
+    (`lookupOpenProperties`) — and `none` for a structural selection, which no access law judges. The
+    lookup that sets it stays a state-free judgment; the consumer of the selected member makes the
+    admission's input read (`noteOpenAccess`). C#: `ResolvedLexicalProperty.OpenProvider`. -/
 structure ResolvedProperty where
   owner   : Algorithm
   binding : PropDef
   alg     : Algorithm
+  openRefusal : Option Error := none
   deriving Repr
 
 /-- Where a STRUCTURE or INVOCATION alias chase ends (M4★, `EvalBody.resolveAliasChase`):
@@ -7425,8 +7437,12 @@ def resolveAllOpens (a : Algorithm) (ctx : EvalCtx) : EvalM (List ResolvedOpen) 
     Only public properties are visible through opens.
     Returns:
       * ok none              if no open provides `name` publicly
-      * ok (some prop)       if exactly one open provides it publicly (alg wired to library parent)
-      * error ambiguousOpen if multiple opens provide it publicly -/
+      * ok (some prop)       if exactly one open provides it publicly (alg wired to library parent),
+                             carrying the refusal of the access it admitted (`ResolvedProperty.openRefusal`)
+      * error ambiguousOpen if multiple opens provide it publicly
+    The lookup stays a state-free judgment (`MemberSettled.sf_lookupOpenProperties`): the admitted
+    access's input read inside a retained cell's computation (ledger R-1) is made where the selected
+    member is consumed (`noteOpenAccess`), never here. -/
 def lookupOpenProperties (a : Algorithm) (name : Ident) (ctx : EvalCtx)
     : EvalM (Option ResolvedProperty) := do
   let ctx' := { ctx.push a with headScope := some (scopeInContext a ctx) }
@@ -7456,10 +7472,11 @@ def lookupOpenProperties (a : Algorithm) (name : Ident) (ctx : EvalCtx)
   match hits with
   | [] => pure none
   | [h] =>
+      let refusal := Error.localOnlyProperty h.provider name h.property.binding.exposure
       if memberAccessible? ctx h.property.owner h.property.binding then
-        pure (some h.property)
+        pure (some { h.property with openRefusal := some refusal })
       else
-        .error (Error.localOnlyProperty h.provider name h.property.binding.exposure)
+        .error refusal
   | hs => .error (Error.ambiguousOpen name (hs.map (fun hit => hit.provider)))
 
 --------------------------------------------------------------------------
@@ -7531,7 +7548,10 @@ def lookupOpenPropertiesInChain (a : Algorithm) (name : Ident)
     which reads it through its STRUCTURE, so a transparent reference navigates
     its target's declarations, M4★), the supplied-cell projection, and alias
     resolution itself (`resolveAliasStepWith`); every other consumer reads it
-    through `lookupLexicalProperty`, which makes it callable.
+    through `lookupLexicalProperty`, which makes it callable. An evaluation that
+    consumes the selection reads it through `lookupLexicalPropertyNoted`, which adds
+    the input read of an access an `open` admitted (ledger R-1); this lookup itself
+    reads and writes no state (`MemberSettled.sf_lookupLexicalPropertyRaw`).
     C#: `Evaluator.LookupLexicalRaw`. -/
 def lookupLexicalPropertyRaw (a : Algorithm) (name : Ident) (ctx : EvalCtx)
     : EvalM ResolvedProperty := do
@@ -7555,6 +7575,63 @@ def lookupLexicalPropertyRaw (a : Algorithm) (name : Ident) (ctx : EvalCtx)
           match (<- lookupOpenPropertiesInChain a name ctx) with
           | some r => pure r
           | none   => .error (Error.unknownName name)
+
+/-- THE OPEN ROUTE'S INPUT READ (ledger R-1, November 2026): a binding the lexical lookup selected
+    through an `open` (`ResolvedProperty.openRefusal`) passed that route's access law at the reading
+    site, so the access used the owner activations the law requires — whether or not the member's
+    body ever reads the owner's parameter — and inside a retained cell's computation it is an input
+    read through the least of them (`noteMemberAccess`), with the refusal the open route reports where
+    the member is inaccessible: a reader that detaches the owner is refused the cell exactly as its
+    own use of the name would be. A structural selection notes nothing: no access law judges it. The
+    note belongs to the evaluation that CONSUMES the selected member (`lookupLexicalPropertyNoted`),
+    never to the lookup, which stays a state-free judgment (`MemberSettled.sf_lookupLexicalPropertyRaw`).
+    Outside every retained cell's computation it does nothing (`noteOpenAccess_unmarked`).
+    C#: `Evaluator.AdmitOpenAccess`. -/
+def noteOpenAccess (ctx : EvalCtx) (resolved : ResolvedProperty) : EvalM Unit :=
+  match resolved.openRefusal with
+  | some refusal => noteMemberAccess ctx resolved.owner resolved.binding refusal
+  | none => pure ()
+
+theorem noteOpenAccess_unmarked (ctx : EvalCtx) (resolved : ResolvedProperty)
+    (h : ctx.inputRecord = none) : noteOpenAccess ctx resolved = pure () := by
+  unfold noteOpenAccess
+  split
+  · exact noteMemberAccess_unmarked _ _ _ _ h
+  · rfl
+
+/-- THE LEXICAL SELECTION AN EVALUATION CONSUMES (ledger R-1, the `open` route, November 2026): the
+    ownership-first lexical lookup (`lookupLexicalPropertyRaw`), unchanged — the same selection, the
+    same provider order, the same state-free judgment — followed by the input read of the access an
+    `open` admitted (`noteOpenAccess`). Every evaluation that USES the selected binding selects through
+    it: the callable and VALUE lookups (`EvalBody.lookupLexicalProperty`,
+    `EvalBody.lookupLexicalValueProperty`), a supplied name's projection (`EvalBody.projectNeedWritten`),
+    a receiver head (`EvalBody.resolveDotReceiver?`, `EvalBody.projectNeedStructuralMember`), the
+    `.string` receiver (`EvalBody.evalDotStringReceiverValue`), an alias's static step and its route
+    decision (`staticPathSelectWith`, `aliasRouteIsIntrinsicWith`). A re-read that consumes nothing — the
+    publication identity of a callee the callee law already selected (`EvalBody.writtenCalleeBinding?`)
+    and the surface layer's promotion probe (`shouldTreatAsImplicitParam`) — keeps the raw lookup.
+    Outside every retained cell's computation it IS the raw lookup (`lookupLexicalPropertyNoted_unmarked`).
+    C#: `Evaluator.LookupLexicalNoted`. -/
+def lookupLexicalPropertyNoted (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM ResolvedProperty := do
+  let resolved <- lookupLexicalPropertyRaw a name ctx
+  noteOpenAccess ctx resolved
+  pure resolved
+
+theorem lookupLexicalPropertyNoted_unmarked (a : Algorithm) (name : Ident) (ctx : EvalCtx)
+    (h : ctx.inputRecord = none) :
+    lookupLexicalPropertyNoted a name ctx = lookupLexicalPropertyRaw a name ctx := by
+  have hnote : (fun resolved => noteOpenAccess ctx resolved >>= fun _ => (pure resolved : EvalM ResolvedProperty)) =
+      fun resolved => pure resolved := by
+    funext resolved
+    rw [noteOpenAccess_unmarked _ _ h]
+    rfl
+  show (lookupLexicalPropertyRaw a name ctx >>= fun resolved =>
+      noteOpenAccess ctx resolved >>= fun _ => pure resolved) = _
+  rw [hnote]
+  cases lookupLexicalPropertyRaw a name ctx with
+  | mk run =>
+    show EvalM.mk (run >>= fun r => (pure r : ExceptT Error (StateM EvalState) ResolvedProperty)) = EvalM.mk run
+    rw [bind_pure]
 
 /-- The member steps of a static alias path (`resolveAliasStepWith`): each receiver read through
     `structureOf`, each declared member wired to it and checked for accessibility, the binding of
@@ -7600,7 +7677,7 @@ def staticPathSelectWith (structureOf : Algorithm → EvalCtx → EvalM (Option 
   match Expr.staticAliasPath? target with
   | none => .error notStatic
   | some (.resolve name, steps) =>
-      let resolved <- lookupLexicalPropertyRaw owner name stepCtx
+      let resolved <- lookupLexicalPropertyNoted owner name stepCtx
       match <- aliasStepNavigateWith structureOf stepCtx notStatic resolved.alg (some resolved) name steps with
       | some found => pure found
       | none => .error notStatic
@@ -10563,7 +10640,7 @@ def aliasRouteIsIntrinsicWith (structureOf : Algorithm → EvalCtx → EvalM (Op
     | some (.resolve name, steps) =>
         match ctx.callStack with
         | owner :: _ => do
-            let resolved <- lookupLexicalPropertyRaw owner name ctx
+            let resolved <- lookupLexicalPropertyNoted owner name ctx
             aliasStepNavigateWith structureOf ctx notStatic resolved.alg (some resolved) name steps
         | [] => .error (Error.unknownName name)
     | some (.algorithmExpr block, steps) =>
@@ -11226,7 +11303,7 @@ def EvalBody.resolveAliasValueTarget (rec : EvalRec) (a : Algorithm) (ctx : Eval
     is the alias's INVOCATION target (`resolveAliasTarget`). C#: `Evaluator.LookupLexical` (over
     `NormalizeAliasBinding`). -/
 def EvalBody.lookupLexicalProperty (rec : EvalRec) (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM ResolvedProperty := do
-  let resolved <- lookupLexicalPropertyRaw a name ctx
+  let resolved <- lookupLexicalPropertyNoted a name ctx
   match resolved.alg with
   | .alias _ _ _ _ _ _ => pure { resolved with alg := (<- rec.resolveAliasTarget resolved.alg ctx) }
   | _ => pure resolved
@@ -11236,7 +11313,7 @@ def EvalBody.lookupLexicalProperty (rec : EvalRec) (a : Algorithm) (name : Ident
     (`resolveAliasValueTarget`): the TERMINAL binding of a static chain (whose key, owner and
     activation the read uses) or the first runtime-target alias. C#: `Evaluator.LookupLexicalForValue`. -/
 def EvalBody.lookupLexicalValueProperty (rec : EvalRec) (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM AliasTerminal := do
-  let resolved <- lookupLexicalPropertyRaw a name ctx
+  let resolved <- lookupLexicalPropertyNoted a name ctx
   match resolved.alg with
   | .alias _ _ _ _ _ _ => rec.resolveAliasValueTarget resolved.alg ctx
   | _ => pure (.binding resolved.owner resolved.binding resolved.alg false)
@@ -11374,7 +11451,7 @@ def EvalBody.projectNeedWritten (rec : EvalRec) (source : Expr) (caller : EvalCt
     | .resolve n =>
         match caller.callStack with
         | owner :: _ =>
-            match <- evalAttempt (lookupLexicalPropertyRaw owner n caller) with
+            match <- evalAttempt (lookupLexicalPropertyNoted owner n caller) with
             | .ok resolved =>
                 match resolved.alg with
                 | .alias _ _ _ _ _ _ => throughAlias resolved.alg
@@ -11414,7 +11491,7 @@ def EvalBody.projectNeedStructuralMember (rec : EvalRec) (source : Expr) (ctx : 
           return none
   | .resolve name =>
       match ctx.callStack with
-      | owner :: _ => pure (some (<- lookupLexicalPropertyRaw owner name ctx).alg)
+      | owner :: _ => pure (some (<- lookupLexicalPropertyNoted owner name ctx).alg)
       | [] => throw (Error.unknownName name)
   | .algorithmExpr algorithm => pure (some (wireToCaller ctx algorithm))
   -- L2 (META-S3-1): a parameter head is its supplied cell's TYPED CALLABLE outcome — absence is
@@ -11509,7 +11586,7 @@ def EvalBody.resolveDotReceiver? (rec : EvalRec) (e : Expr) (ctx : EvalCtx) : Ev
   | .resolve n =>
       match ctx.callStack with
       | a :: _ => do
-          let resolved <- lookupLexicalPropertyRaw a n ctx
+          let resolved <- lookupLexicalPropertyNoted a n ctx
           rec.resolveAliasStructure resolved.alg ctx
       | [] => .error (Error.unknownName n)
   | .algorithmExpr a => rec.resolveAliasStructure (wireToCaller ctx a) ctx
@@ -13170,7 +13247,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
               -- A receiver reached THROUGH an alias reads its VALUE terminal, a missing output named as
               -- that terminal binding's (exactly what its former row read reported); a direct binding is
               -- its own cached access, framed by the dot edge alone.
-              let resolved <- lookupLexicalPropertyRaw owner n ctx
+              let resolved <- lookupLexicalPropertyNoted owner n ctx
               match resolved.alg with
               | .alias _ _ _ _ _ _ =>
                   let counted <- EvalBody.terminalAccess rec (<- rec.resolveAliasValueTarget resolved.alg ctx) ctx env

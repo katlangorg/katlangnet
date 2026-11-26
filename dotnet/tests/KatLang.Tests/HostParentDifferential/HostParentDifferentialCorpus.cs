@@ -43,7 +43,7 @@ public sealed record HostParentDivergence(string Reason, string CSharpNeutral, s
 /// <summary>
 /// The host-parent differential corpus: the HP-01..HP-14 matrix of HOST-DIFF-1 (and DECON-CACHE-2's HP-15,
 /// KL-06's failed-run publications HP-16, KL-07's neutral-text collision HP-17, EXPORTED-DETACHED's HP-18
-/// and R-1's retained runtime-alias cells HP-19, with their open qualification HP-20) plus the discovered
+/// and R-1's retained runtime-alias cells HP-19, with their open route HP-20) plus the discovered
 /// shapes (record-equal / shared / reused host objects, parent-replacing wiring routes, alias and
 /// family variants). Pure, Lean-representable ASTs only: no host operations, integer numbers.
 /// A raw host chain has no implicit prelude level; the module controls pin this boundary too.
@@ -875,14 +875,35 @@ public static class HostParentDifferentialCorpus
             Case("HP-19z", "R-1: a cold VALUE channel of a cell known to depend on y is refused before it runs",
                 MisExposedSource("Cap(meta r) = r\nEffect(*xs) = tick()\nSel(k) = if(k == 1, Cap(Effect()), Cap(Effect()))\nSame(f, f) = 0\nF(y) = {\n  A = Sel(y).Algorithm\n  P = A + 0\n  Same(A, A), P\n}\nF(1)\n", "F.P"), "P");
 
-            // OPEN QUALIFICATION (pinned residual): an `open`-provided local-only member's admission is resolved by
-            // the lexical lookup, a state-free judgment of the model, and is not recorded on the cell — the reuse
-            // is not refused in either row order.
+            // THE `open` ROUTE (November 26 2026): an `open`-provided local-only member's admission is judged by the
+            // lexical lookup, a state-free judgment of the model, and recorded where the selected member is consumed
+            // (`noteOpenAccess` in `lookupLexicalPropertyNoted`), so the reuse is refused in both row orders.
             const string Opened = "Cap(meta r) = r\nF(y) = {\n  open Box\n  Box = {\n    public G(x) = if(true, x + 1, y + 0)\n  }\n  A = Cap(G(0)).Algorithm\n  P = A(5) + 0\n  {0}\n}\nF(1)\n";
-            Case("HP-20a", "R-1 open qualification: an open-provided local-only member's admitted access is not recorded — the sibling's reuse is not refused (attached read first)",
+            Case("HP-20a", "R-1 (open route): an open-provided local-only member's admitted access is the cell's input read, so the sibling's reuse is refused (formerly S[6, 6], unrefused)",
                 MisExposedSource(With(Opened, "A(5), P"), "F.P"), "P");
-            Case("HP-20b", "R-1 open qualification: the same with the sibling first",
+            Case("HP-20b", "R-1 (open route): the same sibling establishing the cell is refused at the member access in the row (the other row order)",
                 MisExposedSource(With(Opened, "P, A(5)"), "F.P"), "P");
+            Case("HP-20c", "R-1 control: the open witness correctly classified keeps S[6, 6]",
+                Classified(With(Opened, "P, A(5)")), "P");
+            const string OpenedForwarded = "Cap(meta r) = r\nF(y) = {\n  open Box\n  Box = {\n    public G(x) = if(true, x + 1, y + 0)\n  }\n  B = Cap(G(0)).Algorithm\n  A = Cap(B(0)).Algorithm\n  P = A(5) + 0\n  {0}\n}\nF(1)\n";
+            Case("HP-20d", "R-1 (open route): the access recorded on a cell whose reuse the row's cell makes is forwarded, so the sibling's reuse is refused",
+                MisExposedSource(With(OpenedForwarded, "B(5), A(5), P"), "F.P"), "P");
+            Case("HP-20e", "R-1 (open route): the forwarded shape with the sibling first is refused at the member access",
+                MisExposedSource(With(OpenedForwarded, "P, B(5), A(5)"), "F.P"), "P");
+            cases.Add(new("HP-20f", "R-1 (open route): a cold VALUE channel of a cell known to depend on an open access is refused before its effect runs",
+                MisExposedSource("Cap(meta r) = r\nEffect(*xs) = tick()\nSame(f, f) = 0\nF(y) = {\n  open Box\n  Box = {\n    public Sel(k) = if(true, Cap(Effect()), y + 0)\n  }\n  A = Sel(1).Algorithm\n  P = A + 0\n  Same(A, A), P\n}\nF(1)\n", "F.P"),
+                L("P")) { ExpectedTickCount = 0 });
+            Case("HP-20g", "R-1 control: an EXPORTED member of a local-only provider is no input; the exported sibling shares the cell",
+                Classified("Cap(meta r) = r\nF(y) = {\n  open Box\n  Box = {\n    public G(x) = x + 1\n    public H = y + 0\n  }\n  A = Cap(G(0)).Algorithm\n  P = A(5) + 0\n  P, A(5)\n}\nF(1)\n"), "P");
+
+            // OPEN-TARGET QUALIFICATION (pinned residual): the member steps of an `open` TARGET's path are judged
+            // when the level's opens are resolved and are not noted, so a reuse whose cell selected through a
+            // local-only target step is not refused in either row order.
+            const string OpenedTarget = "Cap(meta r) = r\nF(y) = {\n  open Box.Sub\n  Box = {\n    public Sub = {\n      public G(x) = x + 1\n      y\n    }\n    0\n  }\n  A = Cap(G(0)).Algorithm\n  P = A(5) + 0\n  {0}\n}\nF(1)\n";
+            Case("HP-20h", "R-1 open-target qualification: a local-only open target's path step is not recorded — the sibling's reuse is not refused (attached read first)",
+                MisExposedSource(With(OpenedTarget, "A(5), P"), "F.P"), "P");
+            Case("HP-20i", "R-1 open-target qualification: the same with the sibling first",
+                MisExposedSource(With(OpenedTarget, "P, A(5)"), "F.P"), "P");
 
             cases.Add(new("HP-21a", "the escaped element projects its alias under the element's detached watermark and refuses y before tick",
                 MisExposedSource(EscapedAliasCall, "F.P"), L("P")) { ExpectedTickCount = 0 });

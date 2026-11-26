@@ -3238,7 +3238,7 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = target.Span };
 
-        var resolvedR = await ResolveAsync(ctx, (owner: ctx.CallStack[0], name, ctx), static state => LookupLexicalRaw(state.owner, state.name, state.ctx)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        var resolvedR = await ResolveAsync(ctx, (owner: ctx.CallStack[0], name, ctx), static state => LookupLexicalNoted(state.owner, state.name, state.ctx)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, target.Span);
 

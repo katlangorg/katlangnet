@@ -589,7 +589,10 @@ theorem rron_staticPathSelectWith (structureOf : Algorithm → EvalCtx → EvalM
     RRon P (staticPathSelectWith structureOf owner target stepCtx) := by
   have hn := fun notStatic steps value last receiverName =>
     rron_aliasStepNavigateWith hP structureOf h stepCtx hq notStatic steps value last receiverName
-  unfold staticPathSelectWith; rr_tac
+  -- The head's selection notes nothing there either (ledger R-1, the `open` route).
+  unfold staticPathSelectWith
+  simp only [lookupLexicalPropertyNoted_unmarked _ _ _ hq]
+  rr_tac
 
 theorem rron_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
     (h : ∀ a c, RRon P (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx)
@@ -603,7 +606,9 @@ theorem rron_aliasRouteIsIntrinsicWith (structureOf : Algorithm → EvalCtx → 
     RRon P (aliasRouteIsIntrinsicWith structureOf receiver ctx) := by
   have hn := fun notStatic steps value last receiverName =>
     rron_aliasStepNavigateWith hP structureOf h ctx hq notStatic steps value last receiverName
-  unfold aliasRouteIsIntrinsicWith; rr_tac
+  unfold aliasRouteIsIntrinsicWith
+  simp only [lookupLexicalPropertyNoted_unmarked _ _ _ hq]
+  rr_tac
 
 end Helpers
 
@@ -680,13 +685,13 @@ theorem rron_body_resolveAliasStructure (a : Algorithm) (ctx : EvalCtx) :
 theorem rron_body_resolveDotReceiver? (e : Expr) (ctx : EvalCtx) (hq : ctx.inputRecord = none) :
     RRon P (EvalBody.resolveDotReceiver? rec e ctx) := by
   unfold EvalBody.resolveDotReceiver?
-  simp only [noteMemberAccess_unmarked _ _ _ _ hq]
+  simp only [noteMemberAccess_unmarked _ _ _ _ hq, lookupLexicalPropertyNoted_unmarked _ _ _ hq]
   rr_nav
 
 theorem rron_body_projectNeedStructuralMember (e : Expr) (ctx : EvalCtx) (hq : ctx.inputRecord = none) :
     RRon P (EvalBody.projectNeedStructuralMember rec e ctx) := by
   unfold EvalBody.projectNeedStructuralMember
-  simp only [noteMemberAccess_unmarked _ _ _ _ hq]
+  simp only [noteMemberAccess_unmarked _ _ _ _ hq, lookupLexicalPropertyNoted_unmarked _ _ _ hq]
   rr_nav
 
 theorem rron_body_algorithmIntrinsicRoute (receiver : Expr) (ctx : EvalCtx) :

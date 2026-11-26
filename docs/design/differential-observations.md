@@ -378,8 +378,8 @@ named, 8 of them on the 31 failing cases; HP-16a–c are the failed-run witnesse
 Its three coverage floors had fallen behind the corpus (102 comparable, 96
 pre-wired, 181 named guards on successes) and are now the current counts: 113,
 103 and 188. (Since EXPORTED-DETACHED, November 2026, the corpus has the HP-18
-family, and since ledger R-1 the HP-19 family and the HP-20 open-qualification pair and the HP-21 escaped projection: 163 cases, 272 named
-guards, 48 of them on the 62 failing cases, and floors 163, 124 and 224.) `CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet` takes
+family, and since ledger R-1 the HP-19 family, the HP-20 `open`-route family with its open-target qualification and the HP-21 escaped projection: 170 cases, 279 named
+guards, 53 of them on the 67 failing cases, and floors 170, 124 and 226.) `CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet` takes
 one unit of exactly one metric away in memory — HP-16a removed; HP-02f run on a
 parent-free program; HP-10g no longer watching its unpublished `Large` — and
 requires the ratchet to report that metric alone. Against the old floors all

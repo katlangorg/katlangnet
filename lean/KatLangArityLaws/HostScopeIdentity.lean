@@ -162,7 +162,7 @@ theorem derived_owner_host_identity (parent : Option ScopeCtx) (params : List Id
       ∧ r.owner.asScopeCtx.hostChain = (ScopeCtx.mk parent params opens props output branches act id).hostChain := by
   have hl : lookupInParentsStructuralProperty (.mk parent params opens props output branches act id) name =
       some (ResolvedProperty.mk (Algorithm.mk parent (Algorithm.normalParameters params) opens props output id) p
-        (Algorithm.withParent (some (ScopeCtx.mk parent params opens props output branches act id)) p.alg)) := by
+        (Algorithm.withParent (some (ScopeCtx.mk parent params opens props output branches act id)) p.alg) none) := by
     simp only [lookupInParentsStructuralProperty, ScopeCtx.props, h]
   exact ⟨_, hl, rfl, by cases parent <;> rfl⟩
 

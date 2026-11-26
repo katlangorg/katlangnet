@@ -3194,7 +3194,7 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = target.Span };
 
-        var resolvedR = LookupLexicalRaw(ctx.CallStack[0], name, ctx);
+        var resolvedR = LookupLexicalNoted(ctx.CallStack[0], name, ctx);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, target.Span);
 

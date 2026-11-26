@@ -57,8 +57,8 @@ namespace KatLang;
 /// <c>docs/design/formal-correspondence-ledger.md</c>, qualified, November 2026): it
 /// records the input reads of its computation — a captured parameter operation, a
 /// local-only property read, an admitted access of a local-only member by a dot
-/// access or a static alias path step (not one an <c>open</c> provides: that row's
-/// open qualification) — and an
+/// access, a static alias path step or an <c>open</c> that provides the name (not the
+/// path step of an <c>open</c> target: that row's open-target qualification) — and an
 /// exported evaluation that reuses a cell known to have read an input of an
 /// activation detached in it is refused before the cell's channel runs, with the
 /// alias's own <see cref="KatLangErrorCode.LocalOnlyProperty"/>, whichever read
@@ -92,7 +92,18 @@ public static partial class Evaluator
         PropertyDeclaringOwner Owner,
         Property Binding,
         Algorithm ResolvedAlgorithm,
-        bool CrossesCarrier = false);
+        bool CrossesCarrier = false)
+    {
+        /// <summary>
+        /// THE OPEN ROUTE'S ADMISSION (ledger R-1, November 2026; Lean <c>ResolvedProperty.openRefusal</c>):
+        /// the display name of the <c>open</c> that PROVIDED this binding, whose access law admitted the
+        /// selected member at the reading site (<see cref="SelectOpenHit"/>; its refusal names this
+        /// provider), or null for a structural selection, which no access law judges. The lookup that sets
+        /// it notes nothing; the consumer of the selected member makes the admission's input read
+        /// (<see cref="AdmitOpenAccess"/>).
+        /// </summary>
+        internal string? OpenProvider { get; init; }
+    }
 
     // ── EvalCtx (Lean: EvalCtx) ─────────────────────────────────────────────
 
@@ -150,7 +161,7 @@ public static partial class Evaluator
             => CallStack is AnnotatedReadOnlyList<Algorithm> annotated ? annotated.InputRecord : null;
 
         /// <summary>This context with its input record replaced by <paramref name="record"/> (its watermark kept).</summary>
-        internal EvalCtx MarkInputRecord(AliasCellInputs record)
+        internal EvalCtx MarkInputRecord(AliasCellInputs? record)
             => this with { CallStack = AnnotatedReadOnlyList<Algorithm>.MarkInputRecord(CallStack, record) };
 
         /// <summary>
@@ -607,9 +618,14 @@ public static partial class Evaluator
     /// — the same <see cref="EvalError.LocalOnlyProperty"/>. <see cref="LexicalChainContains"/> needs
     /// no watermark of its own: the level it accepts carries the owner's own activation
     /// (<see cref="CompatibleActivations"/>), which this test has already found usable.
-    /// Direct lexical hits already select on that chain. Lean: memberAccessible?.
+    /// Direct lexical hits already select on that chain. An admitted access is noted as an input read
+    /// of the retained cell whose computation makes it (<see cref="AdmitMemberAccess"/>) unless
+    /// <paramref name="noteAdmission"/> is false: the <c>open</c> route's state-free judgments pass false
+    /// — an <c>open</c>-provided name is noted where its selection is consumed (<see cref="AdmitOpenAccess"/>),
+    /// an <c>open</c> target's path step is not noted (ledger R-1, open-target qualification).
+    /// Lean: memberAccessible? (with <c>noteMemberAccess</c> at the noting callers).
     /// </summary>
-    private static bool IsAccessibleFrom(Property member, Algorithm container, EvalCtx ctx, bool structuralRoute = true)
+    private static bool IsAccessibleFrom(Property member, Algorithm container, EvalCtx ctx, bool noteAdmission = true)
     {
         if (IsExported(member))
             return true;
@@ -635,7 +651,7 @@ public static partial class Evaluator
                 if (activation.Serial < least)
                     least = activation.Serial;
             }
-            return !structuralRoute || AdmitMemberAccess(least, ctx);
+            return !noteAdmission || AdmitMemberAccess(least, ctx);
         }
         foreach (var name in member.RequiredAncestorParameters)
         {
@@ -648,7 +664,7 @@ public static partial class Evaluator
                 least = activation.Serial;
         }
 
-        return !structuralRoute || AdmitMemberAccess(least, ctx);
+        return !noteAdmission || AdmitMemberAccess(least, ctx);
     }
 
     /// <summary>
@@ -659,11 +675,12 @@ public static partial class Evaluator
     /// REFUSED instead (false: the caller reports its own <see cref="EvalError.LocalOnlyProperty"/>, exactly
     /// as for an inaccessible member) when it lands below a reader admitted to the cell while a detached
     /// evaluation that detaches the owner is served. Outside every retained cell's computation it admits.
-    /// Noted on the STRUCTURAL routes only (a dot access, a static alias path step), as in Lean: the
-    /// <c>open</c> route's lexical lookup (<see cref="OpenStructure"/>, <see cref="ResolveAlgForOpen"/>, an
-    /// <c>open</c>-provided name) is a state-free judgment of the model, so an <c>open</c>-provided
-    /// local-only member a retained cell's computation uses is not recorded on the cell (ledger R-1, open
-    /// qualification).
+    /// Noted, as in Lean, on the STRUCTURAL routes (a dot access, a static alias path step) and, for an
+    /// <c>open</c>-PROVIDED name, where an evaluation consumes the selected member
+    /// (<see cref="AdmitOpenAccess"/>): the lexical lookup that admitted it is a state-free judgment of the
+    /// model, so it only reports the admission (<see cref="ResolvedLexicalProperty.OpenProvider"/>). The member
+    /// steps of an <c>open</c> TARGET's path (<see cref="OpenStructure"/>, <see cref="ResolveAlgForOpen"/>)
+    /// are not noted (ledger R-1, open-target qualification).
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private static bool AdmitMemberAccess(long leastOwnerSerial, in EvalCtx ctx)
@@ -1668,7 +1685,7 @@ public static partial class Evaluator
                         : new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(reference.Target)) { Span = reference.Target.Span };
                 }
 
-                if (!IsAccessibleFrom(member, receiver, ctx, structuralRoute: false))
+                if (!IsAccessibleFrom(member, receiver, ctx, noteAdmission: false))
                     return LocalOnlyPropertyError(OpenExprName(edge.Target), member) with { Span = edge.Span };
                 value = ChildOfInContext(receiver, member.Value, ctx);
             }
@@ -2408,7 +2425,9 @@ public static partial class Evaluator
     /// <see cref="LookupOpens"/>'s selection over a level's resolved providers: public-only, in provider
     /// order. No provider offering <paramref name="name"/> is no hit; exactly one is the hit, checked for
     /// access from the READING site (the original context's head, not the consulted level) and wired in
-    /// that context; two or more are the ambiguity naming every offering provider in order.
+    /// that context, carrying its provider as the admission its consumer notes
+    /// (<see cref="ResolvedLexicalProperty.OpenProvider"/>, <see cref="AdmitOpenAccess"/>; the selection
+    /// itself notes nothing); two or more are the ambiguity naming every offering provider in order.
     /// </summary>
     private static EvalResult<ResolvedLexicalProperty?> SelectOpenHit(ResolvedOpenLevel level, string name, EvalCtx ctx)
     {
@@ -2421,14 +2440,14 @@ public static partial class Evaluator
         if (second < 0)
         {
             var hit = level[first];
-            if (!IsAccessibleFrom(binding!, hit.Lib, ctx, structuralRoute: false))
+            if (!IsAccessibleFrom(binding!, hit.Lib, ctx, noteAdmission: false))
                 return LocalOnlyPropertyError(hit.DisplayName, binding!);
 
             return EvalResult<ResolvedLexicalProperty?>.Ok(
                 new ResolvedLexicalProperty(
                     hit.Lib,
                     binding!,
-                    ChildOfInContext(hit.Lib, binding!.Value, ctx)));
+                    ChildOfInContext(hit.Lib, binding!.Value, ctx)) { OpenProvider = hit.DisplayName });
         }
 
         var providers = new List<string> { level[first].DisplayName, level[second].DisplayName };
@@ -2557,6 +2576,16 @@ public static partial class Evaluator
 
     internal static bool ResolvesToBuiltinAlgorithm(string name, BuiltinId builtinId, EvalCtx ctx)
     {
+        // A loop plan can inspect a row that a false while flag will skip. Inside a retained
+        // computation only recognize a direct builtin whose lookup needs no input record.
+        // An alias or an activation-dependent open hit is resolved if execution reaches it.
+        if (ctx.InputRecord is not null && ctx.Head is { } owner)
+        {
+            var selected = LookupLexicalRaw(owner, name, ctx);
+            return selected.IsOk && selected.Value.ResolvedAlgorithm is Algorithm.Builtin(var direct)
+                && direct == builtinId && (selected.Value.OpenProvider is null || IsExported(selected.Value.Binding));
+        }
+
         // Optimizer recognition: non-initiating (META-S3-0b/S3-2) — a name whose identity needs a
         // runtime projection (a runtime-target alias) is declined, never projected to learn it.
         if (PeekResolve(ctx, (name, ctx), static state => ResolveNamedAlgorithm(state.name, span: null, state.ctx)) is not { } result)
@@ -2578,10 +2607,55 @@ public static partial class Evaluator
     private static EvalResult<ResolvedLexicalProperty> LookupLexical(
         Algorithm alg, string name, EvalCtx ctx)
     {
-        var resolved = LookupLexicalRaw(alg, name, ctx);
+        var resolved = LookupLexicalNoted(alg, name, ctx);
         return resolved.IsOk && resolved.Value.ResolvedAlgorithm is Algorithm.Alias
             ? NormalizeAliasBinding(resolved.Value, ctx)
             : resolved;
+    }
+
+    /// <summary>
+    /// THE LEXICAL SELECTION AN EVALUATION CONSUMES (ledger R-1, the <c>open</c> route, November 2026;
+    /// Lean <c>lookupLexicalPropertyNoted</c>): the ownership-first lexical lookup
+    /// (<see cref="LookupLexicalRaw"/>), unchanged — the same selection, provider order and state-free
+    /// judgment — followed by the input read of the access an <c>open</c> admitted
+    /// (<see cref="AdmitOpenAccess"/>). Every evaluation that USES the selected binding selects through
+    /// it: the callable and VALUE lookups (<see cref="LookupLexical"/>, <see cref="LookupLexicalForValue"/>),
+    /// a supplied name's projection (<see cref="ProjectSuspendedCallable"/>), a receiver head
+    /// (<see cref="ResolveReceiverHead"/>), the <c>.string</c> receiver
+    /// (<see cref="EvalDotStringLexicalPropertyReceiver"/>), an alias's static step and its route decision
+    /// (<see cref="AliasChaseMachine"/>). A re-read that consumes nothing keeps the raw lookup: the
+    /// publication identity of a callee the callee law already selected (<see cref="WrittenCalleeBinding"/>)
+    /// and the supply-time classification of a written reference (<see cref="ReferenceReachesRuntimeAlias"/>,
+    /// <see cref="DotPathReachesRuntimeAlias"/>), whose projection then selects through this lookup.
+    /// </summary>
+    private static EvalResult<ResolvedLexicalProperty> LookupLexicalNoted(
+        Algorithm alg, string name, EvalCtx ctx)
+    {
+        var resolved = LookupLexicalRaw(alg, name, ctx);
+        return resolved.IsOk && resolved.Value.OpenProvider is not null
+            ? AdmitOpenAccess(resolved.Value, ctx)
+            : resolved;
+    }
+
+    /// <summary>
+    /// THE OPEN ROUTE'S INPUT READ (ledger R-1, November 2026; Lean <c>noteOpenAccess</c>): a binding an
+    /// <c>open</c> provided (<see cref="ResolvedLexicalProperty.OpenProvider"/>) passed that route's access law
+    /// at the reading site, so the access used the owner activations the law requires — whether or not the
+    /// member's body ever reads the owner's parameter — and inside a retained runtime-alias cell's
+    /// computation it is an input read through the least of them (<see cref="AdmitMemberAccess"/>, reached
+    /// through the same law in the same context, which admits again), refused, with the open route's own
+    /// <see cref="EvalError.LocalOnlyProperty"/> naming the provider, when it lands below a reader admitted to
+    /// the cell while a detached evaluation that detaches the owner is served. Outside every retained cell's
+    /// computation it notes nothing and returns the selection.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<ResolvedLexicalProperty> AdmitOpenAccess(ResolvedLexicalProperty resolved, EvalCtx ctx)
+    {
+        if (ctx.CallStack is not AnnotatedReadOnlyList<Algorithm> { InputRecord: not null })
+            return EvalResult<ResolvedLexicalProperty>.Ok(resolved);
+        return IsAccessibleFrom(resolved.Binding, resolved.Owner.Algorithm!, ctx)
+            ? EvalResult<ResolvedLexicalProperty>.Ok(resolved)
+            : LocalOnlyPropertyError(resolved.OpenProvider!, resolved.Binding);
     }
 
     /// <summary>
@@ -2595,7 +2669,7 @@ public static partial class Evaluator
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<ResolvedLexicalProperty> LookupLexicalForValue(
         Algorithm alg, string name, EvalCtx ctx)
-        => NormalizeValueBinding(LookupLexicalRaw(alg, name, ctx), ctx);
+        => NormalizeValueBinding(LookupLexicalNoted(alg, name, ctx), ctx);
 
     /// <summary>
     /// The alias normalization of a VALUE read (<see cref="LookupLexicalForValue"/>): an alias binding
@@ -2617,8 +2691,9 @@ public static partial class Evaluator
     /// RAW — an alias as the alias — for the consumers that normalize it themselves: a written
     /// receiver's head, which is then read through its STRUCTURE (<c>ReceiverStructure</c>: a
     /// transparent reference navigates its target's declarations, M4★), the supplied-cell projection,
-    /// and alias resolution itself.
-    /// Lean: lookupLexical → EvalM Algorithm.
+    /// and alias resolution itself. It notes nothing: an evaluation that consumes the selection reads it
+    /// through <see cref="LookupLexicalNoted"/> (ledger R-1).
+    /// Lean: lookupLexicalPropertyRaw.
     /// </summary>
     private static EvalResult<ResolvedLexicalProperty> LookupLexicalRaw(
         Algorithm alg, string name, EvalCtx ctx)
@@ -3165,7 +3240,7 @@ public static partial class Evaluator
             if (!prop.IsPublic)
                 return new EvalError.NotPublicProperty(OpenExprName(target), propName);
 
-            if (!IsAccessibleFrom(prop, targetResult.Value, ctx, structuralRoute: false))
+            if (!IsAccessibleFrom(prop, targetResult.Value, ctx, noteAdmission: false))
                 return LocalOnlyPropertyError(OpenExprName(target), prop);
 
             // Keep the selected property bound to its definition-site scope.
@@ -4655,7 +4730,7 @@ public static partial class Evaluator
 
         /// <summary><paramref name="stack"/> with its input record replaced by <paramref name="record"/>: the same
         /// elements and watermark.</summary>
-        internal static AnnotatedReadOnlyList<T> MarkInputRecord(IReadOnlyList<T> stack, AliasCellInputs record)
+        internal static AnnotatedReadOnlyList<T> MarkInputRecord(IReadOnlyList<T> stack, AliasCellInputs? record)
         {
             if (stack is not AnnotatedReadOnlyList<T> annotated)
                 return new AnnotationMarkerReadOnlyList<T>(stack, 0, record);

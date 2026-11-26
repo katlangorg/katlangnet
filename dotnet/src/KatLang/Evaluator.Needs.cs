@@ -195,6 +195,11 @@ public static partial class Evaluator
     /// </summary>
     private static bool ReferenceReachesRuntimeAlias(Expr expression, EvalCtx caller)
     {
+        // Lean supplyNeed suspends a written reference. A static chase here classifies the cell
+        // before either channel is used. Keep the access watermark, but record inputs only when
+        // that channel actually runs in the suspension's original context.
+        if (caller.InputRecord is not null)
+            caller = caller.MarkInputRecord(null);
         switch (expression)
         {
             case Expr.Resolve(var name):
@@ -361,7 +366,7 @@ public static partial class Evaluator
             {
                 if (caller.CallStack.Count == 0)
                     return new EvalError.UnknownName(name) { Span = expression.Span };
-                var raw = LookupLexicalRaw(caller.CallStack[0], name, caller);
+                var raw = LookupLexicalNoted(caller.CallStack[0], name, caller);
                 if (raw.IsError)
                     return IsLiftableError(raw.Error) ? EvalResult<Algorithm?>.Ok(null) : AtSpanIfMissing(raw.Error, expression.Span);
                 return raw.Value.ResolvedAlgorithm is Algorithm.Alias alias

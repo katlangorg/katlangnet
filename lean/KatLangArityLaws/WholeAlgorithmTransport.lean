@@ -22,9 +22,9 @@ bridge `production_completes_iff`).
   Production: the STRUCTURE of a carrier is the carrier from every state, nothing evaluated
   (`production_structure_of_carrier`), while every INVOCATION target is a non-alias
   (`production_invocation_target_is_no_alias`) — invocation normalization cannot erase the
-  structural surface, since the two are different operations. A static name step is the raw
-  ownership-first lookup in the alias's OWN scope (`static_name_step_is_the_raw_lookup`): the target
-  keeps its own declaration and declaring context.
+  structural surface, since the two are different operations. A static name step is the
+  ownership-first lexical selection in the alias's OWN scope (`static_name_step_is_the_lexical_selection`):
+  the target keeps its own declaration and declaring context.
 * **§2 Structure-first inertness** (statement 2). A carrier's members are its own `properties`,
   decided without its target (`carrier_members_ignore_the_target`); an own-member hit on a navigated
   carrier ends with exactly the navigation's state (`own_member_hit_never_resolves_the_target`).
@@ -245,13 +245,15 @@ theorem production_invocation_target_is_no_alias (a : Algorithm) (ctx : EvalCtx)
       | runtime alias => cases h'; exact isAlias_aliasPropertyView alias
     · cases h'
 
-/-- **A static name step is the raw ownership-first lookup in the alias's OWN scope** — the alias
-pushed as the head, exactly where its body would be evaluated, so the selected target keeps its own
-declaration, owner and declaring context (the lookup wires it to its owner), and a target that is
-itself an alias is returned RAW for the chase to continue. Nothing here reads the target's arity. -/
-theorem static_name_step_is_the_raw_lookup (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+/-- **A static name step is the ownership-first lexical selection in the alias's OWN scope** — the
+alias pushed as the head, exactly where its body would be evaluated, so the selected target keeps its
+own declaration, owner and declaring context (the lookup wires it to its owner), and a target that is
+itself an alias is returned RAW for the chase to continue. Nothing here reads the target's arity. The
+selection is the one an evaluation consumes (`lookupLexicalPropertyNoted`: the raw lookup, then the
+input read of an access an `open` admitted, ledger R-1). -/
+theorem static_name_step_is_the_lexical_selection (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
     (step : Algorithm) (n : Ident) (ctx : EvalCtx) :
-    resolveAliasStepWith structureOf step (.resolve n) ctx = lookupLexicalPropertyRaw step n (ctx.push step) := by
+    resolveAliasStepWith structureOf step (.resolve n) ctx = lookupLexicalPropertyNoted step n (ctx.push step) := by
   simp only [resolveAliasStepWith, staticPathSelectWith, Expr.staticAliasPath?, aliasStepNavigateWith, EvalM.pure_bind]
   exact EvalM.bind_pure' _
 
@@ -492,15 +494,15 @@ theorem no_origin_names_no_binding (rec : EvalRec) (ctx : EvalCtx) :
 /-! ## §12 — META's structural callee and static open -/
 
 /-- **A written carrier projects the carrier** (the CALLABLE of a supplied cell written as a name —
-production: the callee cell of a captured `A(3)`, which `R.Algorithm` exposes): when the name's raw
-lookup selects a carrier, the projection is the carrier itself — its own structure, never its
+production: the callee cell of a captured `A(3)`, which `R.Algorithm` exposes): when the name's lexical
+selection (`lookupLexicalPropertyNoted`) selects a carrier, the projection is the carrier itself — its own structure, never its
 forwarding target — given the two production chase facts `production_chase_stops_at_carrier` and
 `production_structure_of_carrier` for the recursive answers, with exactly the lookup's state. -/
 theorem written_carrier_projects_the_carrier (rec : EvalRec) (n : Ident) (caller : EvalCtx)
     (owner : Algorithm) (rest : List Algorithm) (hstack : caller.callStack = owner :: rest)
     (resolved : ResolvedProperty) (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef) (target : Expr)
     (id : Option PropertyIdentity) (s s1 : EvalState)
-    (hlook : (lookupLexicalPropertyRaw owner n caller).runState s = (.ok resolved, s1))
+    (hlook : (lookupLexicalPropertyNoted owner n caller).runState s = (.ok resolved, s1))
     (halg : resolved.alg = .alias p op pr target id false)
     (hchase : (rec.resolveAliasChase false false (.alias p op pr target id false) caller [] none).runState s1
       = (.ok (.identity (.alias p op pr target id false) none), s1))

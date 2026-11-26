@@ -15,8 +15,8 @@ Lean exporter's text (KL-07 pilot; `CoreTests/StructuralIdentity.lean`). A faili
 a Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- corpus cases: 163
-- comparable cases: 163
+- corpus cases: 170
+- comparable cases: 170
 - known HOST-LEAN-O6 divergences, pinned on both sides and excluded from comparison: 0
 
 Regenerate from the repo root with:
@@ -1650,21 +1650,78 @@ def hp_19z : Expr :=
 #guard cacheEntries hp_19z "P" == some 0
 #guard cacheTotal hp_19z == some 0
 
--- HP-20a: R-1 open qualification: an open-provided local-only member's admitted access is not recorded — the sibling's reuse is not refused (attached read first)
+-- HP-20a: R-1 (open route): an open-provided local-only member's admitted access is the cell's input read, so the sibling's reuse is refused (formerly S[6, 6], unrefused)
 def hp_20a : Expr :=
   (.algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["y"] [.resolve "Box"] [privateProp "Box" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["x"] [] [] [(.call (.resolve "if") [.boolLiteral true, (.binary .add (.param "x") (.num 1)), (.binary .add (.param "y") (.num 0))])])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "G") [.num 0])]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "A") [.num 5]) (.num 0))])] [(.call (.resolve "A") [.num 5]), .resolve "P"])] [(.call (.resolve "F") [.num 1])]))
-#guard obs hp_20a == "ok raw=S[6, 6] n=1"
-#guard structural hp_20a == some "kl-struct-v1:2:n3:6e0s2:0,0,;"
-#guard cacheEntries hp_20a "P" == some 1
-#guard cacheTotal hp_20a == some 1
+#guard obs hp_20a == "err localOnlyProperty"
+#guard errorObs hp_20a == .matched (some { kind := "localOnlyProperty", names := ["A", "captured"], counts := [] })
+#guard cacheEntries hp_20a "P" == some 0
+#guard cacheTotal hp_20a == some 0
 
--- HP-20b: R-1 open qualification: the same with the sibling first
+-- HP-20b: R-1 (open route): the same sibling establishing the cell is refused at the member access in the row (the other row order)
 def hp_20b : Expr :=
   (.algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["y"] [.resolve "Box"] [privateProp "Box" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["x"] [] [] [(.call (.resolve "if") [.boolLiteral true, (.binary .add (.param "x") (.num 1)), (.binary .add (.param "y") (.num 0))])])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "G") [.num 0])]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "A") [.num 5]) (.num 0))])] [.resolve "P", (.call (.resolve "A") [.num 5])])] [(.call (.resolve "F") [.num 1])]))
-#guard obs hp_20b == "ok raw=S[6, 6] n=1"
-#guard structural hp_20b == some "kl-struct-v1:2:n3:6e0s2:0,0,;"
-#guard cacheEntries hp_20b "P" == some 1
-#guard cacheTotal hp_20b == some 1
+#guard obs hp_20b == "err localOnlyProperty"
+#guard errorObs hp_20b == .matched (some { kind := "localOnlyProperty", names := ["G", "captured"], counts := [] })
+#guard cacheEntries hp_20b "P" == some 0
+#guard cacheTotal hp_20b == some 0
+
+-- HP-20c: R-1 control: the open witness correctly classified keeps S[6, 6]
+def hp_20c : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["y"] [.resolve "Box"] [privateProp "Box" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["x"] [] [] [(.call (.resolve "if") [.boolLiteral true, (.binary .add (.param "x") (.num 1)), (.binary .add (.param "y") (.num 0))])])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "G") [.num 0])]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "P" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "A") [.num 5]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "P", (.call (.resolve "A") [.num 5])])] [(.call (.resolve "F") [.num 1])]))
+#guard obs hp_20c == "ok raw=S[6, 6] n=1"
+#guard structural hp_20c == some "kl-struct-v1:2:n3:6e0s2:0,0,;"
+#guard cacheEntries hp_20c "P" == some 1
+#guard cacheTotal hp_20c == some 1
+
+-- HP-20d: R-1 (open route): the access recorded on a cell whose reuse the row's cell makes is forwarded, so the sibling's reuse is refused
+def hp_20d : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["y"] [.resolve "Box"] [privateProp "Box" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["x"] [] [] [(.call (.resolve "if") [.boolLiteral true, (.binary .add (.param "x") (.num 1)), (.binary .add (.param "y") (.num 0))])])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "B" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "G") [.num 0])]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "B") [.num 0])]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "A") [.num 5]) (.num 0))])] [(.call (.resolve "B") [.num 5]), (.call (.resolve "A") [.num 5]), .resolve "P"])] [(.call (.resolve "F") [.num 1])]))
+#guard obs hp_20d == "err localOnlyProperty"
+#guard errorObs hp_20d == .matched (some { kind := "localOnlyProperty", names := ["A", "captured"], counts := [] })
+#guard cacheEntries hp_20d "P" == some 0
+#guard cacheTotal hp_20d == some 0
+
+-- HP-20e: R-1 (open route): the forwarded shape with the sibling first is refused at the member access
+def hp_20e : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["y"] [.resolve "Box"] [privateProp "Box" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["x"] [] [] [(.call (.resolve "if") [.boolLiteral true, (.binary .add (.param "x") (.num 1)), (.binary .add (.param "y") (.num 0))])])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "B" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "G") [.num 0])]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "B") [.num 0])]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "A") [.num 5]) (.num 0))])] [.resolve "P", (.call (.resolve "B") [.num 5]), (.call (.resolve "A") [.num 5])])] [(.call (.resolve "F") [.num 1])]))
+#guard obs hp_20e == "err localOnlyProperty"
+#guard errorObs hp_20e == .matched (some { kind := "localOnlyProperty", names := ["G", "captured"], counts := [] })
+#guard cacheEntries hp_20e "P" == some 0
+#guard cacheTotal hp_20e == some 0
+
+-- HP-20f: R-1 (open route): a cold VALUE channel of a cell known to depend on an open access is refused before its effect runs
+def hp_20f : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Effect" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "tick") [])]), privateProp "Same" (alg ["f", "f"] [] [] [.num 0]), privateProp "F" (alg ["y"] [.resolve "Box"] [privateProp "Box" (alg [] [] [{ (publicLocalProp "Sel" (.localCapturedAncestorParams ["y"]) (alg ["k"] [] [] [(.call (.resolve "if") [.boolLiteral true, (.call (.resolve "Cap") [(.call (.resolve "Effect") [])]), (.binary .add (.param "y") (.num 0))])])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Sel") [.num 1]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "P" (alg [] [] [] [(.binary .add (.resolve "A") (.num 0))])] [(.call (.resolve "Same") [.resolve "A", .resolve "A"]), .resolve "P"])] [(.call (.resolve "F") [.num 1])]))
+#guard obs hp_20f == "err localOnlyProperty"
+#guard errorObs hp_20f == .matched (some { kind := "localOnlyProperty", names := ["A", "captured"], counts := [] })
+#guard ((runCountedM hp_20f).runState EvalState.empty).2.tickCounter == 0
+#guard cacheEntries hp_20f "P" == some 0
+#guard cacheTotal hp_20f == some 0
+
+-- HP-20g: R-1 control: an EXPORTED member of a local-only provider is no input; the exported sibling shares the cell
+def hp_20g : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["y"] [.resolve "Box"] [privateProp "Box" (alg [] [] [{ (publicLocalProp "H" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }, publicProp "G" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] []), privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "G") [.num 0])]) "Algorithm" none))), privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "A") [.num 5]) (.num 0))])] [.resolve "P", (.call (.resolve "A") [.num 5])])] [(.call (.resolve "F") [.num 1])]))
+#guard obs hp_20g == "ok raw=S[6, 6] n=1"
+#guard structural hp_20g == some "kl-struct-v1:2:n3:6e0s2:0,0,;"
+#guard cacheEntries hp_20g "P" == some 1
+#guard cacheTotal hp_20g == some 1
+
+-- HP-20h: R-1 open-target qualification: a local-only open target's path step is not recorded — the sibling's reuse is not refused (attached read first)
+def hp_20h : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["y"] [(.dotCall (.resolve "Box") "Sub" none)] [privateProp "Box" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "G" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "G") [.num 0])]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "A") [.num 5]) (.num 0))])] [(.call (.resolve "A") [.num 5]), .resolve "P"])] [(.call (.resolve "F") [.num 1])]))
+#guard obs hp_20h == "ok raw=S[6, 6] n=1"
+#guard structural hp_20h == some "kl-struct-v1:2:n3:6e0s2:0,0,;"
+#guard cacheEntries hp_20h "P" == some 1
+#guard cacheTotal hp_20h == some 1
+
+-- HP-20i: R-1 open-target qualification: the same with the sibling first
+def hp_20i : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["y"] [(.dotCall (.resolve "Box") "Sub" none)] [privateProp "Box" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "G" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "G") [.num 0])]) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "A") [.num 5]) (.num 0))])] [.resolve "P", (.call (.resolve "A") [.num 5])])] [(.call (.resolve "F") [.num 1])]))
+#guard obs hp_20i == "ok raw=S[6, 6] n=1"
+#guard structural hp_20i == some "kl-struct-v1:2:n3:6e0s2:0,0,;"
+#guard cacheEntries hp_20i "P" == some 1
+#guard cacheTotal hp_20i == some 1
 
 -- HP-21a: the escaped element projects its alias under the element's detached watermark and refuses y before tick
 def hp_21a : Expr :=
@@ -1847,9 +1904,16 @@ def comparableCaseIds : List String := [
   "HP-19z",
   "HP-20a",
   "HP-20b",
+  "HP-20c",
+  "HP-20d",
+  "HP-20e",
+  "HP-20f",
+  "HP-20g",
+  "HP-20h",
+  "HP-20i",
   "HP-21a"
 ]
-#guard comparableCaseIds.length == 163
+#guard comparableCaseIds.length == 170
 
 /--
 Machine-checked known-divergence partition count (HOST-LEAN-O6 shapes pinned on both sides).
@@ -1859,5 +1923,5 @@ def divergentCaseIds : List String := [
 ]
 #guard divergentCaseIds.length == 0
 
--- 163 comparable cases, 0 known divergences.
+-- 170 comparable cases, 0 known divergences.
 end HostParentDifferential

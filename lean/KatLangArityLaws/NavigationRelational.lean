@@ -195,9 +195,12 @@ theorem agree_algorithmIntrinsicRoute (receiver : Expr) (ctx : EvalCtx) (s : Eva
   split <;> exact Agree.pure ho _ (fun _ => trivial)
 
 /-- THE RECEIVER PROBE of a NAME head: the lexical lookup asks nothing; the one question is the
-    structure chase of the binding it selects — LEXICAL LOOKUP's call-site condition. -/
+    structure chase of the binding it selects — LEXICAL LOOKUP's call-site condition. Stated outside
+    every retained cell's computation (`hq`): inside one the selection of an `open`-provided name is
+    an input read the cell records (`noteOpenAccess`, ledger R-1), a write no contract of this family
+    speaks of. -/
 theorem agree_resolveDotReceiver_name (n : Ident) (owner : Algorithm) (rest : List Algorithm) (ctx : EvalCtx)
-    (s : EvalState) (hstack : ctx.callStack = owner :: rest)
+    (s : EvalState) (hstack : ctx.callStack = owner :: rest) (hq : ctx.inputRecord = none)
     (hselected : ∀ resolved, (lookupLexicalPropertyRaw owner n ctx).runState s = (.ok resolved, s) →
       K.pre (.resolveAliasStructure resolved.alg ctx) s) :
     Agree K s (EvalBody.resolveDotReceiver? rec (.resolve n) ctx)
@@ -206,7 +209,7 @@ theorem agree_resolveDotReceiver_name (n : Ident) (owner : Algorithm) (rest : Li
         | (.ok resolved, _) => resolved.alg
         | _ => owner) ctx)) := by
   unfold EvalBody.resolveDotReceiver?
-  simp only [hstack]
+  simp only [hstack, lookupLexicalPropertyNoted_unmarked _ _ _ hq]
   refine Agree.bind ho (Agree.stateFree ho (sf_lookupLexicalPropertyRaw owner n ctx)) (fun resolved t _ _ _ hp => ?_)
   obtain ⟨rfl, hrun⟩ := hp
   rw [hrun]

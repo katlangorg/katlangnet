@@ -271,7 +271,7 @@ theorem navSettled_of_navRuns : ∀ (target : Expr) (ctx : EvalCtx) (s t : EvalS
       structureNormal o = true) →
     ctx.inputRecord = none →
     NavSettled target ctx owner t
-  | .resolve n, ctx, s, t, owner, _, hnav, hmint, _, _ => by
+  | .resolve n, ctx, s, t, owner, _, hnav, hmint, _, hq => by
     obtain ⟨m, hrun, hne⟩ := hnav
     obtain ⟨k, rfl, -, hbody⟩ := navFuel_body hrun hne rfl
     have hbody' : (EvalBody.resolveDotReceiver? (navFuel k) (.resolve n) ctx).runState s = (.ok (some owner), t) := hbody
@@ -281,13 +281,15 @@ theorem navSettled_of_navRuns : ∀ (target : Expr) (ctx : EvalCtx) (s t : EvalS
     | cons top rest =>
       rw [hcs] at hbody'
       dsimp only at hbody'
+      -- Outside every retained cell's computation the selection notes nothing (ledger R-1, `open` route).
+      rw [lookupLexicalPropertyNoted_unmarked _ _ _ hq] at hbody'
       rw [bind_run] at hbody'
       obtain ⟨lo, hlo⟩ := sf_lookupLexicalPropertyRaw top n ctx
       rw [hlo s] at hbody'
       cases lo with
       | error e => cases hbody'
       | ok r =>
-        exact navSettled_of (headSettled_name n ctx top rest r hcs hlo t)
+        exact navSettled_of (headSettled_name n ctx top rest r hcs hlo hq t)
           (structSettled_of_navRuns r.alg ctx s t owner ⟨k, hbody', nofun⟩ hmint)
   | .algorithmExpr block, ctx, s, t, owner, _, hnav, hmint, _, _ => by
     obtain ⟨m, hrun, hne⟩ := hnav

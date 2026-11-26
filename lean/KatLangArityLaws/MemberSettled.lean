@@ -361,10 +361,13 @@ theorem headSettled_block (block : Algorithm) (ctx : EvalCtx) (t : EvalState) :
   · intro rec; rfl
   · nofun
 
-/-- A NAME is settled as the binding its lexical lookup selects — whatever route selected it. -/
+/-- A NAME is settled as the binding its lexical lookup selects — whatever route selected it — outside
+    every retained cell's computation, where the selection of an `open`-provided name notes nothing
+    (ledger R-1, `lookupLexicalPropertyNoted_unmarked`). -/
 theorem headSettled_name (n : Ident) (ctx : EvalCtx) (top : Algorithm) (rest : List Algorithm)
     (r : ResolvedProperty) (hcs : ctx.callStack = top :: rest)
-    (hl : ∀ t, (lookupLexicalPropertyRaw top n ctx).runState t = (.ok r, t)) (t : EvalState) :
+    (hl : ∀ t, (lookupLexicalPropertyRaw top n ctx).runState t = (.ok r, t))
+    (hq : ctx.inputRecord = none) (t : EvalState) :
     HeadSettled (.resolve n) ctx r.alg t := by
   intro u _
   apply production_of_answer_free _ u
@@ -373,6 +376,7 @@ theorem headSettled_name (n : Ident) (ctx : EvalCtx) (top : Algorithm) (rest : L
     unfold EvalBody.projectNeedStructuralMember
     rw [hcs]
     dsimp only
+    rw [lookupLexicalPropertyNoted_unmarked _ _ _ hq]
     rw [bind_run, hl u]
     rfl
   · nofun
@@ -418,7 +422,8 @@ theorem navSettled_member (o : Expr) (n : Ident) (fb : Expr) (ctx : EvalCtx) (a 
     structure chase of the binding it selects.** -/
 theorem probe_name (n : Ident) (ctx : EvalCtx) (top : Algorithm) (rest : List Algorithm) (s s' : EvalState)
     (owner : Algorithm) (hcs : ctx.callStack = top :: rest)
-    (hprobe : (resolveDotReceiver? (.resolve n) ctx).runState s = (.ok (some owner), s')) :
+    (hprobe : (resolveDotReceiver? (.resolve n) ctx).runState s = (.ok (some owner), s'))
+    (hq : ctx.inputRecord = none) :
     ∃ r, (∀ t, (lookupLexicalPropertyRaw top n ctx).runState t = (.ok r, t)) ∧
       (resolveAliasStructure r.alg ctx).runState s = (.ok (some owner), s') := by
   have hc : ProductionCompletes (resolveDotReceiver? (.resolve n) ctx) s := by
@@ -429,6 +434,8 @@ theorem probe_name (n : Ident) (ctx : EvalCtx) (top : Algorithm) (rest : List Al
   unfold EvalBody.resolveDotReceiver? at hbody
   rw [hcs] at hbody
   dsimp only at hbody
+  -- Outside every retained cell's computation the selection notes nothing (ledger R-1, `open` route).
+  rw [lookupLexicalPropertyNoted_unmarked _ _ _ hq] at hbody
   rw [bind_run] at hbody
   obtain ⟨o, ho⟩ := sf_lookupLexicalPropertyRaw top n ctx
   rw [ho s] at hbody
@@ -445,10 +452,11 @@ theorem navSettled_name_of_probe (n : Ident) (ctx : EvalCtx) (top : Algorithm) (
     (s s' : EvalState) (owner : Algorithm) (hcs : ctx.callStack = top :: rest)
     (hprobe : (resolveDotReceiver? (.resolve n) ctx).runState s = (.ok (some owner), s'))
     (hstruct : ∀ r, (∀ t, (lookupLexicalPropertyRaw top n ctx).runState t = (.ok r, t)) →
-      (resolveAliasStructure r.alg ctx).runState s = (.ok (some owner), s') → StructSettled r.alg ctx owner s') :
+      (resolveAliasStructure r.alg ctx).runState s = (.ok (some owner), s') → StructSettled r.alg ctx owner s')
+    (hq : ctx.inputRecord = none) :
     NavSettled (.resolve n) ctx owner s' := by
-  obtain ⟨r, hl, hrun⟩ := probe_name n ctx top rest s s' owner hcs hprobe
-  exact navSettled_of (headSettled_name n ctx top rest r hcs hl s') (hstruct r hl hrun)
+  obtain ⟨r, hl, hrun⟩ := probe_name n ctx top rest s s' owner hcs hprobe hq
+  exact navSettled_of (headSettled_name n ctx top rest r hcs hl hq s') (hstruct r hl hrun)
 
 /-- **A NAME selecting a declaration that is no transparent reference, from its probe alone.**
     The probe changed nothing (`s' = s`), the identity is the selected declaration, and the
@@ -457,9 +465,10 @@ theorem navSettled_name_of_probe (n : Ident) (ctx : EvalCtx) (top : Algorithm) (
 theorem navSettled_plain_name_of_probe (n : Ident) (ctx : EvalCtx) (top : Algorithm) (rest : List Algorithm)
     (s s' : EvalState) (owner : Algorithm) (hcs : ctx.callStack = top :: rest)
     (hprobe : (resolveDotReceiver? (.resolve n) ctx).runState s = (.ok (some owner), s'))
-    (hnormal : ∀ r, (lookupLexicalPropertyRaw top n ctx).runState s = (.ok r, s) → structureNormal r.alg = true) :
+    (hnormal : ∀ r, (lookupLexicalPropertyRaw top n ctx).runState s = (.ok r, s) → structureNormal r.alg = true)
+    (hq : ctx.inputRecord = none) :
     s' = s ∧ NavSettled (.resolve n) ctx owner s' := by
-  obtain ⟨r, hl, hrun⟩ := probe_name n ctx top rest s s' owner hcs hprobe
+  obtain ⟨r, hl, hrun⟩ := probe_name n ctx top rest s s' owner hcs hprobe hq
   have hn := hnormal r (hl s)
   rw [resolveAliasStructure_normal r.alg ctx hn] at hrun
   have hrun' : ((Except.ok (some r.alg) : Except Error (Option Algorithm)), s) = (.ok (some owner), s') := hrun
@@ -467,7 +476,7 @@ theorem navSettled_plain_name_of_probe (n : Ident) (ctx : EvalCtx) (top : Algori
   have h3 : r.alg = owner := Option.some.inj (Except.ok.inj h1)
   subst h2
   subst h3
-  exact ⟨rfl, navSettled_of (headSettled_name n ctx top rest r hcs hl s) (structSettled_normal r.alg ctx s hn)⟩
+  exact ⟨rfl, navSettled_of (headSettled_name n ctx top rest r hcs hl hq s) (structSettled_normal r.alg ctx s hn)⟩
 
 /-- **A PARAMETER, from its probe.** After the production probe of the parameter `x` completing at
     `(some owner, s')` — its FIRST CALLABLE projection, or a read of the memo — the navigation is
@@ -503,7 +512,7 @@ theorem member_bridge_name_of_probe (a : Nat) (n N : Ident) (fallback : Expr) (a
   member_bridge_navSettled a (.resolve n) N fallback args ctx env s s' (some owner) owner p hprobe hsel
     (member_projection_of_selection (.resolve n) N fallback ctx s s' (some owner) owner p hprobe hsel
       (fun x _ _ hx => by simp [headParam?] at hx) hq)
-    (navSettled_plain_name_of_probe n ctx top rest s s' owner hcs hprobe hnormal).2 hprod hq
+    (navSettled_plain_name_of_probe n ctx top rest s s' owner hcs hprobe hnormal hq).2 hprod hq
 
 /-- **THE MEMBER BRIDGE over ANY receiver, every bundle, from settledness assembled at the probe's
     exit**: `member_bridge_navSettled` with the receiver premise discharged by the probe and the
@@ -562,13 +571,16 @@ theorem chase_not_alias (rec : EvalRec) (fc pr : Bool) (g : Algorithm) (ctx : Ev
   | conditional p op bs id => rfl
 
 /-- One static step over a row that is a NAME selects what the lookup in the alias's own scope
-    selects, whatever the structure reader. -/
+    selects, whatever the structure reader — outside every retained cell's computation, where the
+    selection of an `open`-provided name notes nothing (ledger R-1). -/
 theorem resolveAliasStep_name (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)) (step : Algorithm)
     (m : Ident) (ctx : EvalCtx) (r : ResolvedProperty) (u : EvalState)
-    (hl : (lookupLexicalPropertyRaw step m (ctx.push step)).runState u = (.ok r, u)) :
+    (hl : (lookupLexicalPropertyRaw step m (ctx.push step)).runState u = (.ok r, u))
+    (hq : ctx.inputRecord = none) :
     (resolveAliasStepWith structureOf step (.resolve m) ctx).runState u = (.ok r, u) := by
+  have hq' : (ctx.push step).inputRecord = none := hq
   unfold resolveAliasStepWith staticPathSelectWith
-  simp only [Expr.staticAliasPath?, bind_run, hl, aliasStepNavigateWith]
+  simp only [Expr.staticAliasPath?, lookupLexicalPropertyNoted_unmarked _ _ _ hq', bind_run, hl, aliasStepNavigateWith]
   rfl
 
 /-- **THE STRUCTURE CHASE OF A TRANSPARENT REFERENCE TO A NAMED, NON-ALIAS TARGET, from every
@@ -579,7 +591,7 @@ theorem resolveAliasStructure_reference (parent : Option ScopeCtx) (opens : List
     (m : Ident) (id : Option PropertyIdentity) (ctx : EvalCtx) (r : ResolvedProperty)
     (hl : ∀ t, (lookupLexicalPropertyRaw (.alias parent opens props (.resolve m) id true) m
       (ctx.push (.alias parent opens props (.resolve m) id true))).runState t = (.ok r, t))
-    (hg : isAliasAlg r.alg = false) (u : EvalState) :
+    (hg : isAliasAlg r.alg = false) (hq : ctx.inputRecord = none) (u : EvalState) :
     (resolveAliasStructure (.alias parent opens props (.resolve m) id true) ctx).runState u =
       (.ok (some r.alg), u) := by
   -- the route decision, at fuel 1
@@ -606,7 +618,7 @@ theorem resolveAliasStructure_reference (parent : Option ScopeCtx) (opens : List
         (.resolve m) ctx (aliasStructureContext false (aliasChaseKey (.alias parent opens props (.resolve m) id true))
           [])).runState u = (.ok false, u) from h1 _]
     simp only [Bool.false_eq_true, ↓reduceIte, bind_run]
-    rw [resolveAliasStep_name _ _ m ctx r u (hl u)]
+    rw [resolveAliasStep_name _ _ m ctx r u (hl u) hq]
     exact h2 _ _
   -- the structure chase, at fuel 3
   have h4 : (evalFuel 3 (.resolveAliasStructure (.alias parent opens props (.resolve m) id true) ctx)).runState u =
@@ -635,18 +647,18 @@ theorem navSettled_reference_of_probe (n : Ident) (ctx : EvalCtx) (top : Algorit
     (target : ResolvedProperty)
     (htarget : (lookupLexicalPropertyRaw (.alias parent opens props (.resolve m) id true) m
       (ctx.push (.alias parent opens props (.resolve m) id true))).runState s = (.ok target, s))
-    (hg : isAliasAlg target.alg = false) :
+    (hg : isAliasAlg target.alg = false) (hq : ctx.inputRecord = none) :
     s' = s ∧ owner = target.alg ∧ NavSettled (.resolve n) ctx owner s' := by
-  obtain ⟨r, hl, hrun⟩ := probe_name n ctx top rest s s' owner hcs hprobe
+  obtain ⟨r, hl, hrun⟩ := probe_name n ctx top rest s s' owner hcs hprobe hq
   have hr := hsel r (hl s)
   have hlt := (lookup_everywhere _ m _ s s _ htarget).2
-  have hstruct := resolveAliasStructure_reference parent opens props m id ctx target hlt hg
+  have hstruct := resolveAliasStructure_reference parent opens props m id ctx target hlt hg hq
   rw [hr, hstruct s] at hrun
   obtain ⟨h1, h2⟩ := Prod.mk.inj hrun
   have h3 : target.alg = owner := Option.some.inj (Except.ok.inj h1)
   subst h2
   subst h3
-  refine ⟨rfl, rfl, navSettled_of (headSettled_name n ctx top rest r hcs hl s) ?_⟩
+  refine ⟨rfl, rfl, navSettled_of (headSettled_name n ctx top rest r hcs hl hq s) ?_⟩
   rw [hr]
   exact structSettled_of_everywhere hstruct s
 
@@ -675,6 +687,6 @@ theorem member_bridge_reference_of_probe (a : Nat) (n N : Ident) (fallback : Exp
   member_bridge_of_settled a (.resolve n) N fallback args ctx env s s' (some owner) owner p hprobe hselect
     (fun x _ _ hx => by simp [headParam?] at hx)
     (navSettled_reference_of_probe n ctx top rest s s' owner hcs hprobe parent opens props m id hsel target
-      htarget hg).2.2 hprod hq
+      htarget hg hq).2.2 hprod hq
 
 end KatLang.MemberSettled

@@ -130,7 +130,7 @@ theorem pilot_resolveDotReceiver (e : Expr) (ctx : EvalCtx) (s : EvalState) (hq 
       (fun _ _ => True) := by
   show Agree K s (EvalBody.resolveDotReceiver? rec e ctx) (EvalBody.resolveDotReceiver? (K.guard rec) e ctx) _
   unfold EvalBody.resolveDotReceiver?
-  simp only [noteMemberAccess_unmarked _ _ _ _ hq, EvalM.pure_bind]
+  simp only [noteMemberAccess_unmarked _ _ _ _ hq, lookupLexicalPropertyNoted_unmarked _ _ _ hq, EvalM.pure_bind]
   agree_tac
   all_goals first | assumption | solve_by_elim
 
@@ -146,17 +146,21 @@ theorem pilot_projectNeedStructuralMember (source : Expr) (ctx : EvalCtx) (s : E
   show Agree K s (EvalBody.projectNeedStructuralMember rec source ctx)
     (EvalBody.projectNeedStructuralMember (K.guard rec) source ctx) _
   unfold EvalBody.projectNeedStructuralMember
-  simp only [noteMemberAccess_unmarked _ _ _ _ hq, EvalM.pure_bind]
+  simp only [noteMemberAccess_unmarked _ _ _ _ hq, lookupLexicalPropertyNoted_unmarked _ _ _ hq, EvalM.pure_bind]
   agree_tac
   all_goals first | assumption | solve_by_elim
 
-/-- LEXICAL LOOKUP (with `open` resolution, inside the state-free `lookupLexicalPropertyRaw`). -/
+/-- LEXICAL LOOKUP (with `open` resolution, inside the state-free `lookupLexicalPropertyRaw`), outside
+    every retained cell's computation (`hq`): inside one the selection of an `open`-provided name is an
+    input read the cell records (`noteOpenAccess`, ledger R-1), a write this procedure has no rule for. -/
 theorem pilot_lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx) (s : EvalState)
+    (hq : ctx.inputRecord = none)
     (vcTarget : ∀ (b : Algorithm), K.pre (.resolveAliasTarget b ctx) s) :
     Agree K s (evalStep rec (.lookupLexicalProperty a name ctx))
       (evalStep (K.guard rec) (.lookupLexicalProperty a name ctx)) (fun _ _ => True) := by
   show Agree K s (EvalBody.lookupLexicalProperty rec a name ctx) (EvalBody.lookupLexicalProperty (K.guard rec) a name ctx) _
   unfold EvalBody.lookupLexicalProperty
+  rw [lookupLexicalPropertyNoted_unmarked _ _ _ hq]
   agree_tac
   all_goals first | assumption | solve_by_elim
 

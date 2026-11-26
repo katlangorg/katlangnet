@@ -454,7 +454,7 @@ public static partial class Evaluator
             {
                 case Expr.Resolve(var name):
                 {
-                    var resolved = LookupLexicalRaw(step, name, stepCtx);
+                    var resolved = LookupLexicalNoted(step, name, stepCtx);
                     if (resolved.IsError)
                         return Finish(frame, AtSpanIfMissing(resolved.Error, step.Target.Span));
                     var hop = new PropertyCallBinding(resolved.Value.Owner, resolved.Value.Binding);
@@ -504,7 +504,7 @@ public static partial class Evaluator
             {
                 case Expr.Resolve(var name):
                 {
-                    var resolved = LookupLexicalRaw(owner, name, stepCtx);
+                    var resolved = LookupLexicalNoted(owner, name, stepCtx);
                     if (resolved.IsError)
                     {
                         frame.Selected = AtSpanIfMissing(resolved.Error, head.Span ?? path.Span);
@@ -688,7 +688,7 @@ public static partial class Evaluator
                                 break;
                             }
 
-                            var resolved = ProjectRawLookup(LookupLexicalRaw(ctx.CallStack[0], name, ctx), head.Span);
+                            var resolved = ProjectRawLookup(LookupLexicalNoted(ctx.CallStack[0], name, ctx), head.Span);
                             if (resolved.IsOk && resolved.Value is Algorithm.Alias headAlias)
                                 return Nest(headAlias, ctx, AliasChase.Structure, binding: null);
                             if (resolved.IsError)
@@ -1658,7 +1658,7 @@ public static partial class Evaluator
             {
                 if (ctx.CallStack.Count == 0)
                     return new EvalError.UnknownName(name) { Span = target.Span };
-                var resolved = ProjectRawLookup(LookupLexicalRaw(ctx.CallStack[0], name, ctx), target.Span);
+                var resolved = ProjectRawLookup(LookupLexicalNoted(ctx.CallStack[0], name, ctx), target.Span);
                 return resolved.IsError ? resolved : ReceiverStructure(resolved.Value, target, ctx);
             }
 

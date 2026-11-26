@@ -491,6 +491,13 @@ public class MaintainedDocumentationConsistencyTests
             @"(?<!\w)FoldContinuationStack(?!\w)|\bcontinues\s+(?:a\s+long\s+chain|its\s+chain)\s+on\s+a\s+fresh\s+(?:stack|thread)\b|\bfold\s+continuation\s+threads?\b",
             "a synchronous fold continued on fresh threads (superseded 2026-11-24 by heap continuations pumped on the calling thread)"
         },
+        // Ledger R-1, the `open` route (2026-11-26): the admitted access of an `open`-PROVIDED local-only member is
+        // an input read of a retained cell, recorded where the selection is consumed; only an `open` TARGET's
+        // path step is unrecorded (the open-target qualification).
+        {
+            @"\bopen`?-provided\s+(?:local-only\s+)?(?:name|member)\b[^.;]{0,120}\b(?:is|are)\s+not\s+(?:recorded|noted)\b",
+            "an open-provided member's access as unrecorded on a retained cell (before the open route was recorded, 2026-11-26)"
+        },
     };
 
     [Theory]

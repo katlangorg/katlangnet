@@ -61,7 +61,7 @@ public class HostParentDifferentialTests
         Assert.Contains("\nimport CoreTests.HostParentDifferential\n", root, StringComparison.Ordinal);
     }
 
-    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15, KL-06's HP-16, KL-07's HP-17, EXPORTED-DETACHED's HP-18, R-1's HP-19, its open qualification HP-20 and its escaped projection HP-21.</summary>
+    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15, KL-06's HP-16, KL-07's HP-17, EXPORTED-DETACHED's HP-18, R-1's HP-19, its open route HP-20 (with the open-target qualification) and its escaped projection HP-21.</summary>
     [Fact]
     public void CorpusIds_AreStableUnique_AndCoverTheWholeMatrix()
     {
@@ -99,9 +99,9 @@ public class HostParentDifferentialTests
     /// (<see cref="CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet"/>) fail while a floor
     /// is below its current count, so a floor cannot go stale after cases are added.
     /// </summary>
-    private const int MinimumComparableCases = 163;
+    private const int MinimumComparableCases = 170;
     private const int MinimumComparableCasesWithPreWiredParents = 124;
-    private const int MinimumSuccessCacheGuards = 224;
+    private const int MinimumSuccessCacheGuards = 226;
 
     private const string ComparableMetric = "comparable";
     private const string PreWiredMetric = "pre-wired";
@@ -260,6 +260,10 @@ public class HostParentDifferentialTests
         // An admitted local-only member access is the cell's input read, in either row order; a cold channel
         // of a cell known to depend on the call's input is refused before it runs.
         ("HP-19u", ["P"]), ("HP-19v", ["P"]), ("HP-19x", ["P"]), ("HP-19y", ["P"]), ("HP-19z", ["P"]),
+        // The same through an `open`-provided member (the open route): both row orders, the forwarded record
+        // and a cold channel refused before its effect. (The open-target qualification, HP-20h / HP-20i, and the
+        // controls succeed.)
+        ("HP-20a", ["P"]), ("HP-20b", ["P"]), ("HP-20d", ["P"]), ("HP-20e", ["P"]), ("HP-20f", ["P"]),
         ("HP-21a", ["P"]),
     ];
 

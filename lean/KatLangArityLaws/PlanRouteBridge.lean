@@ -819,6 +819,8 @@ theorem member_projection_of_probe (n N : Ident) (fallback : Expr) (ctx : EvalCt
   | cons top rest =>
     rw [hcs] at hprobe'
     dsimp only at hprobe'
+    -- Outside every retained cell's computation the selection notes nothing (ledger R-1, `open` route).
+    rw [lookupLexicalPropertyNoted_unmarked _ _ _ hq] at hprobe'
     rw [bind_run] at hprobe'
     rcases hl : (lookupLexicalPropertyRaw top n ctx).runState s with ⟨lo, t⟩
     rw [hl] at hprobe'
@@ -834,6 +836,7 @@ theorem member_projection_of_probe (n N : Ident) (fallback : Expr) (ctx : EvalCt
           unfold EvalBody.projectNeedStructuralMember
           rw [hcs]
           dsimp only
+          rw [lookupLexicalPropertyNoted_unmarked _ _ _ hq]
           rw [bind_run, hl]
           rfl
         · nofun
@@ -1200,6 +1203,8 @@ theorem probe_is_projected_structure : ∀ (target : Expr) (ctx : EvalCtx) (s s'
       | cons top rest =>
         rw [hcs] at hprobe'
         dsimp only at hprobe'
+        -- Outside every retained cell's computation the selection notes nothing (ledger R-1, `open` route).
+        rw [lookupLexicalPropertyNoted_unmarked _ _ _ hq] at hprobe'
         rw [bind_run] at hprobe'
         rcases hl : (lookupLexicalPropertyRaw top n ctx).runState s with ⟨lo, t⟩
         rw [hl] at hprobe'
@@ -1213,6 +1218,7 @@ theorem probe_is_projected_structure : ∀ (target : Expr) (ctx : EvalCtx) (s s'
               unfold EvalBody.projectNeedStructuralMember
               rw [hcs]
               dsimp only
+              rw [lookupLexicalPropertyNoted_unmarked _ _ _ hq]
               rw [bind_run, hl]
               rfl
             · nofun
@@ -1734,11 +1740,12 @@ theorem navInert_block (block : Algorithm) (ctx : EvalCtx) (h : structureNormal 
   rw [resolveAliasStructure_normal _ ctx h]
   rfl
 
-/-- A name whose lexical lookup is state-inert and structure-normal navigates inertly. -/
+/-- A name whose lexical lookup is state-inert and structure-normal navigates inertly, outside every
+    retained cell's computation (where the selection of an `open`-provided name notes nothing, ledger R-1). -/
 theorem navInert_name (n : Ident) (ctx : EvalCtx) (top : Algorithm) (rest : List Algorithm) (r : ResolvedProperty)
     (hcs : ctx.callStack = top :: rest)
     (hl : ∀ t, (lookupLexicalPropertyRaw top n ctx).runState t = (.ok r, t))
-    (h : structureNormal r.alg = true) : NavInert (.resolve n) ctx r.alg := by
+    (h : structureNormal r.alg = true) (hq : ctx.inputRecord = none) : NavInert (.resolve n) ctx r.alg := by
   intro t
   have hhead : (projectNeedStructuralMember (.resolve n) ctx).runState t = (.ok (some r.alg), t) := by
     apply KatLang.WhileRoundProduction.production_of_answer_free _ t
@@ -1747,6 +1754,7 @@ theorem navInert_name (n : Ident) (ctx : EvalCtx) (top : Algorithm) (rest : List
       unfold EvalBody.projectNeedStructuralMember
       rw [hcs]
       dsimp only
+      rw [lookupLexicalPropertyNoted_unmarked _ _ _ hq]
       rw [bind_run, hl t]
       rfl
     · nofun

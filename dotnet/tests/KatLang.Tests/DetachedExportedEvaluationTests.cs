@@ -46,9 +46,19 @@ public class DetachedExportedEvaluationTests
 
         /// <summary>The async twin family over an async-capable run cache.</summary>
         AsyncTwin,
+
+        /// <summary>
+        /// The async twin family over a cache whose every seam access GENUINELY SUSPENDS (yields to the
+        /// thread pool before the inner law, <see cref="SuspendingAsyncZeroArgPropertyResultCache"/>), so the
+        /// evaluation spine truly suspends and resumes.
+        /// </summary>
+        Suspending,
     }
 
     public static TheoryData<Route> Routes() => [Route.Optimized, Route.Generic, Route.AsyncTwin];
+
+    /// <summary>The three routes plus the genuinely suspending one (ledger R-1, the <c>open</c> route).</summary>
+    public static TheoryData<Route> RoutesWithSuspension() => [Route.Optimized, Route.Generic, Route.AsyncTwin, Route.Suspending];
 
     // ── Mis-exposed programs ───────────────────────────────────────────────────────────────────
 
@@ -1153,33 +1163,335 @@ public class DetachedExportedEvaluationTests
         """;
 
     /// <summary>
-    /// OPEN QUALIFICATION OF R-1 (pinned residual, November 24 2026). The admitted access of a local-only
-    /// member is recorded on the STRUCTURAL routes (a dot access, a static alias path step). An
-    /// <c>open</c>-provided name is resolved by the lexical lookup, which is a state-free judgment of the
-    /// Lean model (<c>MemberSettled.sf_lookupLexicalPropertyRaw</c>), so that admission is NOT recorded: a
-    /// falsely exported sibling that reuses a retained cell whose callable is an <c>open</c>-provided
-    /// local-only member is not refused, in EITHER row order (the cell's row runs at its declaring level's
-    /// watermark whichever reader establishes it), although the sibling's own direct use of the member is
-    /// refused. Not a wrong value — the member's body never reads <c>y</c> here, and a read of <c>y</c>
-    /// would be refused — but an access the exposure law forbids. Closing it needs the lookup's laws
-    /// restated outside retained computations (follow-up).
+    /// The <c>open</c>-provided member consumed on other routes: <c>DECLS</c> declare how the cell's
+    /// computation reaches it, <c>BODY</c> is the sibling's read and <c>ROWS</c> the row order.
+    /// </summary>
+    private const string OpenProvidedUse = """
+        Cap(meta r) = r
+        F(y) = {
+          open Box
+          Box = {
+            public G(x) = if(true, x + 1, y + 0)
+          }
+          DECLS
+          P = BODY + 0
+          ROWS
+        }
+
+        """;
+
+    private static string OpenUse(string decls, string body, string rows, string calls = "F(1)")
+        => OpenProvidedUse.Replace("DECLS", decls, StringComparison.Ordinal).Replace("BODY", body, StringComparison.Ordinal)
+            .Replace("ROWS", rows, StringComparison.Ordinal) + calls + "\n";
+
+    /// <summary>The refusal an inaccessible <c>open</c>-provided <c>G</c> reports: the open route's own, naming its provider.</summary>
+    private static void AssertOpenMemberRefused(EvalResult<Evaluator.CountedResult> result, string member = "G", SourceSpan? at = null)
+    {
+        Assert.True(result.IsError, AsyncEvaluationHarness.NeutralOf(result));
+        var refusal = Assert.IsType<EvalError.LocalOnlyProperty>(result.Error.UnwrapContext());
+        Assert.Equal(member, refusal.PropertyName);
+        Assert.Equal("Box", refusal.ObjectDesc);
+        if (at is { } span)
+            Assert.Equal(span, refusal.Span);
+    }
+
+    /// <summary>
+    /// AN ADMITTED ACCESS OF AN <c>open</c>-PROVIDED LOCAL-ONLY MEMBER IS AN INPUT READ (ledger R-1, the
+    /// <c>open</c> route, November 26 2026). The lexical lookup selects <c>G</c> through <c>open Box</c> and
+    /// checks its access from the reading site, a state-free judgment that only reports the admission; the
+    /// evaluation that consumes the selected member — here the projection of the captured call's callee —
+    /// records it on the retained cell (Lean <c>noteOpenAccess</c> in <c>lookupLexicalPropertyNoted</c>; C#
+    /// <c>Evaluator.AdmitOpenAccess</c>), through <c>F</c>'s activation, although <c>G</c>'s body never reads
+    /// <c>y</c>. So the falsely exported sibling is refused in BOTH row orders, exactly as its own use of
+    /// <c>G</c> is: the reuse of the warm cell with the alias's refusal before any of it runs, and, when its
+    /// own evaluation establishes the cell, the member access in the row with the open route's refusal at
+    /// the written <c>G</c>. Until this repair neither order was refused (the pinned open qualification).
+    /// The correctly classified program keeps its values on every route, the genuinely suspending one too.
     /// </summary>
     [Theory]
-    [MemberData(nameof(Routes))]
-    public async Task R1_AnOpenProvidedLocalOnlyMember_IsNotRecorded_OpenQualification(Route route)
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_AnOpenProvidedLocalOnlyMember_IsRefusedInBothRowOrders(Route route)
     {
         static string Program(string body, string rows)
             => OpenProvidedMember.Replace("BODY", body, StringComparison.Ordinal).Replace("ROWS", rows, StringComparison.Ordinal) + "F(1)\n";
 
         Assert.Equal("ok raw=S[6, 6] n=1", await Observe(Parsed(Program("A(5)", "A(5), P")), route));
-        // The residual: neither row order refuses the reuse.
-        Assert.Equal("ok raw=S[6, 6] n=1", await Observe(MisExposed(Program("A(5)", "A(5), P"), "F.P"), route));
-        Assert.Equal("ok raw=S[6, 6] n=1", await Observe(MisExposed(Program("A(5)", "P, A(5)"), "F.P"), route));
+        Assert.Equal("ok raw=S[6, 6] n=1", await Observe(Parsed(Program("A(5)", "P, A(5)")), route));
 
-        // The sibling's own use of the member is refused by the access law.
-        var direct = await Run(MisExposed(Program("G(5)", "P"), "F.P"), route);
+        var warm = await RunWithBudget(MisExposed(Program("A(5)", "A(5), P"), "F.P"), route);
+        var reuse = Assert.IsType<EvalError.LocalOnlyProperty>(warm.Result.Error.UnwrapContext());
+        Assert.Equal("A", reuse.PropertyName);
+        Assert.Equal("an enclosing call", reuse.ObjectDesc);
+
+        AssertOpenMemberRefused(await Run(MisExposed(Program("A(5)", "P, A(5)"), "F.P"), route), at: new SourceSpan(7, 11, 7, 12));
+
+        // The sibling's own use of the member: the same refusal, at its own `G`.
+        AssertOpenMemberRefused(await Run(MisExposed(Program("G(5)", "P"), "F.P"), route), at: new SourceSpan(8, 7, 8, 8));
+    }
+
+    /// <summary>
+    /// THE NOTE IS MADE WHEREVER THE SELECTED MEMBER IS CONSUMED: the cell's computation reaches the
+    /// <c>open</c>-provided <c>G</c> through another retained cell it reuses (the record is FORWARDED), a
+    /// helper's body, a transparent alias's static step and, for the sibling, as a callback; and each call
+    /// of <c>F</c> judges its own cell. The correctly classified programs keep their values; with <c>P</c>
+    /// forced exported the warm reuse is the alias's refusal and the cold establishment the member's.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_AnOpenProvidedMember_IsRecordedWhereverItsSelectionIsConsumed(Route route)
+    {
+        var cases = new (string Decls, string Body, string Warm, string Cold, string WarmValue, string ColdValue, string Calls)[]
+        {
+            ("B = Cap(G(0)).Algorithm\n  A = Cap(B(0)).Algorithm", "A(5)", "B(5), A(5), P", "P, B(5), A(5)", "ok raw=S[6, 6, 6] n=1", "ok raw=S[6, 6, 6] n=1", "F(1)"),
+            ("Mk(k) = Cap(G(k))\n  A = Mk(0).Algorithm", "A(5)", "A(5), P", "P, A(5)", "ok raw=S[6, 6] n=1", "ok raw=S[6, 6] n=1", "F(1)"),
+            ("H = G\n  A = Cap(H(0)).Algorithm", "A(5)", "A(5), P", "P, A(5)", "ok raw=S[6, 6] n=1", "ok raw=S[6, 6] n=1", "F(1)"),
+            ("A = Cap(G(0)).Algorithm", "[1, 2].map(A)[1]", "[1].map(A)[0], P", "P, [1].map(A)[0]", "ok raw=S[2, 3] n=1", "ok raw=S[3, 2] n=1", "F(1)"),
+            ("A = Cap(G(0)).Algorithm", "A(5)", "A(5), P", "P, A(5)", "ok raw=S[S[6, 6], S[6, 6]] n=2", "ok raw=S[S[6, 6], S[6, 6]] n=2", "F(1), F(2)"),
+        };
+        foreach (var (decls, body, warm, cold, warmValue, coldValue, calls) in cases)
+        {
+            Assert.Equal(warmValue, await Observe(Parsed(OpenUse(decls, body, warm, calls)), route));
+            Assert.Equal(coldValue, await Observe(Parsed(OpenUse(decls, body, cold, calls)), route));
+            await AssertReuseRefused(MisExposed(OpenUse(decls, body, warm, calls), "F.P"), route);
+            AssertOpenMemberRefused(await Run(MisExposed(OpenUse(decls, body, cold, calls), "F.P"), route));
+        }
+    }
+
+    /// <summary>
+    /// A CELL KNOWN TO DEPEND ON AN <c>open</c> ACCESS IS REFUSED BEFORE ITS CHANNEL RUNS, and the refusal
+    /// keeps the order of effects. <c>Same(A, A)</c> warms the CALLABLE, whose computation selects the
+    /// <c>open</c>-provided <c>Sel</c>; the sibling's VALUE request is refused before the VALUE channel runs
+    /// its tick (zero ticks against one when correctly classified). With a tick BEFORE the access in the
+    /// cell's own computation, the sibling that establishes the cell is refused at the access after that
+    /// tick, exactly where its own evaluation of the row would be, and the warm reuse after the row's tick
+    /// runs nothing more.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_AKnownOpenDependentCell_IsRefusedBeforeItsChannelRuns_InBothEffectOrders(Route route)
+    {
+        const string channels = """
+            Cap(meta r) = r
+            Effect(*xs) = tick()
+            Same(f, f) = 0
+            F(y) = {
+              open Box
+              Box = {
+                public Sel(k) = if(true, Cap(Effect()), y + 0)
+              }
+              A = Sel(1).Algorithm
+              P = A + 0
+              Same(A, A), P
+            }
+            F(1)
+
+            """;
+        var correct = await RunWithBudget(Parsed(channels), route);
+        Assert.Equal("ok raw=S[0, 1] n=1", AsyncEvaluationHarness.NeutralOf(correct.Result));
+        Assert.Equal(1, correct.Budget.TickCount);
+        var refused = await RunWithBudget(MisExposed(channels, "F.P"), route);
+        var reuse = Assert.IsType<EvalError.LocalOnlyProperty>(refused.Result.Error.UnwrapContext());
+        Assert.Equal("A", reuse.PropertyName);
+        Assert.Equal(0, refused.Budget.TickCount);
+
+        const string tickFirst = "Mk(k) = if(tick() > 0, Cap(G(k)), Cap(G(k)))\n  A = Mk(0).Algorithm";
+        foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+        {
+            var control = await RunWithBudget(Parsed(OpenUse(tickFirst, "A(5)", rows)), route);
+            Assert.Equal("ok raw=S[6, 6] n=1", AsyncEvaluationHarness.NeutralOf(control.Result));
+            Assert.Equal(1, control.Budget.TickCount);
+        }
+
+        var warm = await RunWithBudget(MisExposed(OpenUse(tickFirst, "A(5)", "A(5), P"), "F.P"), route);
+        Assert.Equal("A", Assert.IsType<EvalError.LocalOnlyProperty>(warm.Result.Error.UnwrapContext()).PropertyName);
+        Assert.Equal(1, warm.Budget.TickCount);
+
+        var cold = await RunWithBudget(MisExposed(OpenUse(tickFirst, "A(5)", "P, A(5)"), "F.P"), route);
+        AssertOpenMemberRefused(cold.Result);
+        Assert.Equal(1, cold.Budget.TickCount);
+    }
+
+    /// <summary>
+    /// A VALUE ACCESS THROUGH <c>open</c>: a lazy position of the cell reads the <c>open</c>-provided
+    /// local-only <c>V</c>. The attached row's read records it, so the sibling's reuse is refused; with
+    /// the sibling first, its own demand of the position is refused at the read with the open route's
+    /// refusal, before the property read itself. The correctly classified program keeps its values.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_AnOpenProvidedValue_ReadInTheCellsComputation_IsRefusedInBothRowOrders(Route route)
+    {
+        const string valueRead = """
+            Cap(meta r) = r
+            F(y) = {
+              open Box
+              Box = {
+                public V = if(true, 5, y + 0)
+              }
+              Mk(v) = {
+                Z(*xs) = [1, 2].map{ n + V }
+                Cap(Z())
+              }
+              A = Mk(5).Algorithm
+              P = A[0] + 0
+              ROWS
+            }
+            F(1)
+
+            """;
+        Assert.Equal("ok raw=S[6, 6] n=1", await Observe(Parsed(valueRead.Replace("ROWS", "A[0], P", StringComparison.Ordinal)), route));
+        Assert.Equal("ok raw=S[6, 6] n=1", await Observe(Parsed(valueRead.Replace("ROWS", "P, A[0]", StringComparison.Ordinal)), route));
+        await AssertReuseRefused(MisExposed(valueRead.Replace("ROWS", "A[0], P", StringComparison.Ordinal), "F.P"), route);
+        AssertOpenMemberRefused(await Run(MisExposed(valueRead.Replace("ROWS", "P, A[0]", StringComparison.Ordinal), "F.P"), route), member: "V");
+    }
+
+    /// <summary>
+    /// CONTROLS of the <c>open</c> route: an access the law admits through NO activation is no input — an
+    /// EXPORTED member of a local-only provider (<c>Box</c> is local-only through <c>H</c>, <c>G</c> captures
+    /// nothing) is shared with the exported sibling — the front end itself classifies <c>P</c> exported, so it
+    /// runs detached — in both row orders, with the values, ticks and cells of the same program run without
+    /// detachment; an ATTACHED caller uses its own activation (a correctly classified local-only sibling
+    /// <c>Q</c> reads the cell in both orders); and a channel the program never runs consumes nothing — the
+    /// cell's VALUE would read the <c>open</c>-provided <c>V</c>, but only its CALLABLE is used, so the falsely
+    /// exported sibling is admitted.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_OpenRouteControls_AreAdmitted(Route route)
+    {
+        const string exportedMember = """
+            Cap(meta r) = r
+            F(y) = {
+              open Box
+              Box = {
+                public G(x) = x + 1
+                public H = y + 0
+              }
+              A = Cap(G(0)).Algorithm
+              P = A(5) + 0
+              ROWS
+            }
+            F(1)
+
+            """;
+        foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+        {
+            var source = exportedMember.Replace("ROWS", rows, StringComparison.Ordinal);
+            var program = ExportedAlready(source, "F.P", "F.Box.G");
+            var detached = await RunWithBudget(program, route);
+            (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget) attached;
+            using (DetachedEvaluationTestSeam.DisableDetachment())
+                attached = await RunWithBudget(program, route);
+            Assert.Equal("ok raw=S[6, 6] n=1", AsyncEvaluationHarness.NeutralOf(detached.Result));
+            Assert.Equal(AsyncEvaluationHarness.NeutralOf(attached.Result), AsyncEvaluationHarness.NeutralOf(detached.Result));
+            Assert.Equal(attached.Budget.TickCount, detached.Budget.TickCount);
+            Assert.Equal(attached.Budget.AliasBindingCells.AddedCount, detached.Budget.AliasBindingCells.AddedCount);
+
+            var exportedProvider = ExportedAlready(source.Replace("public H = y + 0", "public H = 0", StringComparison.Ordinal),
+                "F.Box", "F.Box.G", "F.P");
+            Assert.Equal("ok raw=S[6, 6] n=1", await Observe(exportedProvider, route));
+        }
+
+        foreach (var rows in new[] { "A(5), Q", "Q, A(5)" })
+            Assert.Equal("ok raw=S[6, 6] n=1",
+                await Observe(Parsed(OpenUse("A = Cap(G(0)).Algorithm\n  Q = A(5) + 0", "A(5)", rows)), route));
+
+        const string unusedChannel = """
+            Cap(meta r) = r
+            Same(f, f) = 0
+            F(y) = {
+              open Box
+              Box = {
+                public V = if(true, 5, y + 0)
+              }
+              Val(*xs) = V + 1
+              A = Cap(Val()).Algorithm
+              P = Same(A, A) + 0
+              ROWS
+            }
+            F(1)
+
+            """;
+        foreach (var rows in new[] { "Same(A, A), P", "P, Same(A, A)" })
+        {
+            var program = unusedChannel.Replace("ROWS", rows, StringComparison.Ordinal);
+            Assert.Equal("ok raw=S[0, 0] n=1", await Observe(Parsed(program), route));
+            Assert.Equal("ok raw=S[0, 0] n=1", await Observe(MisExposed(program, "F.P"), route));
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_ClassifyingAnUnusedAliasArgument_DoesNotConsumeItsOpenMember(Route route)
+    {
+        const string declarations = "H = G\n  Inc(n) = n + 1\n  Mk(f) = Cap(Inc(0))\n  A = Mk(H).Algorithm";
+        foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+        {
+            var program = OpenUse(declarations, "A(5)", rows);
+            Assert.Equal("ok raw=S[6, 6] n=1", await Observe(Parsed(program), route));
+            Assert.Equal("ok raw=S[6, 6] n=1", await Observe(MisExposed(program, "F.P"), route));
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_PreparingAnUnevaluatedLoopRow_DoesNotConsumeItsOpenMember(Route route)
+    {
+        const string declarations = "Inc(n) = n + 1\n  Mk(n) = if(n == 0, Cap(Inc(0)), Cap(Inc(1)))\n  Step(n) = {\n    if = G\n    if(n), false\n  }\n  A = Mk(Step(0).while).Algorithm";
+        foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+        {
+            var program = OpenUse(declarations, "A(5)", rows);
+            Assert.Equal("ok raw=S[6, 6] n=1", await Observe(Parsed(program), route));
+            Assert.Equal("ok raw=S[6, 6] n=1", await Observe(MisExposed(program, "F.P"), route));
+        }
+    }
+
+    /// <summary>
+    /// OPEN-TARGET QUALIFICATION OF R-1 (pinned residual, November 26 2026). The member steps of an
+    /// <c>open</c> TARGET's path are judged when the level's opens are resolved — for every lookup that
+    /// consults the level — and those admissions are not noted: with <c>open Box.Sub</c>, where <c>Sub</c> is
+    /// local-only through its output row and the selected <c>G</c> captures nothing, a falsely exported
+    /// sibling that reuses the cell is not refused in either row order, although its own direct use of
+    /// <c>G</c> is refused at the target's step. Not a wrong value (no read of <c>y</c> is involved, and a
+    /// read of <c>y</c> would be refused), but an access the exposure law forbids.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_AnOpenTargetsLocalOnlyPathStep_IsNotRecorded_OpenTargetQualification(Route route)
+    {
+        const string dotted = """
+            Cap(meta r) = r
+            F(y) = {
+              open Box.Sub
+              Box = {
+                public Sub = {
+                  public G(x) = x + 1
+                  y
+                }
+                0
+              }
+              A = Cap(G(0)).Algorithm
+              P = BODY + 0
+              ROWS
+            }
+            F(1)
+
+            """;
+        static string Dotted(string body, string rows)
+            => dotted.Replace("BODY", body, StringComparison.Ordinal).Replace("ROWS", rows, StringComparison.Ordinal);
+
+        foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+        {
+            Assert.Equal("ok raw=S[6, 6] n=1", await Observe(Parsed(Dotted("A(5)", rows)), route));
+            // The residual: neither row order refuses the reuse.
+            Assert.Equal("ok raw=S[6, 6] n=1", await Observe(MisExposed(Dotted("A(5)", rows), "F.P"), route));
+        }
+
+        var direct = await Run(MisExposed(Dotted("G(5)", "P"), "F.P"), route);
         Assert.True(direct.IsError, AsyncEvaluationHarness.NeutralOf(direct));
-        Assert.Equal("G", Assert.IsType<EvalError.LocalOnlyProperty>(direct.Error.UnwrapContext()).PropertyName);
+        var refusal = Assert.IsType<EvalError.LocalOnlyProperty>(direct.Error.UnwrapContext());
+        Assert.Equal("Sub", refusal.PropertyName);
+        Assert.Equal("Box", refusal.ObjectDesc);
     }
 
     /// <summary>
@@ -1921,11 +2233,35 @@ public class DetachedExportedEvaluationTests
     private static Expr Parsed(string source) => new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
     /// <summary>
+    /// Parses <paramref name="source"/> cleanly and asserts that the front end ITSELF classifies the
+    /// properties at the dotted declaration <paramref name="paths"/> exported: a correctly classified
+    /// tree whose sibling runs detached.
+    /// </summary>
+    private static Expr ExportedAlready(string source, params string[] paths)
+    {
+        Algorithm root = SourceProvenance.ParseValid(source).Root;
+        foreach (var path in paths)
+        {
+            Algorithm current = root;
+            Property? property = null;
+            foreach (var name in path.Split('.'))
+            {
+                property = Assert.Single(Assert.IsType<Algorithm.User>(current).Properties, candidate => candidate.Name == name);
+                current = property.Value;
+            }
+            Assert.Equal(PropertyExposure.Exported, property!.Exposure);
+        }
+
+        return new Expr.AlgorithmExpr(root);
+    }
+
+    /// <summary>
     /// Runs <paramref name="program"/> on <paramref name="route"/> over a run cache the test owns and
     /// returns the outcome with the number of entries the run PUBLISHED.
     /// </summary>
     private static async Task<(EvalResult<Evaluator.CountedResult> Result, int Published)> RunCountingPublications(Expr program, Route route)
     {
+        Assert.NotEqual(Route.Suspending, route);
         if (route == Route.AsyncTwin)
         {
             var asyncCache = new RunScopedAsyncZeroArgPropertyResultCache();
@@ -1952,8 +2288,22 @@ public class DetachedExportedEvaluationTests
             Route.Generic => Evaluator.RunCountedObserved(program, enableOptimizations: false),
             Route.AsyncTwin => await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(
                 program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache())),
+            Route.Suspending => await RunSuspending(program),
             _ => throw new ArgumentOutOfRangeException(nameof(route)),
         };
+
+    /// <summary>
+    /// The genuinely suspending route: every property access of the run yields before the inner law, and
+    /// the run must have made at least one (each such access suspends the evaluation spine).
+    /// </summary>
+    private static async Task<(EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget)> RunSuspending(Expr program)
+    {
+        var cache = new SuspendingAsyncZeroArgPropertyResultCache();
+        var run = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: cache));
+        Assert.True(cache.AsyncAccesses > 0, "the run never suspended at a property access");
+        Assert.Equal(0, cache.SyncAccesses);
+        return run;
+    }
 
     private static async Task<string> Observe(Expr program, Route route)
         => AsyncEvaluationHarness.NeutralOf(await Run(program, route));
@@ -1965,6 +2315,7 @@ public class DetachedExportedEvaluationTests
             Route.Generic => Evaluator.RunCountedObserved(program, enableOptimizations: false).Result,
             Route.AsyncTwin => (await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(
                 program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache()))).Result,
+            Route.Suspending => (await RunSuspending(program)).Result,
             _ => throw new ArgumentOutOfRangeException(nameof(route)),
         };
 
