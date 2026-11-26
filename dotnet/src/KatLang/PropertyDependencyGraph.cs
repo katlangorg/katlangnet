@@ -431,6 +431,10 @@ internal static class PropertyDependencyGraphBuilder
         // null once folded (or when nothing was absorbed). An absorbed seed is never mutated.
         private List<SummarySeed>? _absorbed;
         private HashSet<SummarySeed>? _absorbedSet;
+        // A full member expansion is logically flat at publication. Other seeds can hold such a member
+        // under the existing completed-seed sharing rule, whose edges settlement charges individually.
+        private bool _deferredMember;
+        private bool _hasDeferredMember;
 
         public SummarySeed(
             IEnumerable<string>? requiredAncestorOwnedParameterNames = null,
@@ -475,9 +479,12 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         // Entries a copy of this seed would transfer, without folding it.
-        private int EntryCount
+        private int EntryCount => OwnEntryCount + (_absorbed?.Count ?? 0);
+
+        /// <summary>The entries of this seed's OWN sets, not those of the parts it holds by reference.</summary>
+        internal int OwnEntryCount
             => (_requiredAncestorOwnedParameterNames?.Count ?? 0) + (_visiblePropertyDependencyNames?.Count ?? 0)
-                + (_pendingReferences?.Count ?? 0) + (_ownerQualifiedParameters?.Count ?? 0) + (_absorbed?.Count ?? 0);
+                + (_pendingReferences?.Count ?? 0) + (_ownerQualifiedParameters?.Count ?? 0);
 
         public SummarySeed Clone()
         {
@@ -516,12 +523,59 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         /// <summary>
+        /// MEMBERS BY REFERENCE (<see cref="ExpandAtLevel"/>): adds a member seed of the expanding level that carries no
+        /// visible name and no pending reference, here or in any part it holds. A member seed that holds parts, or more
+        /// than <see cref="CopiedCompletedEntries"/> entries, is held by reference; a smaller flat one is copied (an empty
+        /// one adds nothing, so a held part is never empty). Unlike <see cref="AbsorbCompleted"/>, a small member that
+        /// holds parts is not copied: its own entries would pile up in the holder's own sets beside its parts, and a chain
+        /// of members, each holding its predecessor's predecessors, would carry up to that many entries of delta per link
+        /// instead of its own.
+        /// </summary>
+        internal void HoldMember(SummarySeed member, FrontEndTraversalObservations? observations)
+        {
+            if (member._absorbed is not null || member.EntryCount > CopiedCompletedEntries)
+            {
+                AbsorbReference(member);
+                return;
+            }
+
+            observations?.RecordMemberEntriesCopied(member.OwnEntryCount);
+            UnionWith(member);
+        }
+
+        /// <summary>
+        /// Folds every part this seed holds into its own sets now, exactly as a read would, with the solve's scratch
+        /// collections (MEMBERS BY REFERENCE: an expansion whose fold budget is spent,
+        /// <see cref="HeldMemberSeeds.MustFold"/>); its content is unchanged.
+        /// </summary>
+        internal void FoldHeldParts(HashSet<SummarySeed> folded, Stack<SummarySeed> pending,
+            FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+        {
+            folded.Clear();
+            pending.Clear();
+            FoldParts(folded, pending, observations, cancellationToken);
+        }
+
+        /// <summary>
+        /// Adds <paramref name="reference"/> to this seed's pending references: exactly <c>PendingReferences.Add</c>,
+        /// which folds every part the seed holds first, unless <paramref name="keepHeldParts"/>. Then the parts stay held
+        /// and the reference goes into the seed's own set; the caller holds only parts that carry no pending reference
+        /// (MEMBERS BY REFERENCE, <see cref="ExpandAtLevel"/>), so the reference takes the position a fold would give it.
+        /// </summary>
+        internal void AddPendingReference(SummaryReference reference, bool keepHeldParts)
+        {
+            if (!keepHeldParts)
+                Fold();
+            (_pendingReferences ??= new()).Add(reference);
+        }
+
+        /// <summary>
         /// Adds a COMPLETED seed — one a memo stores and nothing mutates afterwards: a large one
         /// by reference (a shared argument bundle's seed, FE-2), a small one by copying.
         /// </summary>
         public SummarySeed AbsorbCompleted(SummarySeed completed)
         {
-            if (completed.EntryCount <= CopiedCompletedEntries)
+            if (!completed._deferredMember && completed.EntryCount <= CopiedCompletedEntries)
                 UnionWith(completed);
             else
                 AbsorbReference(completed);
@@ -541,8 +595,14 @@ internal static class PropertyDependencyGraphBuilder
         // one-element hash sets alive). Membership is the same reference-identity test either way.
         private const int AbsorbedScanLimit = 8;
 
+        // Every held part is NONEMPTY: an empty seed adds nothing, so it is never held. A seed that holds a part is
+        // therefore nonempty, which is what IsEmptyWithoutFolding reads (by induction: a part was nonempty when it was
+        // held, and nothing empties a held seed — folding only moves what it holds into its own sets).
         internal void AbsorbReference(SummarySeed part)
         {
+            if (part.IsEmptyWithoutFolding())
+                return;
+            _hasDeferredMember |= part._deferredMember || part._hasDeferredMember;
             if (_absorbedSet is { } set)
             {
                 if (set.Add(part))
@@ -558,7 +618,7 @@ internal static class PropertyDependencyGraphBuilder
                 _absorbedSet = new(absorbed, ReferenceEqualityComparer.Instance);
         }
 
-        private bool HasAbsorbed(SummarySeed part)
+        internal bool HasAbsorbed(SummarySeed part)
             => _absorbedSet?.Contains(part) ?? (_absorbed is { } absorbed && AbsorbedListContains(absorbed, part));
 
         private static bool AbsorbedListContains(List<SummarySeed> absorbed, SummarySeed part)
@@ -729,6 +789,7 @@ internal static class PropertyDependencyGraphBuilder
 
                 var copy = new SummarySeed(seed._requiredAncestorOwnedParameterNames, seed._visiblePropertyDependencyNames,
                     ownerQualifiedParameters: seed._ownerQualifiedParameters);
+                copy._deferredMember = seed._deferredMember;
                 if (seed._pendingReferences is { Count: > 0 } references)
                 {
                     var anchored = copy._pendingReferences = new PendingReferenceSet();
@@ -772,13 +833,21 @@ internal static class PropertyDependencyGraphBuilder
         // absorption order, so the resulting content and insertion order are deterministic.
         private void Fold()
         {
+            if (_absorbed is not null)
+                FoldParts(new HashSet<SummarySeed>(ReferenceEqualityComparer.Instance), new Stack<SummarySeed>());
+        }
+
+        // Fold's walk over empty scratch collections the caller supplies.
+        private void FoldParts(HashSet<SummarySeed> folded, Stack<SummarySeed> pending,
+            FrontEndTraversalObservations? budgetFold = null, CancellationToken cancellationToken = default)
+        {
             if (_absorbed is not { } absorbed)
                 return;
 
             _absorbed = null;
             _absorbedSet = null;
-            var folded = new HashSet<SummarySeed>(ReferenceEqualityComparer.Instance);
-            var pending = new Stack<SummarySeed>();
+            _deferredMember = false;
+            _hasDeferredMember = false;
             for (var i = absorbed.Count - 1; i >= 0; i--)
                 pending.Push(absorbed[i]);
             while (pending.TryPop(out var part))
@@ -786,11 +855,124 @@ internal static class PropertyDependencyGraphBuilder
                 if (!folded.Add(part))
                     continue;
 
+                if ((folded.Count & 255) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+                budgetFold?.RecordMemberFoldEntries(part.OwnEntryCount);
                 UnionOwnSets(part);
                 if (part._absorbed is { } nested)
                 {
                     for (var i = nested.Count - 1; i >= 0; i--)
                         pending.Push(nested[i]);
+                }
+            }
+        }
+
+        internal void MarkDeferredMember() => _deferredMember = true;
+
+        // Navigation observes the same flat expansion and the same completed-seed edges as the eager solve.
+        // Materialize only the requested member, once per resolution, and preserve sharing between its readers.
+        // Published module seeds can be shared by separate resolutions, so reconstruct on operation-local copies.
+        internal bool NeedsNavigationView => _deferredMember || _hasDeferredMember;
+
+        internal sealed class NavigationViews(FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+        {
+            private readonly Dictionary<SummarySeed, SummarySeed> _views = new(ReferenceEqualityComparer.Instance);
+            private readonly Stack<(SummarySeed Seed, bool Ready)> _pending = new();
+            private readonly Stack<SummarySeed> _parts = new();
+            private readonly HashSet<SummarySeed> _visited = new(ReferenceEqualityComparer.Instance);
+            private readonly HashSet<string> _names = CreateNameSet();
+            private readonly HashSet<OwnerQualifiedParameter> _qualified = [];
+
+            internal SummarySeed Get(SummarySeed root)
+            {
+                if (_views.TryGetValue(root, out var result))
+                    return result;
+                _pending.Push((root, false));
+                while (_pending.TryPop(out var item))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var (seed, ready) = item;
+                    if (_views.ContainsKey(seed))
+                        continue;
+                    if (seed._deferredMember)
+                    {
+                        _views.Add(seed, Flat(seed));
+                        continue;
+                    }
+
+                    if (!ready && seed._absorbed is { } parts)
+                    {
+                        _pending.Push((seed, true));
+                        foreach (var part in parts)
+                            if (part.NeedsNavigationView)
+                                _pending.Push((part, false));
+                        continue;
+                    }
+
+                    var copy = new SummarySeed(seed._requiredAncestorOwnedParameterNames, seed._visiblePropertyDependencyNames,
+                        seed._pendingReferences, seed._ownerQualifiedParameters);
+                    foreach (var part in seed._absorbed ?? [])
+                        copy.AbsorbReference(_views.GetValueOrDefault(part, part));
+                    _views.Add(seed, copy);
+                }
+
+                return _views[root];
+            }
+
+            // Only the member itself can carry a name or reference. Combine its requirements in reusable
+            // sets and allocate the stored flat sets at their final width. A previously navigated part
+            // already has a flat view; a sibling directly included by the other part contributes nothing.
+            private SummarySeed Flat(SummarySeed member)
+            {
+                _visited.Clear();
+                _names.Clear();
+                _qualified.Clear();
+                _parts.Push(member);
+                long entries = 0;
+                while (_parts.TryPop(out var part))
+                {
+                    if (!_visited.Add(part))
+                        continue;
+                    if ((_visited.Count & 255) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    if (_views.TryGetValue(part, out var view) && view._absorbed is null)
+                        part = view;
+                    if (part._requiredAncestorOwnedParameterNames is { } names)
+                        AddEntries(_names, names);
+                    if (part._ownerQualifiedParameters is { } qualified)
+                        AddEntries(_qualified, qualified);
+                    entries += part.OwnRequirementCount;
+                    if (part._absorbed is { } children)
+                        for (var i = children.Count - 1; i >= 0; i--)
+                            if (children.Count != 2 || !children[1 - i].HasAbsorbed(children[i]))
+                                _parts.Push(children[i]);
+                }
+
+                observations?.RecordMemberNavigationFold(entries);
+                var result = new SummarySeed(visiblePropertyDependencyNames: member._visiblePropertyDependencyNames,
+                    pendingReferences: member._pendingReferences);
+                if (_names.Count != 0)
+                {
+                    result._requiredAncestorOwnedParameterNames = new(_names.Count, StringComparer.Ordinal);
+                    AddEntries(result._requiredAncestorOwnedParameterNames, _names);
+                }
+                if (_qualified.Count != 0)
+                {
+                    result._ownerQualifiedParameters = new(_qualified.Count);
+                    AddEntries(result._ownerQualifiedParameters, _qualified);
+                }
+                return result;
+            }
+
+            // HashSet.UnionWith allocates temporary storage for this workload on the baseline runtime.
+            private void AddEntries<T>(HashSet<T> destination, HashSet<T> source)
+            {
+                var index = 0;
+                foreach (var entry in source)
+                {
+                    if ((index++ & 255) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    destination.Add(entry);
                 }
             }
         }
@@ -981,40 +1163,18 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         /// <summary>
-        /// FE-4a: whether the seed's content is empty, decided WITHOUT folding: its own sets and every
-        /// seed it holds by reference (transitively) are empty. Reads only; a seed held by reference is
-        /// never mutated, and the parts form no cycle (a seed only ever holds seeds built before it).
+        /// FE-4a: whether the seed's content is empty, decided WITHOUT folding: its own sets are empty and it holds
+        /// no part. A held part is never empty (<see cref="AbsorbReference"/>), so a seed that holds one is not empty
+        /// either; the test reads no part. (It walked every part it held until November 26 2026, once per call: a
+        /// chain of members, each holding its predecessors and adding nothing of its own, cost a walk of the chain per
+        /// member read.)
         /// </summary>
         internal bool IsEmptyWithoutFolding()
-        {
-            if (!OwnSetsEmpty(this))
-                return false;
-            if (_absorbed is null)
-                return true;
-
-            var visited = new HashSet<SummarySeed>(ReferenceEqualityComparer.Instance) { this };
-            var pending = new Stack<SummarySeed>(_absorbed);
-            while (pending.TryPop(out var part))
-            {
-                if (!visited.Add(part))
-                    continue;
-                if (!OwnSetsEmpty(part))
-                    return false;
-                if (part._absorbed is { } nested)
-                {
-                    foreach (var nestedPart in nested)
-                        pending.Push(nestedPart);
-                }
-            }
-
-            return true;
-
-            static bool OwnSetsEmpty(SummarySeed seed)
-                => (seed._requiredAncestorOwnedParameterNames?.Count ?? 0) == 0
-                    && (seed._visiblePropertyDependencyNames?.Count ?? 0) == 0
-                    && (seed._pendingReferences?.Count ?? 0) == 0
-                    && (seed._ownerQualifiedParameters?.Count ?? 0) == 0;
-        }
+            => (_requiredAncestorOwnedParameterNames?.Count ?? 0) == 0
+                && (_visiblePropertyDependencyNames?.Count ?? 0) == 0
+                && (_pendingReferences?.Count ?? 0) == 0
+                && (_ownerQualifiedParameters?.Count ?? 0) == 0
+                && _absorbed is null;
 
         /// <summary>
         /// FE-4a: a SUFFICIENT test of equal content that never folds: equal own sets and the same
@@ -1259,6 +1419,9 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     internal sealed class SummaryMemo(FrontEndTraversalObservations? observations = null)
     {
+        private SummarySeed.NavigationViews? _navigationViews;
+        internal SummarySeed ForNavigation(SummarySeed member) => member.NeedsNavigationView
+            ? (_navigationViews ??= new(observations, CancellationToken)).Get(member) : member;
         /// <summary>
         /// The source-processing token of the exposure resolution this memo spans (none for a standalone
         /// <see cref="BuildSummaries"/> call), observed when a level expansion starts and before each name it carries
@@ -2499,8 +2662,22 @@ internal static class PropertyDependencyGraphBuilder
     /// expansion stopped nesting, that cache answered none of 3.3 million lookups, and it was deleted.) A nonempty
     /// expansion observes <see cref="SummaryMemo.CancellationToken"/> on entry and before anchoring each escaping bare
     /// name, the checkpoints of the former frame driver.</para>
+    /// <para>MEMBERS BY REFERENCE (November 26 2026; implementation only): the member solver
+    /// (<see cref="SolveMemberSeeds"/>) passes <paramref name="held"/>, and the expansion then HOLDS every member seed it
+    /// reads that carries no visible name and no pending reference, here or in any part it holds
+    /// (<see cref="HeldMemberSeeds.MayHold"/>, <see cref="SummarySeed.HoldMember"/>), instead of copying its own sets
+    /// and then folding everything it holds. The base seed's own requirements are qualified first: every member seed is
+    /// already its own expansion at this level, so qualifying the united seed qualifies nothing of theirs (the
+    /// qualification distributes over the union), and the expansion folds nothing. A held seed carries no pending
+    /// reference, so holding it moves none: every reference keeps the position the union and its folds gave it, and the
+    /// references the owning level settles are settled in the same order. The required names and owner-qualified
+    /// parameters may come out in another order; every consumer reads them as sets (sorted names, canonical
+    /// requirement sets). The first member seed that carries a name or a reference ends the holding: from there the
+    /// expansion copies and folds exactly as without <paramref name="held"/>, and so does every other caller. An
+    /// expansion folds when its depth budget is exhausted or the entries and edges a reader could visit exceed
+    /// four times a lower bound on its width (<see cref="HeldMemberSeeds.MustFold"/>).</para>
     /// </summary>
-    internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level)
+    internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level, HeldMemberSeeds? held = null)
     {
         // A seed with no requirement, name or reference has nothing to resolve, escape or qualify at any level: its
         // expansion is the empty seed, whatever the level.
@@ -2512,17 +2689,25 @@ internal static class PropertyDependencyGraphBuilder
         var expanded = new SummarySeed(
             requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames,
             ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
+        // Nothing is held yet, so this qualification folds nothing.
+        var holdsMembers = held is not null;
+        if (holdsMembers)
+            expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
 
         foreach (var dependencyName in baseSeed.VisiblePropertyDependencyNames)
         {
             if (level.LocalPropertySummaries.TryGetValue(dependencyName, out var localSummary))
             {
-                expanded.UnionWith(localSummary);
+                holdsMembers = holdsMembers && held!.MayHold(localSummary);
+                if (!holdsMembers)
+                    expanded.UnionWith(localSummary);
+                else
+                    expanded.HoldMember(localSummary, level.Memos.Observations);
                 continue;
             }
 
             memo.ObserveCancellation();
-            AddEscaping(expanded, dependencyName, level);
+            AddEscaping(expanded, dependencyName, level, holdsMembers);
         }
 
         var context = level.Memos.CompletedContext;
@@ -2535,13 +2720,25 @@ internal static class PropertyDependencyGraphBuilder
             if (memo.SelectsLocalMember(pending, context)
                 && level.LocalPropertySummaries.TryGetValue(pending.Head, out var local))
             {
-                expanded.AbsorbCompleted(local);
+                holdsMembers = holdsMembers && held!.MayHold(local);
+                if (!holdsMembers)
+                    expanded.AbsorbCompleted(local);
+                else
+                    expanded.HoldMember(local, level.Memos.Observations);
                 continue;
             }
-            expanded.PendingReferences.Add(pending.At(context));
+            expanded.AddPendingReference(pending.At(context), keepHeldParts: holdsMembers);
         }
 
-        expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
+        if (!holdsMembers)
+            expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
+        else if (expanded.AbsorbedPartsWithoutFolding is { } heldParts)
+        {
+            if (held!.MustFold(expanded, heldParts))
+                held.FoldHeldParts(expanded);
+            else
+                expanded.MarkDeferredMember();
+        }
         return expanded;
     }
 
@@ -2549,10 +2746,10 @@ internal static class PropertyDependencyGraphBuilder
     /// Carries a requirement's context without settling a raw path or provider: the escaping reference is anchored
     /// at the level's completed context, so no expansion leaves a bare name or an origin-less path behind.
     /// </summary>
-    private static void AddEscaping(SummarySeed expanded, string name, LevelContext level)
+    private static void AddEscaping(SummarySeed expanded, string name, LevelContext level, bool keepHeldParts)
     {
         level.Memos.SharedMemo.UseContext();
-        expanded.PendingReferences.Add(new PendingReference(name, [], level.Memos.CompletedContext));
+        expanded.AddPendingReference(new PendingReference(name, [], level.Memos.CompletedContext), keepHeldParts);
     }
 
     /// <summary>Stops lexical requirement escape at the prelude without evaluating a provider.</summary>
@@ -3085,9 +3282,14 @@ internal static class PropertyDependencyGraphBuilder
     /// once). Equal content is decided on the seeds themselves — a hash computed once per member, then
     /// set equality (<see cref="SeedContent"/>) — never on serialized text: measured on November 20 2026,
     /// computing and storing the former text keys cost more allocation than the expansions their hits avoided
-    /// in both measured corpora. A member seed is never mutated after it enters the map (every one is its own expansion at
-    /// this level, so it is already qualified), and every consumer clones a member seed before
-    /// accumulating, so sharing is unobservable. Change detection compares structure first (own sets
+    /// in both measured corpora. Every other expansion HOLDS the member seeds it reads that carry no visible
+    /// name and no pending reference (MEMBERS BY REFERENCE, <see cref="ExpandAtLevel"/>): a member reading
+    /// several predecessors that each hold their own predecessors (<c>P(i) = P(i-1) + P(i-2) + p(i)</c>) costs
+    /// its qualified delta and its references, where the union copied both predecessors' widths and folded
+    /// them — K² entries over a chain of K, half of them already present. A member seed is never mutated in
+    /// content after it enters the map (every one is its own expansion at this level, so it is already
+    /// qualified; a fold only moves what it holds into its own sets), and every consumer clones a member seed
+    /// before accumulating, so sharing is unobservable. Change detection compares structure first (own sets
     /// and the seeds held by reference) and folds only when that cannot decide.</para>
     /// </summary>
     private static void SolveMemberSeeds(
@@ -3139,15 +3341,23 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         // Statically read members: the local names a base seed reads directly or heads a path with.
+        bool[]? inCycle = null;
+        int NoteEdge(int index, int read)
+        {
+            if (read == index)
+                (inCycle ??= new bool[properties.Count])[index] = true;
+            return read;
+        }
+
         IEnumerable<int> StaticReads(int index)
         {
             var baseSeed = baseSeeds[index];
             foreach (var name in baseSeed.VisiblePropertyDependencyNames)
                 if (equationOf.TryGetValue(name, out var read))
-                    yield return read;
+                    yield return NoteEdge(index, read);
             foreach (var pending in baseSeed.PendingReferences)
                 if (equationOf.TryGetValue(pending.Head, out var read))
-                    yield return read;
+                    yield return NoteEdge(index, read);
         }
 
         // Evaluation units, dependency first. A strongly connected component whose every member has the
@@ -3161,6 +3371,9 @@ internal static class PropertyDependencyGraphBuilder
         Array.Fill(componentOf, -1);
         var queue = new Queue<int>();
         var queued = new bool[properties.Count];
+        // The members evaluated one by one in a cycle (several members, or one that reads itself): they are evaluated
+        // again while the cycle converges, and each change detection compares their seeds whole, so they keep the
+        // folded seed of a full expansion (MEMBERS BY REFERENCE holds members only for the others).
         for (var c = 0; c < components.Count; c++)
         {
             var component = components[c];
@@ -3175,6 +3388,8 @@ internal static class PropertyDependencyGraphBuilder
 
             foreach (var member in component)
             {
+                if (component.Count > 1)
+                    (inCycle ??= new bool[properties.Count])[member] = true;
                 queue.Enqueue(member);
                 queued[member] = true;
             }
@@ -3183,6 +3398,10 @@ internal static class PropertyDependencyGraphBuilder
         var readers = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
         var contents = new SeedContent?[properties.Count];
         Dictionary<SeedContent, (SummarySeed Result, (string Name, SummarySeed Read)[] Reads)>? expansions = null;
+        // MEMBERS BY REFERENCE (ExpandAtLevel): the member seeds an expansion may hold, made by the first expansion that
+        // reads a name or a reference outside a cycle.
+        var holdsMembers = !MemberSeedsCopiedForTesting.Value;
+        HeldMemberSeeds? held = null;
         while (queue.TryDequeue(out var index))
         {
             queued[index] = false;
@@ -3268,7 +3487,10 @@ internal static class PropertyDependencyGraphBuilder
             }
 
             memos.Observations?.RecordSummaryMemberExpansion();
-            var expanded = ExpandAtLevel(baseSeed, level);
+            var holding = holdsMembers && inCycle?[index] != true
+                && (baseSeed.VisiblePropertyDependencyNames.Count != 0 || baseSeed.PendingReferences.Count != 0);
+            var expanded = ExpandAtLevel(baseSeed, level, holding ? held ??= new(memos.Observations, memos.SharedMemo.CancellationToken) : null);
+            memos.Observations?.RecordSummaryMemberExpansionStorage(expanded.OwnEntryCount, expanded.AbsorbedPartsWithoutFolding?.Count ?? 0);
             var reads = new (string Name, SummarySeed Read)[recorded.Reads.Count];
             var at = 0;
             foreach (var readName in recorded.Reads)
@@ -3284,6 +3506,129 @@ internal static class PropertyDependencyGraphBuilder
                 if (!ReferenceEquals(seeds[name], read))
                     return false;
             return true;
+        }
+    }
+
+    /// <summary>
+    /// TEST SEAM (<c>SharedPredecessorExpansionTests</c>): while set on the calling flow, the member solver holds no member
+    /// seed (<see cref="HeldMemberSeeds"/>): every full expansion copies the member seeds it reads and folds them, the union
+    /// the held representation must equal in content and reference order. Never set by production code.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> MemberSeedsCopiedForTesting = new();
+
+    /// <summary>
+    /// MEMBERS BY REFERENCE (<see cref="ExpandAtLevel"/>): the member seeds of ONE level solve that an expansion may hold
+    /// — a seed that, with every seed it holds by reference, carries no visible name and no pending reference, so
+    /// holding it moves no reference — and the fold budget of each. Each seed is decided once per solve.
+    /// </summary>
+    internal sealed class HeldMemberSeeds(FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+    {
+        private readonly record struct FoldCost(int Budget, int WidthLowerBound, long Work);
+        private static readonly FoldCost NotHeld = new(int.MinValue, 0, 0);
+        private Dictionary<SummarySeed, FoldCost>? _known;
+        private Stack<(SummarySeed Seed, bool PartsDone)>? _pending;
+        // The scratch collections of the folds an exhausted budget makes, kept for the solve.
+        private HashSet<SummarySeed>? _folded;
+        private Stack<SummarySeed>? _foldPending;
+
+        /// <summary>Folds the parts an expansion holds once its <see cref="Budget"/> is spent.</summary>
+        public void FoldHeldParts(SummarySeed expanded)
+            => expanded.FoldHeldParts(_folded ??= new(ReferenceEqualityComparer.Instance), _foldPending ??= new(), observations, cancellationToken);
+
+        /// <summary>Whether <paramref name="member"/>, and every seed it holds, carries no visible name and no pending reference.</summary>
+        public bool MayHold(SummarySeed member) => Budget(member) != NotHeld;
+
+        internal bool MustFold(SummarySeed seed, IReadOnlyList<SummarySeed> parts)
+        {
+            var cost = Combined(seed, parts);
+            return cost.Budget < 0 || cost.Work > 4L * cost.WidthLowerBound;
+        }
+
+        // A fold visits each distinct seed once. Sum the edges and own entries of every subtree,
+        // counting a sibling already held by the other predecessor only once. All other overlap
+        // overestimates work. Every own requirement set is contained in the eventual folded answer.
+        private FoldCost Combined(SummarySeed seed, IReadOnlyList<SummarySeed> parts)
+        {
+            var least = int.MaxValue;
+            var width = seed.OwnRequirementCount;
+            long work = (long)seed.OwnEntryCount + parts.Count;
+            for (var i = 0; i < parts.Count; i++)
+            {
+                var part = parts[i];
+                var cost = part.AbsorbedPartsWithoutFolding is null ? FlatCost(part) : _known![part];
+                if (cost == NotHeld)
+                    return NotHeld;
+                least = Math.Min(least, cost.Budget);
+                width = Math.Max(width, cost.WidthLowerBound);
+                if (parts.Count != 2 || !parts[1 - i].HasAbsorbed(part))
+                    work = Math.Min(4L * int.MaxValue + 1, work + cost.Work);
+            }
+
+            return new((int)Math.Max(int.MinValue + 1L, (long)least - parts.Count), width, work);
+        }
+
+        private static FoldCost FlatCost(SummarySeed seed)
+            => seed.OwnSetsHoldNoNamesOrReferences
+                ? new(seed.OwnRequirementCount, seed.OwnRequirementCount, seed.OwnRequirementCount)
+                : NotHeld;
+
+        /// <summary>
+        /// THE FOLD BUDGET of a seed <see cref="MayHold"/> accepts: a seed that holds no part has its own entries (all of
+        /// its width); a seed that holds parts has the smallest budget among them, less the number of parts it holds. A
+        /// fold walks every part a seed holds, so an expansion whose result's budget would fall below zero folds its
+        /// held parts instead of holding them (<see cref="ExpandAtLevel"/>): along every chain of held parts, the parts
+        /// a fold walks never outnumber the entries of the folded seed the chain ends at, whose content the reader's
+        /// seed contains. Over a chain of members that each hold their two predecessors, a chain whose width keeps
+        /// growing folds pairs of members at widths that grow geometrically (20 folds over K = 1,000 members, about
+        /// nine folded entries per member), and a chain of bounded width W folds two members every W / 2 + 2.
+        /// </summary>
+        private FoldCost Budget(SummarySeed member)
+        {
+            if (!member.OwnSetsHoldNoNamesOrReferences)
+                return NotHeld;
+            if (member.AbsorbedPartsWithoutFolding is null)
+                return FlatCost(member);
+            var known = _known ??= new(ReferenceEqualityComparer.Instance);
+            if (known.TryGetValue(member, out var budget))
+                return budget;
+            // Post-order on the heap: a member seed can hold seeds as deep as a member chain.
+            var pending = _pending ??= new();
+            pending.Clear();
+            pending.Push((member, false));
+            while (pending.TryPop(out var entry))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (seed, partsDone) = entry;
+                if (known.ContainsKey(seed))
+                    continue;
+                if (!seed.OwnSetsHoldNoNamesOrReferences)
+                {
+                    known.Add(seed, NotHeld);
+                    continue;
+                }
+
+                if (seed.AbsorbedPartsWithoutFolding is not { } parts)
+                {
+                    known.Add(seed, FlatCost(seed));
+                    continue;
+                }
+
+                if (!partsDone)
+                {
+                    pending.Push((seed, true));
+                    for (var i = parts.Count - 1; i >= 0; i--)
+                    {
+                        if (!known.ContainsKey(parts[i]))
+                            pending.Push((parts[i], false));
+                    }
+
+                    continue;
+                }
+
+                known.Add(seed, Combined(seed, parts));
+            }
+
+            return known[member];
         }
     }
 

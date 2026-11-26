@@ -3761,7 +3761,7 @@ internal static class PropertyExposureResolver
         {
             if (facts.Facts(owner)?.Body is { } body
                 && PropertyDependencyGraphBuilder.GetAlgorithmSummary(body, memos, facts.Context(owner)).MemberSeeds.TryGetValue(name, out var seed))
-                parts.Add(AnchorPublishedSeed(facts, seed, owner.Parent, opening));
+                parts.Add(AnchorPublishedSeed(facts, memos.SharedMemo.ForNavigation(seed), owner.Parent, opening));
         }
 
         private AnchoredSeed AnchorPublishedSeed(StaticLookupFacts facts,

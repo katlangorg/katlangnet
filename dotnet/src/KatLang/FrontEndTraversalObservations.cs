@@ -756,12 +756,51 @@ internal sealed class FrontEndTraversalObservations
 
     /// <summary>
     /// Member-seed evaluations that ran a full level expansion (neither an alias of one sibling's
-    /// seed nor a validated reuse of an equal-content expansion) — each copies its seed's content.
+    /// seed nor a validated reuse of an equal-content expansion) — each copies its base seed's own
+    /// requirements and holds the member seeds it reads that carry no name or reference as completed
+    /// seeds (MEMBERS BY REFERENCE, <c>PropertyDependencyGraphBuilder.ExpandAtLevel</c>); from the first
+    /// member seed that carries one it copies and folds as before.
     /// </summary>
     public long SummaryMemberExpansions { get; private set; }
 
     internal void RecordSummaryMemberExpansion()
         => SummaryMemberExpansions = checked(SummaryMemberExpansions + 1);
+
+    /// <summary>
+    /// The entries the full member expansions keep in their OWN sets, summed over expansions: everything an expansion
+    /// copied or folded into itself, the materialized width of its seed. Over a chain of K members each reading two
+    /// predecessors (<c>P(i) = P(i-1) + P(i-2) + p(i)</c>), the union kept every member's whole width, K² / 2 entries;
+    /// MEMBERS BY REFERENCE keeps each member's delta and folds a width only when a fold budget is spent.
+    /// </summary>
+    public long SummaryMemberExpansionEntries { get; private set; }
+
+    /// <summary>The member seeds the full member expansions hold by reference (MEMBERS BY REFERENCE), summed over expansions.</summary>
+    public long SummaryMemberExpansionHeldParts { get; private set; }
+
+    /// <summary>Entries copied from small flat members by holding expansions, including duplicate inputs.</summary>
+    public long MemberEntriesCopied { get; private set; }
+    internal void RecordMemberEntriesCopied(int entries) => MemberEntriesCopied += entries;
+
+    /// <summary>Own entries visited by producer folds that exhaust their sharing budget.</summary>
+    public long MemberBudgetFoldEntries { get; private set; }
+    internal void RecordMemberFoldEntries(int entries) => MemberBudgetFoldEntries += entries;
+
+    /// <summary>Distinct deferred full member expansions materialized for navigation in this resolution.</summary>
+    public long MemberNavigationFolds { get; private set; }
+    /// <summary>Input entries visited while materializing those members, including repeat memberships.</summary>
+    public long MemberNavigationEntriesRead { get; private set; }
+
+    internal void RecordMemberNavigationFold(long entries)
+    {
+        MemberNavigationFolds++;
+        MemberNavigationEntriesRead += entries;
+    }
+
+    internal void RecordSummaryMemberExpansionStorage(int ownEntries, int heldParts)
+    {
+        SummaryMemberExpansionEntries = checked(SummaryMemberExpansionEntries + ownEntries);
+        SummaryMemberExpansionHeldParts = checked(SummaryMemberExpansionHeldParts + heldParts);
+    }
 
     // EXPOSURE-OPEN-1 (October 2026): members read through `open` and settled at one owner. These
     // count the real work an opened chain or a cycle of opened libraries costs: serializing summary
