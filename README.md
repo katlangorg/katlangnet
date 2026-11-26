@@ -2,7 +2,7 @@
 
 You write formulas, give them names and build larger calculations from them, and KatLang works out the results in decimal arithmetic.
 
-To learn more, read the [introduction][about] and the [tutorial][tutorial], or play with [KatLang online][playground].
+To learn more, read the [introduction][about] and the [tutorial][tutorial], try [KatLang online][playground], or install the [KatLang AI skill][skill] to run calculations with your AI assistant.
 
 ## A first look
 
@@ -29,7 +29,6 @@ It outputs `5`, `4` and `2`: the mean, the variance and the standard deviation o
 ## Try it
 
 - **In your browser:** try KatLang in the [online playground][playground], with nothing to install.
-- Install the [KatLang AI skill][skill] to run calculations with your AI assistant.
 - **On the command line:** download the archive for Windows, Linux or macOS from the [latest release][releases], extract `katlang` and put it on your `PATH`. It is a single executable and needs no .NET installation.
 
   ```text
