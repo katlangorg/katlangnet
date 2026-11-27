@@ -1453,7 +1453,9 @@ public class DetachedExportedEvaluationTests
     /// local-only through its output row and the selected <c>G</c> captures nothing, a falsely exported
     /// sibling that reuses the cell is not refused in either row order, although its own direct use of
     /// <c>G</c> is refused at the target's step. Not a wrong value (no read of <c>y</c> is involved, and a
-    /// read of <c>y</c> would be refused), but an access the exposure law forbids.
+    /// read of <c>y</c> would be refused), but an access the exposure law forbids. The owner decision on
+    /// closing it is prepared, not made (<c>docs/design/r1-open-target-owner-decision-brief-2026-11.md</c>;
+    /// its witnesses are section 5d): this pin stands until it is approved.
     /// </summary>
     [Theory]
     [MemberData(nameof(RoutesWithSuspension))]
@@ -1492,6 +1494,362 @@ public class DetachedExportedEvaluationTests
         var refusal = Assert.IsType<EvalError.LocalOnlyProperty>(direct.Error.UnwrapContext());
         Assert.Equal("Sub", refusal.PropertyName);
         Assert.Equal("Box", refusal.ObjectDesc);
+    }
+
+    // ── 5d. The open-target decision witnesses (ledger R-1, owner decision pending) ──────────────
+    //
+    // docs/design/r1-open-target-owner-decision-brief-2026-11.md. Each test pins the CURRENT outcome of the
+    // open-target qualification and, beside each falsely exported reuse, the sibling's own direct use: the
+    // refusal the recommended rule gives the sibling that establishes the cell. The pins change only with an
+    // approved rule. HP-22a…s compare the same programs with Lean.
+
+    /// <summary>
+    /// The open-target family: <c>F</c> opens <c>TARGETS</c>; <c>Sub</c> of <c>Box</c> is local-only through its
+    /// output row and offers <c>SUB</c>; <c>Other</c> is a self-contained provider offering <c>OTHER</c>;
+    /// <c>DECLS</c> declares a reference to the target or a shadowing <c>G</c>; the alias cell's computation
+    /// selects <c>G</c>, <c>P</c>'s body is <c>BODY</c> and the rows are <c>ROWS</c>.
+    /// </summary>
+    private const string OpenTargetFamily = """
+        Cap(meta r) = r
+        F(y) = {
+          open TARGETS
+          Box = {
+            public Sub = {
+              public SUB(x) = x + 1
+              y
+            }
+            0
+          }
+          Other = { public OTHER(x) = x + 1 }
+          DECLS
+          A = Cap(G(0)).Algorithm
+          P = BODY + 0
+          ROWS
+        }
+        F(1)
+
+        """;
+
+    private static string OpenTarget(string targets, string sub, string other, string decls, string body, string rows)
+        => OpenTargetFamily.Replace("TARGETS", targets, StringComparison.Ordinal).Replace("SUB", sub, StringComparison.Ordinal)
+            .Replace("OTHER", other, StringComparison.Ordinal).Replace("DECLS", decls, StringComparison.Ordinal)
+            .Replace("BODY", body, StringComparison.Ordinal).Replace("ROWS", rows, StringComparison.Ordinal);
+
+    /// <summary>The refusal of the target's step: <c>Sub</c> of <c>Box</c>, at the written step <paramref name="at"/>.</summary>
+    private static void AssertTargetStepRefused(EvalResult<Evaluator.CountedResult> result, SourceSpan at)
+    {
+        Assert.True(result.IsError, AsyncEvaluationHarness.NeutralOf(result));
+        var refusal = Assert.IsType<EvalError.LocalOnlyProperty>(result.Error.UnwrapContext());
+        Assert.Equal(("Box", "Sub"), (refusal.ObjectDesc, refusal.PropertyName));
+        Assert.Equal(at, refusal.Span);
+    }
+
+    /// <summary>
+    /// The neutral outcome of <paramref name="program"/> on <paramref name="route"/> with the run's open-level
+    /// counts: levels RESOLVED (<see cref="EvaluationObservations.OpenProviderLevelCount"/>), level CONSULTATIONS
+    /// and consultations served by a level state's memoized providers (<c>Evaluator.ResolvedOpenLevel</c>).
+    /// </summary>
+    private static async Task<(string Outcome, long Resolved, long Consulted, long Reused)> ObserveOpenLevels(Expr program, Route route)
+    {
+        var observations = new EvaluationObservations();
+        var (result, _) = await RunWithBudget(program, route, observations);
+        return (AsyncEvaluationHarness.NeutralOf(result), observations.OpenProviderLevelCount,
+            observations.OpenLevelConsultationCount, observations.OpenLevelReuseCount);
+    }
+
+    /// <summary>
+    /// A correctly classified tree run detached and, for comparison, with detachment disabled: the same
+    /// outcome, ticks and established alias cells.
+    /// </summary>
+    private static async Task<EvalResult<Evaluator.CountedResult>> CompareWithDetachmentDisabled(
+        Expr program, Route route, bool expectCacheAccess = true)
+    {
+        var detached = await RunWithBudget(program, route, expectCacheAccess: expectCacheAccess);
+        (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget) attached;
+        using (DetachedEvaluationTestSeam.DisableDetachment())
+            attached = await RunWithBudget(program, route, expectCacheAccess: expectCacheAccess);
+        Assert.Equal(AsyncEvaluationHarness.NeutralOf(attached.Result), AsyncEvaluationHarness.NeutralOf(detached.Result));
+        Assert.Equal(attached.Budget.TickCount, detached.Budget.TickCount);
+        Assert.Equal(attached.Budget.AliasBindingCells.AddedCount, detached.Budget.AliasBindingCells.AddedCount);
+        return detached.Result;
+    }
+
+    /// <summary>
+    /// THE TARGET'S PATH, FROM A COLD AND A MEMOIZED LEVEL. The selected <c>G</c> captures nothing; the target's
+    /// step <c>Sub</c> needs <c>F</c>'s activation, written as <c>open Box.Sub</c> or through the reference
+    /// <c>L = Box.Sub</c> (whose path the open structure walks at the consulted level). COLD: no row reads
+    /// through <c>F</c>'s opens before the cell is established, so the level is resolved while the cell is
+    /// established — by the supply-time classification of the callee <c>G</c>, a raw read with the input record
+    /// removed — and the consuming projection reads the memoized providers: one resolution, two consultations,
+    /// one reuse, on every route. MEMOIZED: the row reads <c>G(1)</c> first, so every consultation of the cell's
+    /// computation reuses the level state: one resolution, three consultations, two reuses. (Lean resolves the
+    /// level on every lookup.) Either way the step's admission is not recorded, so the falsely exported sibling
+    /// is not refused in either row order — the current outcome — while its own direct use of <c>G</c> is
+    /// refused at the step, cold and memoized alike.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_OpenTargetDecision_TheTargetsPathStep_IsNotRecordedFromAColdOrAMemoizedLevel(Route route)
+    {
+        var shapes = new (string Targets, string Decls, SourceSpan Step)[]
+        {
+            ("Box.Sub", "", new SourceSpan(3, 8, 3, 15)),
+            ("L", "L = Box.Sub", new SourceSpan(12, 7, 12, 14)),
+        };
+        foreach (var (targets, decls, step) in shapes)
+        {
+            string Program(string body, string rows) => OpenTarget(targets, "G", "K", decls, body, rows);
+
+            foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+            {
+                Assert.Equal(("ok raw=S[6, 6] n=1", 1L, 2L, 1L), await ObserveOpenLevels(Parsed(Program("A(5)", rows)), route));
+                Assert.Equal(("ok raw=S[6, 6] n=1", 1L, 2L, 1L), await ObserveOpenLevels(MisExposed(Program("A(5)", rows), "F.P"), route));
+            }
+
+            foreach (var rows in new[] { "G(1), A(5), P", "G(1), P, A(5)" })
+            {
+                Assert.Equal(("ok raw=S[2, 6, 6] n=1", 1L, 3L, 2L), await ObserveOpenLevels(Parsed(Program("A(5)", rows)), route));
+                Assert.Equal(("ok raw=S[2, 6, 6] n=1", 1L, 3L, 2L), await ObserveOpenLevels(MisExposed(Program("A(5)", rows), "F.P"), route));
+            }
+
+            AssertTargetStepRefused(await Run(MisExposed(Program("G(5)", "P"), "F.P"), route), step);
+            AssertTargetStepRefused(await Run(MisExposed(Program("G(5)", "G(1), P"), "F.P"), route), step);
+        }
+    }
+
+    /// <summary>
+    /// EVERY TARGET OF A CONSULTED LEVEL DECIDES THE LOOKUP. A level's opens are resolved fail-fast, all of
+    /// them, before any name is selected: <c>G</c> comes from the self-contained <c>Other</c>, yet with
+    /// <c>open Box.Sub, Other</c> (or <c>open Other, Box.Sub</c>) the sibling's own direct use is refused at
+    /// <c>Sub</c>, a target that offers no <c>G</c>; so it is at a level the lookup CONSULTS without deciding
+    /// it (<c>F</c>'s <c>open Box.Sub</c>, where the root's <c>open Other</c> provides <c>G</c>: two levels
+    /// resolved). The reuse is not refused in either row order (the current outcome). A target that can NEVER
+    /// pass — a step capturing a parameter of <c>Lib(p)</c>, which no chain activates — fails every lookup
+    /// through its level, so the cell's computation fails whoever reads it: the front end charges nothing for
+    /// it, <c>P</c> is genuinely exported, and the failure is the same with detachment disabled.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_OpenTargetDecision_EveryTargetOfAConsultedLevel_DecidesTheLookup(Route route)
+    {
+        foreach (var (targets, step) in new[] { ("Box.Sub, Other", new SourceSpan(3, 8, 3, 15)), ("Other, Box.Sub", new SourceSpan(3, 15, 3, 22)) })
+        {
+            string Program(string body, string rows) => OpenTarget(targets, "H", "G", "", body, rows);
+            foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+            {
+                Assert.Equal("ok raw=S[6, 6] n=1", await Observe(Parsed(Program("A(5)", rows)), route));
+                Assert.Equal("ok raw=S[6, 6] n=1", await Observe(MisExposed(Program("A(5)", rows), "F.P"), route));
+            }
+
+            AssertTargetStepRefused(await Run(MisExposed(Program("G(5)", "P"), "F.P"), route), step);
+        }
+
+        const string enclosing = """
+            open Other
+            Cap(meta r) = r
+            Other = { public G(x) = x + 1 }
+            F(y) = {
+              open Box.Sub
+              Box = {
+                public Sub = {
+                  public H(x) = x
+                  y
+                }
+                0
+              }
+              A = Cap(G(0)).Algorithm
+              P = BODY + 0
+              ROWS
+            }
+            F(1)
+
+            """;
+        static string Enclosing(string body, string rows)
+            => enclosing.Replace("BODY", body, StringComparison.Ordinal).Replace("ROWS", rows, StringComparison.Ordinal);
+        foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+        {
+            Assert.Equal(("ok raw=S[6, 6] n=1", 2L, 4L, 2L), await ObserveOpenLevels(Parsed(Enclosing("A(5)", rows)), route));
+            Assert.Equal(("ok raw=S[6, 6] n=1", 2L, 4L, 2L), await ObserveOpenLevels(MisExposed(Enclosing("A(5)", rows), "F.P"), route));
+        }
+
+        AssertTargetStepRefused(await Run(MisExposed(Enclosing("G(5)", "P"), "F.P"), route), new SourceSpan(5, 8, 5, 15));
+
+        const string failing = """
+            Cap(meta r) = r
+            F(y) = {
+              open Other, Lib.Inner
+              Lib(p) = {
+                public Inner = {
+                  public Z = 1
+                  p
+                }
+                p
+              }
+              Other = { public G(x) = x + 1 }
+              A = Cap(G(0)).Algorithm
+              P = A(5) + 0
+              ROWS
+            }
+            F(1)
+
+            """;
+        foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+        {
+            var program = ExportedAlready(failing.Replace("ROWS", rows, StringComparison.Ordinal), "F.P", "F.A");
+            // An A-first failure happens before the first property cache access.
+            var result = await CompareWithDetachmentDisabled(program, route, expectCacheAccess: rows == "P, A(5)");
+            Assert.True(result.IsError, AsyncEvaluationHarness.NeutralOf(result));
+            var refusal = Assert.IsType<EvalError.LocalOnlyProperty>(result.Error.UnwrapContext());
+            Assert.Equal(("Lib", "Inner"), (refusal.ObjectDesc, refusal.PropertyName));
+        }
+    }
+
+    /// <summary>
+    /// A HOST TREE in which two providers of <c>F</c>'s level offer <c>G</c>: the clean parse of the family
+    /// with <c>Other</c> offering <c>K</c>, renamed <c>G</c> afterwards (the front end refuses the written
+    /// ambiguity statically, so only a host hands the evaluators this tree), with each property of
+    /// <paramref name="exported"/> forced exported as by <see cref="MisExposed"/>.
+    /// </summary>
+    private static Expr AmbiguousOpenTree(string body, string rows, params string[] exported)
+    {
+        Algorithm root = SourceProvenance.ParseValid(OpenTarget("Box.Sub, Other", "G", "K", "", body, rows)).Root;
+        root = Renamed(root, ["F", "Other", "K"], 0, "G");
+        foreach (var path in exported)
+            root = Export(root, path.Split('.'), 0);
+        return new Expr.AlgorithmExpr(root);
+    }
+
+    private static Algorithm Renamed(Algorithm algorithm, string[] path, int depth, string name)
+    {
+        var owner = Assert.IsType<Algorithm.User>(algorithm);
+        var properties = owner.Properties.ToList();
+        var index = properties.FindIndex(property => property.Name == path[depth]);
+        Assert.True(index >= 0, $"No property '{path[depth]}' on the path {string.Join('.', path)}.");
+        properties[index] = depth < path.Length - 1
+            ? properties[index] with { Value = Renamed(properties[index].Value, path, depth + 1, name) }
+            : properties[index] with { Name = name };
+        return owner with { Properties = properties };
+    }
+
+    /// <summary>
+    /// LEXICAL SHADOWING AND AMBIGUITY. A name the owner walk finds consults no open: with <c>F</c>'s own
+    /// <c>G</c> shadowing the one <c>open Box.Sub</c> offers, no open level is consulted at all, the front end
+    /// classifies <c>P</c> exported, and the genuinely detached sibling shares the cell exactly as without
+    /// detachment. An AMBIGUITY at the deciding level fails the lookup: on a host tree where <c>Sub</c> and
+    /// <c>Other</c> both offer <c>G</c>, every row order gives <c>AmbiguousOpen</c> naming both providers, with
+    /// <c>P</c> local-only or falsely exported — the cell's computation resolves both targets and then finds two
+    /// offers — while the falsely exported sibling's own direct use is refused at <c>Sub</c>: its detached
+    /// resolution fails before any offer is counted (attached, the direct use is the same ambiguity).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_OpenTargetDecision_ShadowingConsultsNoOpen_AndAnAmbiguityFailsTheLookup(Route route)
+    {
+        foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+        {
+            var shadowed = ExportedAlready(OpenTarget("Box.Sub", "G", "K", "G(x) = x + 1", "A(5)", rows), "F.P", "F.A");
+            Assert.Equal(("ok raw=S[6, 6] n=1", 0L, 0L, 0L), await ObserveOpenLevels(shadowed, route));
+            Assert.Equal("ok raw=S[6, 6] n=1", AsyncEvaluationHarness.NeutralOf(await CompareWithDetachmentDisabled(shadowed, route)));
+
+            foreach (var program in new[] { AmbiguousOpenTree("A(5)", rows), AmbiguousOpenTree("A(5)", rows, "F.P") })
+            {
+                var (result, _) = await RunWithBudget(program, route, expectCacheAccess: rows == "P, A(5)");
+                Assert.True(result.IsError, AsyncEvaluationHarness.NeutralOf(result));
+                var ambiguity = Assert.IsType<EvalError.AmbiguousOpen>(result.Error.UnwrapContext());
+                Assert.Equal("G", ambiguity.Name);
+                Assert.Equal(new[] { "Box.Sub", "Other" }, ambiguity.Providers);
+            }
+        }
+
+        AssertTargetStepRefused(await Run(AmbiguousOpenTree("G(5)", "P", "F.P"), route), new SourceSpan(3, 8, 3, 15));
+        var attached = await Run(AmbiguousOpenTree("G(5)", "P"), route);
+        Assert.IsType<EvalError.AmbiguousOpen>(attached.Error.UnwrapContext());
+    }
+
+    /// <summary>
+    /// GENUINE CONTROLS: trees the front end classifies itself, which every candidate rule keeps. DETACHED: an
+    /// EXPORTED target step (<c>Sub</c> captures nothing, though <c>Box</c> is local-only through <c>H</c>),
+    /// written as <c>open Box.Sub</c> or through <c>L = Box.Sub</c>, is admitted through no activation, so the
+    /// front end classifies <c>P</c> exported and the detached sibling shares the cell exactly as without
+    /// detachment; so it does when a NEARER level decides the name (<c>Mk</c>'s own <c>open Other</c>) and
+    /// <c>F</c>'s local-only target is never consulted (one level resolved). ATTACHED: a correctly classified
+    /// local-only sibling <c>Q</c> reads the cell with its own activation in both row orders, through the
+    /// target's step, the reference and an unrelated sibling target.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task R1_OpenTargetDecision_GenuineControls_AreAdmitted(Route route)
+    {
+        const string exportedStep = """
+            Cap(meta r) = r
+            F(y) = {
+              open TARGETS
+              Box = {
+                public Sub = { public G(x) = x + 1 }
+                public H = y + 0
+              }
+              DECLS
+              A = Cap(G(0)).Algorithm
+              P = A(5) + 0
+              ROWS
+            }
+            F(1)
+
+            """;
+        const string nearer = """
+            Cap(meta r) = r
+            F(y) = {
+              open Box.Sub
+              Box = {
+                public Sub = {
+                  public G(x) = x + 1
+                  y
+                }
+                0
+              }
+              Other = { public G(x) = x + 1 }
+              Mk(k) = {
+                open Other
+                Cap(G(k))
+              }
+              A = Mk(0).Algorithm
+              P = A(5) + 0
+              ROWS
+            }
+            F(1)
+
+            """;
+        foreach (var rows in new[] { "A(5), P", "P, A(5)" })
+        {
+            var sources = new[]
+            {
+                exportedStep.Replace("TARGETS", "Box.Sub", StringComparison.Ordinal).Replace("DECLS", "", StringComparison.Ordinal),
+                exportedStep.Replace("TARGETS", "L", StringComparison.Ordinal).Replace("DECLS", "L = Box.Sub", StringComparison.Ordinal),
+                nearer,
+            };
+            foreach (var source in sources)
+            {
+                var program = ExportedAlready(source.Replace("ROWS", rows, StringComparison.Ordinal), "F.P", "F.A");
+                Assert.Equal(("ok raw=S[6, 6] n=1", 1L, 2L, 1L), await ObserveOpenLevels(program, route));
+                Assert.Equal("ok raw=S[6, 6] n=1", AsyncEvaluationHarness.NeutralOf(await CompareWithDetachmentDisabled(program, route)));
+            }
+        }
+
+        var attachedShapes = new (string Targets, string Sub, string Other, string Decls)[]
+        {
+            ("Box.Sub", "G", "K", "Q = A(5) + 0"),
+            ("L", "G", "K", "L = Box.Sub\n  Q = A(5) + 0"),
+            ("Box.Sub, Other", "H", "G", "Q = A(5) + 0"),
+        };
+        foreach (var (targets, sub, other, decls) in attachedShapes)
+        {
+            foreach (var rows in new[] { "A(5), Q", "Q, A(5)" })
+            {
+                var source = OpenTarget(targets, sub, other, decls, "A(5)", rows);
+                var program = ClassifiedWithExposure(source, PropertyExposure.LocalOnlyCapturedAncestorParameters, "F.Q");
+                Assert.Equal("ok raw=S[6, 6] n=1", AsyncEvaluationHarness.NeutralOf(await CompareWithDetachmentDisabled(program, route)));
+            }
+        }
     }
 
     /// <summary>
@@ -2238,6 +2596,9 @@ public class DetachedExportedEvaluationTests
     /// tree whose sibling runs detached.
     /// </summary>
     private static Expr ExportedAlready(string source, params string[] paths)
+        => ClassifiedWithExposure(source, PropertyExposure.Exported, paths);
+
+    private static Expr ClassifiedWithExposure(string source, PropertyExposure exposure, params string[] paths)
     {
         Algorithm root = SourceProvenance.ParseValid(source).Root;
         foreach (var path in paths)
@@ -2249,7 +2610,7 @@ public class DetachedExportedEvaluationTests
                 property = Assert.Single(Assert.IsType<Algorithm.User>(current).Properties, candidate => candidate.Name == name);
                 current = property.Value;
             }
-            Assert.Equal(PropertyExposure.Exported, property!.Exposure);
+            Assert.Equal(exposure, property!.Exposure);
         }
 
         return new Expr.AlgorithmExpr(root);
@@ -2281,26 +2642,28 @@ public class DetachedExportedEvaluationTests
             yield return wrapped.ErrorContext;
     }
 
-    private static async Task<(EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget)> RunWithBudget(Expr program, Route route)
+    private static async Task<(EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget)> RunWithBudget(
+        Expr program, Route route, EvaluationObservations? observations = null, bool expectCacheAccess = true)
         => route switch
         {
-            Route.Optimized => Evaluator.RunCountedObserved(program),
-            Route.Generic => Evaluator.RunCountedObserved(program, enableOptimizations: false),
+            Route.Optimized => Evaluator.RunCountedObserved(program, observations: observations),
+            Route.Generic => Evaluator.RunCountedObserved(program, enableOptimizations: false, observations: observations),
             Route.AsyncTwin => await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(
-                program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache())),
-            Route.Suspending => await RunSuspending(program),
+                program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(), observations: observations)),
+            Route.Suspending => await RunSuspending(program, observations, expectCacheAccess),
             _ => throw new ArgumentOutOfRangeException(nameof(route)),
         };
 
     /// <summary>
-    /// The genuinely suspending route: every property access of the run yields before the inner law, and
-    /// the run must have made at least one (each such access suspends the evaluation spine).
+    /// Every property cache access yields. Assert whether the run reached the cache, including failures
+    /// that end before the first access.
     /// </summary>
-    private static async Task<(EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget)> RunSuspending(Expr program)
+    private static async Task<(EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget)> RunSuspending(
+        Expr program, EvaluationObservations? observations, bool expectCacheAccess)
     {
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();
-        var run = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: cache));
-        Assert.True(cache.AsyncAccesses > 0, "the run never suspended at a property access");
+        var run = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: cache, observations: observations));
+        Assert.Equal(expectCacheAccess, cache.AsyncAccesses > 0);
         Assert.Equal(0, cache.SyncAccesses);
         return run;
     }
@@ -2309,15 +2672,7 @@ public class DetachedExportedEvaluationTests
         => AsyncEvaluationHarness.NeutralOf(await Run(program, route));
 
     private static async Task<EvalResult<Evaluator.CountedResult>> Run(Expr program, Route route)
-        => route switch
-        {
-            Route.Optimized => Evaluator.RunCountedObserved(program).Result,
-            Route.Generic => Evaluator.RunCountedObserved(program, enableOptimizations: false).Result,
-            Route.AsyncTwin => (await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(
-                program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache()))).Result,
-            Route.Suspending => (await RunSuspending(program)).Result,
-            _ => throw new ArgumentOutOfRangeException(nameof(route)),
-        };
+        => (await RunWithBudget(program, route)).Result;
 
     // The public engine's value for a source program (the route users run).
     private static EvalResult<Result> KatLangEngineValue(string source)

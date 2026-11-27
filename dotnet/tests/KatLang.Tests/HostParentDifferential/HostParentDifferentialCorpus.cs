@@ -43,9 +43,10 @@ public sealed record HostParentDivergence(string Reason, string CSharpNeutral, s
 /// <summary>
 /// The host-parent differential corpus: the HP-01..HP-14 matrix of HOST-DIFF-1 (and DECON-CACHE-2's HP-15,
 /// KL-06's failed-run publications HP-16, KL-07's neutral-text collision HP-17, EXPORTED-DETACHED's HP-18
-/// and R-1's retained runtime-alias cells HP-19, with their open route HP-20) plus the discovered
-/// shapes (record-equal / shared / reused host objects, parent-replacing wiring routes, alias and
-/// family variants). Pure, Lean-representable ASTs only: no host operations, integer numbers.
+/// and R-1's retained runtime-alias cells HP-19, with their open route HP-20 and the open-target decision
+/// witnesses HP-22) plus the discovered shapes (record-equal / shared / reused host objects,
+/// parent-replacing wiring routes, alias and family variants). Pure, Lean-representable ASTs only: no host
+/// operations, integer numbers.
 /// A raw host chain has no implicit prelude level; the module controls pin this boundary too.
 /// </summary>
 public static class HostParentDifferentialCorpus
@@ -163,6 +164,25 @@ public static class HostParentDifferentialCorpus
         foreach (var path in paths)
             root = ExportedAt(root, path.Split('.'), 0);
         return new Expr.AlgorithmExpr(root);
+    }
+
+    /// <summary>
+    /// <paramref name="program"/> with the property at the dotted declaration path <paramref name="path"/> renamed
+    /// <paramref name="name"/>: a HOST tree whose shape the front end would refuse in source (two providers of one
+    /// open level offering one name is a static <c>AmbiguousOpen</c>), handed to both evaluators as built.
+    /// </summary>
+    private static Expr RenamedSource(Expr program, string path, string name)
+        => new Expr.AlgorithmExpr(RenamedAt(((Expr.AlgorithmExpr)program).Algorithm, path.Split('.'), 0, name));
+
+    private static Algorithm RenamedAt(Algorithm algorithm, string[] path, int depth, string name)
+    {
+        var owner = (Algorithm.User)algorithm;
+        var properties = owner.Properties.ToList();
+        var index = properties.FindIndex(property => property.Name == path[depth]);
+        properties[index] = depth < path.Length - 1
+            ? properties[index] with { Value = RenamedAt(properties[index].Value, path, depth + 1, name) }
+            : properties[index] with { Name = name };
+        return owner with { Properties = properties };
     }
 
     private static Algorithm ExportedAt(Algorithm algorithm, string[] path, int depth)
@@ -904,6 +924,57 @@ public static class HostParentDifferentialCorpus
                 MisExposedSource(With(OpenedTarget, "A(5), P"), "F.P"), "P");
             Case("HP-20i", "R-1 open-target qualification: the same with the sibling first",
                 MisExposedSource(With(OpenedTarget, "P, A(5)"), "F.P"), "P");
+
+            // THE OPEN-TARGET DECISION WITNESSES (HP-22; owner decision pending,
+            // docs/design/r1-open-target-owner-decision-brief-2026-11.md). The CURRENT outcomes in both engines: the
+            // reuses are not refused; each falsely exported sibling's own direct use is refused at the target's step
+            // (the refusal the recommended rule gives the sibling that establishes the cell); the controls share.
+            const string TargetFamily = "Cap(meta r) = r\nF(y) = {\n  open TARGETS\n  Box = {\n    public Sub = {\n      public SUB(x) = x + 1\n      y\n    }\n    0\n  }\n  Other = { public OTHER(x) = x + 1 }\n  DECLS\n  A = Cap(G(0)).Algorithm\n  P = BODY + 0\n  ROWS\n}\nF(1)\n";
+            static string Target(string targets, string sub, string other, string decls, string body, string rows)
+                => TargetFamily.Replace("TARGETS", targets, StringComparison.Ordinal).Replace("SUB", sub, StringComparison.Ordinal)
+                    .Replace("OTHER", other, StringComparison.Ordinal).Replace("DECLS", decls, StringComparison.Ordinal)
+                    .Replace("BODY", body, StringComparison.Ordinal).Replace("ROWS", rows, StringComparison.Ordinal);
+            Case("HP-22a", "R-1 open-target decision: the sibling's own direct use through open Box.Sub is refused at the step Sub",
+                MisExposedSource(Target("Box.Sub", "G", "K", "", "G(5)", "P"), "F.P"), "P");
+            Case("HP-22b", "R-1 open-target decision: open L with L = Box.Sub, attached read first — the reuse is not refused",
+                MisExposedSource(Target("L", "G", "K", "L = Box.Sub", "A(5)", "A(5), P"), "F.P"), "P");
+            Case("HP-22c", "R-1 open-target decision: open L with L = Box.Sub, the sibling first — not refused",
+                MisExposedSource(Target("L", "G", "K", "L = Box.Sub", "A(5)", "P, A(5)"), "F.P"), "P");
+            Case("HP-22d", "R-1 open-target decision: the sibling's own direct use through open L is refused at the reference's step Sub",
+                MisExposedSource(Target("L", "G", "K", "L = Box.Sub", "G(5)", "P"), "F.P"), "P");
+            Case("HP-22e", "R-1 open-target decision: the row reads through the level first (memoized in C#), attached read of the cell next — not refused",
+                MisExposedSource(Target("Box.Sub", "G", "K", "", "A(5)", "G(1), A(5), P"), "F.P"), "P");
+            Case("HP-22f", "R-1 open-target decision: the row reads through the level first, the sibling establishes the cell — not refused",
+                MisExposedSource(Target("Box.Sub", "G", "K", "", "A(5)", "G(1), P, A(5)"), "F.P"), "P");
+            Case("HP-22g", "R-1 open-target decision: G from the self-contained Other beside a local-only sibling target, attached read first — not refused",
+                MisExposedSource(Target("Box.Sub, Other", "H", "G", "", "A(5)", "A(5), P"), "F.P"), "P");
+            Case("HP-22h", "R-1 open-target decision: the unrelated local-only sibling target, the sibling first — not refused",
+                MisExposedSource(Target("Box.Sub, Other", "H", "G", "", "A(5)", "P, A(5)"), "F.P"), "P");
+            Case("HP-22i", "R-1 open-target decision: the sibling's own direct use is refused at the unrelated target's step (fail-fast resolution)",
+                MisExposedSource(Target("Box.Sub, Other", "H", "G", "", "G(5)", "P"), "F.P"), "P");
+            const string EnclosingLevel = "open Other\nCap(meta r) = r\nOther = { public G(x) = x + 1 }\nF(y) = {\n  open Box.Sub\n  Box = {\n    public Sub = {\n      public H(x) = x\n      y\n    }\n    0\n  }\n  A = Cap(G(0)).Algorithm\n  P = BODY + 0\n  ROWS\n}\nF(1)\n";
+            static string Enclosing(string body, string rows)
+                => EnclosingLevel.Replace("BODY", body, StringComparison.Ordinal).Replace("ROWS", rows, StringComparison.Ordinal);
+            Case("HP-22j", "R-1 open-target decision: a consulted level that does not decide the name (the root's open Other does), the sibling first — not refused",
+                MisExposedSource(Enclosing("A(5)", "P, A(5)"), "F.P"), "P");
+            Case("HP-22k", "R-1 open-target decision: the sibling's own direct use is refused at the consulted level's step",
+                MisExposedSource(Enclosing("G(5)", "P"), "F.P"), "P");
+            Case("HP-22l", "R-1 open-target decision: a sibling target that can never pass fails every lookup of its level (genuinely exported P)",
+                Classified("Cap(meta r) = r\nF(y) = {\n  open Other, Lib.Inner\n  Lib(p) = {\n    public Inner = {\n      public Z = 1\n      p\n    }\n    p\n  }\n  Other = { public G(x) = x + 1 }\n  A = Cap(G(0)).Algorithm\n  P = A(5) + 0\n  P, A(5)\n}\nF(1)\n"), "P");
+            Case("HP-22m", "R-1 open-target decision control: F's own G shadows the open-provided one, no open is consulted; the genuinely exported sibling shares",
+                Classified(Target("Box.Sub", "G", "K", "G(x) = x + 1", "A(5)", "P, A(5)")), "P");
+            Case("HP-22n", "R-1 open-target decision: two providers offer G (host tree), the sibling first — the lookup's ambiguousOpen",
+                RenamedSource(MisExposedSource(Target("Box.Sub, Other", "G", "K", "", "A(5)", "P, A(5)"), "F.P"), "F.Other.K", "G"), "P");
+            Case("HP-22o", "R-1 open-target decision: the falsely exported sibling's own direct use on the ambiguous host tree is refused at Sub first",
+                RenamedSource(MisExposedSource(Target("Box.Sub, Other", "G", "K", "", "G(5)", "P"), "F.P"), "F.Other.K", "G"), "P");
+            Case("HP-22p", "R-1 open-target decision control: an exported target step is admitted through no activation; the genuinely exported sibling shares",
+                Classified("Cap(meta r) = r\nF(y) = {\n  open Box.Sub\n  Box = {\n    public Sub = { public G(x) = x + 1 }\n    public H = y + 0\n  }\n  A = Cap(G(0)).Algorithm\n  P = A(5) + 0\n  P, A(5)\n}\nF(1)\n"), "P");
+            Case("HP-22q", "R-1 open-target decision control: the same exported step through L = Box.Sub",
+                Classified("Cap(meta r) = r\nF(y) = {\n  open L\n  Box = {\n    public Sub = { public G(x) = x + 1 }\n    public H = y + 0\n  }\n  L = Box.Sub\n  A = Cap(G(0)).Algorithm\n  P = A(5) + 0\n  P, A(5)\n}\nF(1)\n"), "P");
+            Case("HP-22r", "R-1 open-target decision control: a nearer level decides the name, F's local-only target is never consulted; the genuinely exported sibling shares",
+                Classified("Cap(meta r) = r\nF(y) = {\n  open Box.Sub\n  Box = {\n    public Sub = {\n      public G(x) = x + 1\n      y\n    }\n    0\n  }\n  Other = { public G(x) = x + 1 }\n  Mk(k) = {\n    open Other\n    Cap(G(k))\n  }\n  A = Mk(0).Algorithm\n  P = A(5) + 0\n  P, A(5)\n}\nF(1)\n"), "P");
+            Case("HP-22s", "R-1 open-target decision control: correctly classified, the local-only sibling reads the cell through open L attached",
+                Classified(Target("L", "G", "K", "L = Box.Sub", "A(5)", "P, A(5)")), "P");
 
             cases.Add(new("HP-21a", "the escaped element projects its alias under the element's detached watermark and refuses y before tick",
                 MisExposedSource(EscapedAliasCall, "F.P"), L("P")) { ExpectedTickCount = 0 });

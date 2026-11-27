@@ -61,7 +61,7 @@ public class HostParentDifferentialTests
         Assert.Contains("\nimport CoreTests.HostParentDifferential\n", root, StringComparison.Ordinal);
     }
 
-    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15, KL-06's HP-16, KL-07's HP-17, EXPORTED-DETACHED's HP-18, R-1's HP-19, its open route HP-20 (with the open-target qualification) and its escaped projection HP-21.</summary>
+    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15, KL-06's HP-16, KL-07's HP-17, EXPORTED-DETACHED's HP-18, R-1's HP-19, its open route HP-20 (with the open-target qualification), its escaped projection HP-21 and the open-target decision witnesses HP-22.</summary>
     [Fact]
     public void CorpusIds_AreStableUnique_AndCoverTheWholeMatrix()
     {
@@ -70,7 +70,7 @@ public class HostParentDifferentialTests
         Assert.Equal(cases.Count, cases.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(cases.Count, cases.Select(c => c.LeanName).Distinct(StringComparer.Ordinal).Count());
         var families = cases.Select(c => c.Id[..5]).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-        Assert.Equal(Enumerable.Range(1, 21).Select(n => $"HP-{n:00}"), families);
+        Assert.Equal(Enumerable.Range(1, 22).Select(n => $"HP-{n:00}"), families);
         Assert.All(cases, c => Assert.False(string.IsNullOrWhiteSpace(c.Description), c.Id));
     }
 
@@ -99,9 +99,9 @@ public class HostParentDifferentialTests
     /// (<see cref="CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet"/>) fail while a floor
     /// is below its current count, so a floor cannot go stale after cases are added.
     /// </summary>
-    private const int MinimumComparableCases = 170;
+    private const int MinimumComparableCases = 189;
     private const int MinimumComparableCasesWithPreWiredParents = 124;
-    private const int MinimumSuccessCacheGuards = 226;
+    private const int MinimumSuccessCacheGuards = 238;
 
     private const string ComparableMetric = "comparable";
     private const string PreWiredMetric = "pre-wired";
@@ -264,6 +264,10 @@ public class HostParentDifferentialTests
         // and a cold channel refused before its effect. (The open-target qualification, HP-20h / HP-20i, and the
         // controls succeed.)
         ("HP-20a", ["P"]), ("HP-20b", ["P"]), ("HP-20d", ["P"]), ("HP-20e", ["P"]), ("HP-20f", ["P"]),
+        // The open-target decision witnesses (owner decision pending): each falsely exported sibling's own direct use
+        // refused at the target's step, a sibling target that can never pass, and the ambiguous host tree. (Their
+        // reuses, still unrefused, and the controls succeed.)
+        ("HP-22a", ["P"]), ("HP-22d", ["P"]), ("HP-22i", ["P"]), ("HP-22k", ["P"]), ("HP-22l", ["P"]), ("HP-22n", ["P"]), ("HP-22o", ["P"]),
         ("HP-21a", ["P"]),
     ];
 
