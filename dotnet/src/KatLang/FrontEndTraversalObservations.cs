@@ -836,6 +836,16 @@ internal sealed class FrontEndTraversalObservations
     /// <summary>The member seeds the full member expansions hold by reference (MEMBERS BY REFERENCE), summed over expansions.</summary>
     public long SummaryMemberExpansionHeldParts { get; private set; }
 
+    /// <summary>
+    /// PATH SHARES (<c>PropertyDependencyGraphBuilder.TryPathShareMemberSeed</c>): members that carry pending references and
+    /// read one predecessor, built by holding that predecessor and a delta of their own references instead of a full
+    /// expansion that copies the predecessor's width. Not counted in <see cref="SummaryMemberExpansions"/>.
+    /// </summary>
+    public long SummaryMemberPathShares { get; private set; }
+
+    internal void RecordSummaryMemberPathShare()
+        => SummaryMemberPathShares = checked(SummaryMemberPathShares + 1);
+
     /// <summary>Entries copied from small flat members by holding expansions, including duplicate inputs.</summary>
     public long MemberEntriesCopied { get; private set; }
     internal void RecordMemberEntriesCopied(int entries) => MemberEntriesCopied += entries;
@@ -1126,6 +1136,57 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordSettlementQualifiedPartOwnerLookups(long owners)
         => SettlementQualifiedPartOwnerLookups = checked(SettlementQualifiedPartOwnerLookups + owners);
+
+    /// <summary>
+    /// PATH PARTS (<c>PropertyExposureResolver.PendingResolution</c>): seeds settled part by part — their own sets and
+    /// references, then each part they hold — instead of folded, because their parts carry pending references.
+    /// </summary>
+    public long SettlementPathPartSeeds { get; private set; }
+
+    internal void RecordSettlementPathPartSeed()
+        => SettlementPathPartSeeds = checked(SettlementPathPartSeeds + 1);
+
+    /// <summary>
+    /// PATH PARTS (<c>PropertyExposureResolver.PendingResolution</c>): frames that settled one part of a seed on its own,
+    /// because the seed's parts carry pending references and no kept settlement of that part answered. Each is also one
+    /// of <see cref="RequiredAncestorSettlementFrames"/>.
+    /// </summary>
+    public long SettlementPathPartFrames { get; private set; }
+
+    internal void RecordSettlementPathPartFrame()
+        => SettlementPathPartFrames = checked(SettlementPathPartFrames + 1);
+
+    /// <summary>
+    /// PATH PARTS: kept part settlements taken instead of settling the part again (one unit of seed-part work each, no
+    /// frame): with a chain of members each holding its predecessor, one per member where the folded settlement settled
+    /// every reference of every predecessor again.
+    /// </summary>
+    public long SettlementPathPartReuses { get; private set; }
+
+    internal void RecordSettlementPathPartReuse()
+        => SettlementPathPartReuses = checked(SettlementPathPartReuses + 1);
+
+    /// <summary>
+    /// PATH PARTS (<c>PropertyExposureResolver.PendingResolution.AnchorPublishedSeed</c>): intervening levels a navigated
+    /// seed whose parts carry pending references was carried through unchanged (no parameter) or qualified part by part
+    /// (parameters), instead of being expanded, which folded it and copied its width.
+    /// </summary>
+    public long SettlementPathPartAnchorings { get; private set; }
+
+    internal void RecordSettlementPathPartAnchoring()
+        => SettlementPathPartAnchorings = checked(SettlementPathPartAnchorings + 1);
+
+    /// <summary>PATH PARTS: part settlements kept for the resolution.</summary>
+    public long SettlementPathPartsKept { get; private set; }
+
+    /// <summary>PATH PARTS: the largest combined weight of the retained keys, fact views and footprint memberships.</summary>
+    public long SettlementPathPartPeakWeight { get; private set; }
+
+    internal void RecordSettlementPathPartKept(long weight)
+    {
+        SettlementPathPartsKept = checked(SettlementPathPartsKept + 1);
+        SettlementPathPartPeakWeight = Math.Max(SettlementPathPartPeakWeight, weight);
+    }
 
     /// <summary>
     /// Bound-owner work for settlement keys (<c>BoundOwnerSet</c>): one per owner offered to a set and the

@@ -73,6 +73,13 @@ internal static class PropertyExposureResolver
     /// </summary>
     internal static readonly AsyncLocal<bool> SeedPartsFoldedForTesting = new();
 
+    /// <summary>
+    /// TEST SEAM (<c>ExposurePathPartTests</c>): while set on the calling flow, PATH PARTS are not used
+    /// (<c>PendingResolution</c>): a settled seed whose parts hold pending references is folded and each reference settled
+    /// from the folded seed, the former walk every part-by-part settlement must equal. Never set by production code.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> PathPartsFoldedForTesting = new();
+
     // Exercises saturation of the new reuse tables on small programs.
     internal static readonly AsyncLocal<int?> ResidualCacheCapacityForTesting = new();
 
@@ -1804,6 +1811,7 @@ internal static class PropertyExposureResolver
         // Settlements answered by footprint, per content and level, with each one's retained weight.
         private readonly Dictionary<(object Content, SummaryScope Level), List<(Settled Settled, long Weight)>> _candidates = [];
         private readonly SettlementShareMode _mode = SettlementShareModeForTesting.Value;
+        internal bool KeepsSettlements => _mode != SettlementShareMode.Unshared;
         private long _retained;
         // The existing site-free exact cache can depend on the order in which off-chain
         // owner lookups were settled. Keep that order once a resolution has made one.
@@ -1870,6 +1878,49 @@ internal static class PropertyExposureResolver
         internal Dictionary<(PropertyDependencyGraphBuilder.SummarySeed Part, SummaryScope OwnerLevel), RequirementSet> QualifiedPartRequirements
             => _qualifiedPartRequirements ??= [];
 
+        /// <summary>
+        /// PATH PARTS (<c>PendingResolution.ResolveSeed</c>): per completed seed part, whether no pending reference it or any
+        /// part it holds carries binds an owner of its own, so folding them never narrows a reference.
+        /// </summary>
+        internal Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool> UnboundReferenceParts
+            => _unboundReferenceParts ??= new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>PATH PARTS: per completed seed part, whether it and every part it holds hold no pending reference.</summary>
+        internal Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool> ReferenceFreeParts
+            => _referenceFreeParts ??= new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>
+        /// PATH PARTS (<c>PendingResolution.AnchorPublishedSeed</c>): per completed seed part, whether it and every part it
+        /// holds hold no visible name and only pending references every level expansion keeps as they are.
+        /// </summary>
+        internal Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool> ExpansionStableParts
+            => _expansionStableParts ??= new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>
+        /// PATH PARTS: the whole settlement of a seed — a part settled on its own, or a seed settled part by part — at a
+        /// level, from an EXACT site, under exact bound owners, with the record of what it read
+        /// (<see cref="Settled"/>). Kept for the resolution only when it read no summary of a level in progress and made no
+        /// owner lookup off its site's chain, and while the resolution has made none; served while its views stand.
+        /// Its retained weight is <see cref="PathPartWeight"/>.
+        /// </summary>
+        internal Dictionary<PathPartKey, Settled> PathParts => _pathParts ??= [];
+
+        /// <summary>Total retained weight of the exact path-part keys, fact views and footprint memberships.</summary>
+        internal long PathPartWeight { get; set; }
+
+        /// <summary>A path-part settlement's key: the seed and both scopes by reference, the bound owners by content.</summary>
+        internal readonly record struct PathPartKey(PropertyDependencyGraphBuilder.SummarySeed Part, SummaryScope Level,
+            SummaryScope Site, BoundOwnerSet? Bound)
+        {
+            internal Key SeedKey => new(Part, Level, Bound);
+            internal long RetainedWeight(Settled settled) => SettlementShare.RetainedWeight(SeedKey, settled);
+        }
+
+        private Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool>? _unboundReferenceParts;
+        private Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool>? _referenceFreeParts;
+        private Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool>? _expansionStableParts;
+        private Dictionary<PathPartKey, Settled>? _pathParts;
+
         // Created when first used: most shares (a component discovery's above all) never settle a seed with parts.
         private Dictionary<(PropertyDependencyGraphBuilder.SummarySeed Part, SummaryScope Level), RequirementSet>? _seedPartRequirements;
         private Dictionary<PropertyDependencyGraphBuilder.SummarySeed, bool>? _requiredNameParts;
@@ -1918,7 +1969,7 @@ internal static class PropertyExposureResolver
         /// </summary>
         public bool TryGet(Key key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Settled? settled)
         {
-            if (_mode == SettlementShareMode.Unshared)
+            if (!KeepsSettlements)
             {
                 settled = null;
                 return false;
@@ -1979,7 +2030,7 @@ internal static class PropertyExposureResolver
         {
             if (!settled.StandsFromEverySite(key.Level))
                 throw new InvalidOperationException("Only a settlement that stands from every site for the rest of the run is shared.");
-            if (_mode == SettlementShareMode.Unshared)
+            if (!KeepsSettlements)
                 return;
             var weight = RetainedWeight(key, settled);
             if (settled.Footprint is not null && !settled.OwnerOffChain && _mode == SettlementShareMode.Footprint)
@@ -2227,6 +2278,7 @@ internal static class PropertyExposureResolver
         private readonly bool _componentSettlements = !ComponentSettlementsPerPathForTesting.Value;
         private readonly bool _liveSettlements = !LiveSettlementsPerRunForTesting.Value;
         private readonly bool _seedParts = !SeedPartsFoldedForTesting.Value;
+        private readonly bool _pathParts = !PathPartsFoldedForTesting.Value && shared.KeepsSettlements;
         private readonly long _residualCapacity = ResidualCacheCapacityForTesting.Value ?? SettlementShare.DefaultCapacity;
         // The next discovery index of the Run in progress (Frame.Index).
         private int _nextIndex;
@@ -2826,6 +2878,12 @@ internal static class PropertyExposureResolver
             /// </summary>
             public bool RunsUnbound;
 
+            /// <summary>
+            /// Set on the frame of one seed part settled on its own (PATH PARTS, <c>PathPartFrame</c>): it has no key, binds no
+            /// owner of its own and runs under its enclosing frame's bound owners, so its record is that frame's reads.
+            /// </summary>
+            public bool PathPart;
+
             // The footprint (SettlementShare): each bound-owner membership read, with its answer for this frame's own
             // bound owners, each owner once; null with _exactBoundOwners once it is unknown (MaxFootprint exceeded, or a
             // result without one reused).
@@ -3021,6 +3079,17 @@ internal static class PropertyExposureResolver
             public void Reuse(SettlementShare.Settled settled, PendingResolution resolution)
             {
                 Result = settled.Result;
+                AbsorbRecord(settled, resolution);
+            }
+
+            /// <summary>
+            /// Takes what a completed WHOLE settlement depended on as this frame's reads, exactly as
+            /// <see cref="Absorb(Frame, PendingResolution)"/> takes them from the nested frame that computed it (a frame
+            /// that binds no owner of its own and runs under this frame's bound owners): PATH PARTS reuses a kept part
+            /// settlement this way, its result united by the caller.
+            /// </summary>
+            public void AbsorbRecord(SettlementShare.Settled settled, PendingResolution resolution)
+            {
                 NoteSiteLanding(settled.SiteDepth);
                 AbsorbLiveReads(settled.ReadLive, settled.LiveReads, resolution);
                 _inconsistentViews |= settled.InconsistentViews;
@@ -4187,6 +4256,31 @@ internal static class PropertyExposureResolver
                                 seed = qualified;
                                 continue;
                             }
+                            // PATH PARTS: a seed whose parts carry pending references, each a reference every expansion keeps
+                            // as it is, here and in every part (no visible name, no bare name the level could select as its
+                            // own member), expands to its content with the names the level binds qualified, in the same
+                            // order: it is carried through a level without parameters and qualified part by part at one
+                            // with parameters, as above, instead of folded and copied per member. Not at a module root,
+                            // whose prelude settlement drops the references.
+                            if (_seedParts && _pathParts && !ownerBody.IsModuleRoot && seed.AbsorbedPartsWithoutFolding is { Count: > 0 } pathHeld
+                                && seed.OwnSetsStayAtEveryExpansion
+                                && PartsSatisfy(pathHeld, StayAtEveryExpansion, shared.ExpansionStableParts))
+                            {
+                                if (parameterNames.Count == 0)
+                                {
+                                    memos.Observations?.RecordSettlementPathPartAnchoring();
+                                    continue;
+                                }
+                                // The seed itself is kept as a qualified part too: the member that holds this one holds
+                                // the same copy, so the settlement of this seed kept for its reader is the part it reuses.
+                                memos.SharedMemo.ObserveCancellation();
+                                if (QualifiedPart(seed, ownerBody, parameterNames) is { } pathQualified)
+                                {
+                                    memos.Observations?.RecordSettlementPathPartAnchoring();
+                                    seed = pathQualified;
+                                    continue;
+                                }
+                            }
                             seed = PropertyDependencyGraphBuilder.ExpandAtLevel(seed, ownerLevel);
                             if (ownerBody.IsModuleRoot) seed = PropertyDependencyGraphBuilder.SettledAtPrelude(seed);
                         }
@@ -4210,21 +4304,67 @@ internal static class PropertyExposureResolver
         {
             // The seed's own requirements are the frame's result first (SeedRequirements); each reference it holds then adds
             // its settlement, accumulated on the frame as ResolvePublishedReference does.
-            foreach (PendingReference pending in SeedRequirements(self, seed, level, site, boundOwners))
+            var (references, pathParts) = SeedRequirements(self, seed, level, site, boundOwners);
+            foreach (PendingReference pending in references)
             {
                 var settled = ReferenceFrame(pending, level, site, boundOwners);
                 yield return settled;
                 self.Result = sets.Union(self.Result, settled.Result);
             }
+
+            if (pathParts is null)
+            {
+                if (self.PathPart)
+                    KeepPathPart(self, seed, level, site, boundOwners);
+                yield break;
+            }
+
+            // PATH PARTS: then each part the seed holds, in the order the fold would take its references, through the kept
+            // settlement of that part at this level, from this site, under these bound owners, or its own frame. Small
+            // flat deltas settle in place. A flat predecessor with many paths needs its own settlement too: each of its
+            // sibling readers would otherwise pay a reference frame for every path it holds, even after the first reader.
+            for (var i = 0; i < pathParts.Count; i++)
+            {
+                CheckWideWalkCancellation(i);
+                var part = pathParts[i];
+                if (TryKeptPathPart(self, part, level, site, boundOwners))
+                    continue;
+                if (part.AbsorbedPartsWithoutFolding is null
+                    && (part.OwnPendingReferencesWithoutFolding?.Count ?? 0) <= PropertyDependencyGraphBuilder.SummarySeed.CopiedCompletedEntries)
+                {
+                    var landing = SummaryScope.NoOwnerLookup;
+                    self.Result = sets.Union(self.Result, sets.From(level.ResolveRequirements(part.OwnRequiredNamesWithoutFolding ?? NoNames)
+                        .Concat(site.ResolveRequirementsFromSite(part.OwnQualifiedParametersWithoutFolding ?? NoQualifiedParameters,
+                            boundOwners, self, ref landing))));
+                    self.NoteSiteLanding(landing);
+                    if (part.OwnPendingReferencesWithoutFolding is { Count: > 0 } own)
+                        foreach (PendingReference pending in own)
+                        {
+                            var inPlace = ReferenceFrame(pending, level, site, boundOwners);
+                            yield return inPlace;
+                            self.Result = sets.Union(self.Result, inPlace.Result);
+                        }
+                    continue;
+                }
+
+                var settled = PathPartFrame(part, level, site, boundOwners);
+                yield return settled;
+                self.Result = sets.Union(self.Result, settled.Result);
+            }
+
+            KeepPathPart(self, seed, level, site, boundOwners);
         }
 
         // ResolveSeed's first step: the requirements `seed` names itself become `self`'s result, with its site landing noted,
-        // and the references it holds are returned for settlement.
-        private IEnumerable<SummaryReference> SeedRequirements(Frame self, PropertyDependencyGraphBuilder.SummarySeed seed,
-            SummaryScope level, SummaryScope site, BoundOwnerSet? boundOwners)
+        // and the references it holds are returned for settlement, with the parts to settle one by one (PATH PARTS) when
+        // they are not folded into the seed.
+        private (IEnumerable<SummaryReference> References, IReadOnlyList<PropertyDependencyGraphBuilder.SummarySeed>? PathParts)
+            SeedRequirements(Frame self, PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site,
+                BoundOwnerSet? boundOwners)
         {
             var landing = SummaryScope.NoOwnerLookup;
             IEnumerable<SummaryReference> references;
+            IReadOnlyList<PropertyDependencyGraphBuilder.SummarySeed>? pathParts = null;
             if (TryPartUnion(self, seed, level, site, boundOwners, ref landing, out var partUnion))
             {
                 // SEED PARTS: the parts hold required names (and, QUALIFIED SEED PARTS, owner-qualified requirements) only,
@@ -4237,6 +4377,19 @@ internal static class PropertyExposureResolver
                 self.Result = sets.Union(names, partUnion);
                 references = (IEnumerable<SummaryReference>?)seed.OwnPendingReferencesWithoutFolding ?? [];
             }
+            else if (TakesPathParts(seed) is { } parts)
+            {
+                // PATH PARTS: the seed's own sets here; its parts are settled one by one after its own references
+                // (ResolveSeed), each with everything it holds, as the folded seed's requirements and references would be.
+                self.Result = sets.From(level.ResolveRequirements(seed.OwnRequiredNamesWithoutFolding ?? NoNames)
+                    .Concat(site.ResolveRequirementsFromSite(seed.OwnQualifiedParametersWithoutFolding ?? NoQualifiedParameters,
+                        boundOwners, self, ref landing)));
+                // A copy: a nested settlement of this very seed (a cycle) may fold it in place, which writes its parts'
+                // references into its own set while these are being settled. The parts' list itself is never changed.
+                references = seed.OwnPendingReferencesWithoutFolding is { Count: > 0 } own ? [.. own] : [];
+                pathParts = parts;
+                memos.Observations?.RecordSettlementPathPartSeed();
+            }
             else
             {
                 self.Result = sets.From(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames)
@@ -4245,7 +4398,124 @@ internal static class PropertyExposureResolver
             }
 
             self.NoteSiteLanding(landing);
-            return references;
+            return (references, pathParts);
+        }
+
+        private static readonly Func<PropertyDependencyGraphBuilder.SummarySeed, bool> StayAtEveryExpansion = static seed => seed.OwnSetsStayAtEveryExpansion;
+        private static readonly Func<PropertyDependencyGraphBuilder.SummarySeed, bool> ReferencesBindNoOwners = static seed => seed.OwnReferencesBindNoOwners;
+        private static readonly Func<PropertyDependencyGraphBuilder.SummarySeed, bool> HoldsNoReferences = static seed => seed.OwnSetsHoldNoReferences;
+
+        /// <summary>
+        /// PATH PARTS (November 2026; implementation only, no classification, requirement, diagnostic or Lean rule): the parts
+        /// of a seed that holds parts carrying pending references, to be settled one by one instead of folded; null when the
+        /// seed is folded and settled whole, as before. Folding unites the parts' sets into the seed's own — its own entries
+        /// first, then each part's in the order it holds them, depth first, each part once — and the settlement then resolves
+        /// every name and owner-qualified requirement on its own and settles each reference on its own, in that order. The
+        /// result is the union of those settlements and the record the union of their records (landing, views, live reads,
+        /// memberships, off-chain lookups). Settling the seed's own sets and references and then each part with everything it
+        /// holds (ResolveSeed) takes the same requirements and the same references in the same order, and a reference the
+        /// fold met twice is settled again under its exact key, which a completed settlement answers. Folding also NARROWS a
+        /// reference written twice with different bound owners to the owners both carry; so the parts are settled one by one
+        /// only when no reference of the seed or any part binds an owner of its own (then no write narrows one). The parts
+        /// must carry a reference: a seed whose parts hold requirements only is decided by SEED PARTS and QUALIFIED SEED
+        /// PARTS. Never during a component's equation discovery, whose direct walk records seeds as its edges, and never once
+        /// the resolution has made an owner lookup off its site's chain (THE OFF-CHAIN GAP: the share's site-free entries can
+        /// then depend on the order of settlements, which a kept part settlement would freeze).
+        /// </summary>
+        private IReadOnlyList<PropertyDependencyGraphBuilder.SummarySeed>? TakesPathParts(PropertyDependencyGraphBuilder.SummarySeed seed)
+        {
+            if (!_seedParts || !_pathParts || _collecting is not null || shared.SawOffChainLookup
+                || seed.AbsorbedPartsWithoutFolding is not { Count: > 0 } parts || !seed.OwnReferencesBindNoOwners
+                || PartsSatisfy(parts, HoldsNoReferences, shared.ReferenceFreeParts)
+                || !PartsSatisfy(parts, ReferencesBindNoOwners, shared.UnboundReferenceParts))
+                return null;
+            return parts;
+        }
+
+        /// <summary>
+        /// PATH PARTS: the frame that settles one part of a seed on its own (<see cref="ResolveSeed"/>, which takes the part's
+        /// own parts one by one again where they qualify): charged and observed like every frame, keyed by nothing, so a
+        /// partial result stays its enclosing settlement's, and kept when whole (<see cref="KeepPathPart"/>).
+        /// </summary>
+        private Frame PathPartFrame(PropertyDependencyGraphBuilder.SummarySeed part, SummaryScope level, SummaryScope site,
+            BoundOwnerSet? boundOwners)
+        {
+            ChargeFrame();
+            memos.Observations?.RecordRequiredAncestorSettlementFrame(part);
+            memos.Observations?.RecordSettlementPathPartFrame();
+            var frame = new Frame(memos.Observations) { PathPart = true };
+            frame.Body = ResolveSeed(frame, part, level, site, boundOwners);
+            return frame;
+        }
+
+        /// <summary>
+        /// PATH PARTS: takes the kept settlement of <paramref name="part"/> at <paramref name="level"/> from
+        /// <paramref name="site"/> under <paramref name="boundOwners"/> as part of <paramref name="self"/>'s: its result
+        /// united and its record absorbed as from the frame that computed it (<see cref="Frame.AbsorbRecord"/>). That frame
+        /// completed whole, consulted views that still stand and made no owner lookup off its site's chain while the
+        /// resolution had made none, and either read no summary of a level in progress (the exact table) or read only
+        /// summaries that still stand (the level's live settlements, which also replay those reads): computed again, it reads
+        /// the same static facts, summaries and completed settlements (the share answers only whole results that hold from
+        /// every site) and so has the same result and record. One unit of seed-part work.
+        /// </summary>
+        private bool TryKeptPathPart(Frame self, PropertyDependencyGraphBuilder.SummarySeed part, SummaryScope level,
+            SummaryScope site, BoundOwnerSet? boundOwners)
+        {
+            if (shared.SawOffChainLookup)
+                return false;
+            var key = new SettlementShare.PathPartKey(part, level, site, boundOwners);
+            if (!shared.PathParts.TryGetValue(key, out var kept))
+            {
+                // A kept LIVE settlement of the part (KeepPathPart), validated against the summaries it read since.
+                if (!TryLiveSettlement(key.SeedKey, out kept))
+                    return false;
+            }
+            else if (!kept.ViewsStand())
+            {
+                shared.PathParts.Remove(key);
+                shared.PathPartWeight -= key.RetainedWeight(kept);
+                return false;
+            }
+
+            ChargeSeedPartWork(1);
+            memos.Observations?.RecordSettlementPathPartReuse();
+            self.Result = sets.Union(self.Result, kept.Result);
+            self.AbsorbRecord(kept, this);
+            return true;
+        }
+
+        /// <summary>
+        /// PATH PARTS: keeps <paramref name="frame"/>'s settlement of <paramref name="seed"/> — a part settled on its own, or a
+        /// seed settled part by part — after the frame has absorbed its nested settlements. Keeping a result requires
+        /// a whole settlement with consistent views and no off-chain lookup. An eligible live read goes to the
+        /// revision-validated level store. Otherwise the resolution can keep it under its exact key while capacity permits.
+        /// </summary>
+        private void KeepPathPart(Frame frame, PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level,
+            SummaryScope site, BoundOwnerSet? boundOwners)
+        {
+            if (!_pathParts || _collecting is not null || shared.SawOffChainLookup || !frame.IsWhole || frame.LookedUpOffChain
+                || frame.OldestReuse < frame.ComponentMark || _component.Count != frame.ComponentMark)
+                return;
+            var settled = frame.Complete();
+            if (settled.InconsistentViews)
+                return;
+            if (settled.ReadLive)
+            {
+                // LIVE: read a summary of the level in progress. Kept, as a seed's settlement of the same content is, for the
+                // rest of the level's solve while every summary it read stands (LiveSettlements), under the seed's own key,
+                // when it names every summary it read and answers every site at the level; never in the exact table.
+                if (settled.LiveReadsKnown && settled.AnswersEverySite(level))
+                    KeepLiveSettlement(new SettlementShare.Key(seed, level, boundOwners), settled);
+                return;
+            }
+
+            var key = new SettlementShare.PathPartKey(seed, level, site, boundOwners);
+            var weight = key.RetainedWeight(settled);
+            if (shared.PathParts.ContainsKey(key) || shared.PathPartWeight + weight > _residualCapacity)
+                return;
+            shared.PathParts.Add(key, settled);
+            shared.PathPartWeight += weight;
+            memos.Observations?.RecordSettlementPathPartKept(shared.PathPartWeight);
         }
 
         private static readonly string[] NoNames = [];
@@ -4687,11 +4957,12 @@ internal static class PropertyExposureResolver
             return QualifyWithCompletedChildren(seed, owner, parameterNames, retain: false);
         }
 
-        // QUALIFIED SEED PARTS: a completed part that holds no visible name and no pending reference, here or in any part it
-        // holds, as the expansion at the level of `owner` (binding `parameterNames`) makes it: a copy of its own sets with the
-        // names the level binds qualified, holding the same expansion of each of its parts by reference; the part itself when
-        // the level binds none of its names, here or below. Kept per part, owner and parameter set for the resolution (the
-        // run's share), in post-order on the heap. A new copy also retains its own requirements and child references.
+        // QUALIFIED SEED PARTS: a completed part that holds no visible name and no pending reference (PATH PARTS: or only
+        // references every expansion keeps as they are), here or in any part it holds, as the expansion at the level of
+        // `owner` (binding `parameterNames`) makes it: a copy of its own sets with the names the level binds qualified, holding
+        // the same expansion of each of its parts by reference; the part itself when the level binds none of its names, here
+        // or below. Kept per part, owner and parameter set for the resolution (the run's share), in post-order on the heap. A
+        // new copy also retains its own requirements, references and child references.
         private PropertyDependencyGraphBuilder.SummarySeed? QualifiedPart(PropertyDependencyGraphBuilder.SummarySeed root,
             Algorithm owner, IReadOnlySet<string> parameterNames)
         {
@@ -4756,7 +5027,10 @@ internal static class PropertyExposureResolver
                 }
                 ChargeSeedPartWork(inspected);
             }
-            var copiedEntries = copy ? (long)seed.OwnRequirementCount + (children?.Count ?? 0) : 0;
+            // A copy retains its own requirements, the references a path part carries (PATH PARTS) and its child references.
+            var copiedEntries = copy
+                ? (long)seed.OwnRequirementCount + (seed.OwnPendingReferencesWithoutFolding?.Count ?? 0) + (children?.Count ?? 0)
+                : 0;
             if (retain)
             {
                 if (shared.QualifiedPartWeight + 1 + copiedEntries > _residualCapacity)

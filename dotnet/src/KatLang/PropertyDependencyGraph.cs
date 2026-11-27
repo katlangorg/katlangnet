@@ -137,6 +137,7 @@ internal sealed class PendingReference(string head, IReadOnlyList<string> member
     internal CompletedStructureContext Origin { get; } = origin;
     internal bool OpenPath { get; } = openPath;
     internal PendingSelection Selection { get; } = selection;
+    internal bool IsBareLexicalName => !OpenPath && Selection == PendingSelection.Lexical && Members.Count == 0;
 
     private static string OriginKey(string identity, bool openPath, PendingSelection selection)
         => selection == PendingSelection.Lexical ? $"completed:{identity}:{openPath}" : $"completed:{identity}:{openPath}:{selection}";
@@ -198,17 +199,30 @@ internal enum PendingSelection
 internal sealed class PendingReferenceSet : IReadOnlyCollection<SummaryReference>
 {
     private readonly Dictionary<string, SummaryReference> _references = new(StringComparer.Ordinal);
+    // Part eligibility is queried at each requesting site. Maintain it as entries are inserted or
+    // narrowed so the check takes constant work even for a wide predecessor.
+    private int _boundReferences;
+    private bool _mayChangeAtExpansion;
 
     public PendingReferenceSet() { }
     public PendingReferenceSet(IEnumerable<SummaryReference> references) => UnionWith(references);
     public int Count => _references.Count;
-    public void Clear() => _references.Clear();
+    public void Clear()
+    {
+        _references.Clear();
+        _boundReferences = 0;
+        _mayChangeAtExpansion = false;
+    }
 
     public void Add(SummaryReference reference)
     {
         if (!_references.TryGetValue(reference.ResolutionKey, out var existing))
         {
             _references.Add(reference.ResolutionKey, reference);
+            if (reference.BoundOwners.Count != 0)
+                _boundReferences++;
+            if (reference is not PendingReference { IsBareLexicalName: false })
+                _mayChangeAtExpansion = true;
             return;
         }
 
@@ -224,6 +238,8 @@ internal sealed class PendingReferenceSet : IReadOnlyCollection<SummaryReference
             return;
         // The narrowed entry takes the place of the one it replaces: the set's order is the order of first writes.
         _references[existing.ResolutionKey] = existing.WithBoundOwners(common);
+        if (common.Length == 0)
+            _boundReferences--;
     }
 
     public void UnionWith(IEnumerable<SummaryReference> references)
@@ -235,6 +251,22 @@ internal sealed class PendingReferenceSet : IReadOnlyCollection<SummaryReference
     }
     public bool SetEquals(PendingReferenceSet other)
         => Count == other.Count && _references.All(pair => other._references.TryGetValue(pair.Key, out var value) && pair.Value.Equals(value));
+
+    /// <summary>
+    /// Whether no reference of the set binds an owner of its own (<see cref="SummaryReference.BoundOwners"/>): then a
+    /// second write of a key never narrows it (<see cref="Add"/>), so any union of such sets holds the references written
+    /// with exactly the bound owners they were written with.
+    /// </summary>
+    internal bool BindsNoOwners => _boundReferences == 0;
+
+    /// <summary>
+    /// Whether every reference of the set is anchored (a <see cref="PendingReference"/>, which
+    /// <see cref="SummaryReference.At"/> keeps as it is) and is one that
+    /// <c>SummaryMemo.SelectsLocalMember</c> never selects at any level — a member path, an open path, a non-lexical
+    /// selection. Even a bound bare lexical name can become selectable when the fold intersects the owners
+    /// of equal references from different parts (<see cref="Narrow"/>).
+    /// </summary>
+    internal bool StaysAtEveryExpansion => !_mayChangeAtExpansion;
     public IEnumerator<SummaryReference> GetEnumerator() => _references.Values.GetEnumerator();
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
@@ -1010,6 +1042,21 @@ internal static class PropertyDependencyGraphBuilder
             MoveQualifiedNames(SharedNames(required, ownerParameterNames, observations), owner, default);
         }
 
+        /// <summary>
+        /// <see cref="QualifyParameters"/> for a seed that holds no part yet and will hold some (PATH SHARES,
+        /// <see cref="TryPathShareMemberSeed"/>): a name set the qualification empties is released, so a later fold unites
+        /// the parts' names into a fresh set rather than into one that <see cref="HashSet{T}.Remove"/> emptied.
+        /// </summary>
+        internal void QualifyOwnParameters(Algorithm owner, IReadOnlySet<string> ownerParameterNames,
+            FrontEndTraversalObservations? observations)
+        {
+            if (_absorbed is not null)
+                throw new InvalidOperationException("Only a seed that holds no part qualifies its own sets alone.");
+            QualifyParameters(owner, ownerParameterNames, observations);
+            if (_requiredAncestorOwnedParameterNames is { Count: 0 })
+                _requiredAncestorOwnedParameterNames = null;
+        }
+
         private void MoveQualifiedNames(List<string> names, Algorithm owner, CancellationToken cancellationToken)
         {
             for (var i = 0; i < names.Count; i++)
@@ -1126,6 +1173,23 @@ internal static class PropertyDependencyGraphBuilder
         internal bool OwnSetsHoldNoNamesOrReferences
             => (_visiblePropertyDependencyNames?.Count ?? 0) == 0 && (_pendingReferences?.Count ?? 0) == 0;
 
+        /// <summary>Whether this seed's OWN sets hold no pending reference.</summary>
+        internal bool OwnSetsHoldNoReferences => (_pendingReferences?.Count ?? 0) == 0;
+
+        /// <summary>
+        /// PATH PARTS (exposure settlement, implementation only): whether no pending reference of this seed's OWN sets binds
+        /// an owner of its own, so folding never narrows one (<see cref="PendingReferenceSet.BindsNoOwners"/>).
+        /// </summary>
+        internal bool OwnReferencesBindNoOwners => _pendingReferences?.BindsNoOwners ?? true;
+
+        /// <summary>
+        /// PATH PARTS (exposure anchoring, implementation only): whether this seed's OWN sets hold no visible name and only
+        /// pending references every level expansion keeps as they are (<see cref="PendingReferenceSet.StaysAtEveryExpansion"/>),
+        /// so the expansion at a level only copies them and qualifies the required names the level binds.
+        /// </summary>
+        internal bool OwnSetsStayAtEveryExpansion
+            => (_visiblePropertyDependencyNames?.Count ?? 0) == 0 && (_pendingReferences?.StaysAtEveryExpansion ?? true);
+
         /// <summary>The entries of this seed's OWN sets (its required names and owner-qualified parameters, here).</summary>
         internal int OwnRequirementCount
             => (_requiredAncestorOwnedParameterNames?.Count ?? 0) + (_ownerQualifiedParameters?.Count ?? 0);
@@ -1141,15 +1205,27 @@ internal static class PropertyDependencyGraphBuilder
         /// <summary>
         /// QUALIFIED SEED PARTS (exposure anchoring, implementation only): what <see cref="ExpandAtLevel"/> makes of this
         /// seed at a level whose algorithm <paramref name="owner"/> binds <paramref name="sharedNames"/>, WITHOUT
-        /// folding, for a seed that holds no visible name and no pending reference here or in any part. The caller has
-        /// already found the names this level binds and will attach the qualified children.
+        /// folding, for a seed that holds no visible name here or in any part, and no pending reference the expansion would
+        /// replace (PATH PARTS: the caller checks that each one stays as it is). The caller has already found the names this
+        /// level binds and will attach the qualified children.
         /// </summary>
         internal SummarySeed QualifiedOwnSets(Algorithm owner, List<string>? sharedNames, CancellationToken cancellationToken)
         {
-            if (!OwnSetsHoldNoNamesOrReferences)
-                throw new InvalidOperationException("Only a seed without visible names or pending references is qualified part by part.");
+            if ((_visiblePropertyDependencyNames?.Count ?? 0) != 0)
+                throw new InvalidOperationException("Only a seed without visible names is qualified part by part.");
             var qualified = new SummarySeed();
             var index = 0;
+            // PATH PARTS: pending references the expansion keeps as they are (the caller has checked that it would) are
+            // copied in their order, so the copy folds to the same references in the same order.
+            if (_pendingReferences is { Count: > 0 } references)
+            {
+                qualified._pendingReferences = new PendingReferenceSet();
+                foreach (var reference in references)
+                {
+                    if ((index++ & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    qualified._pendingReferences.Add(reference);
+                }
+            }
             if (_requiredAncestorOwnedParameterNames is { Count: > 0 } required)
             {
                 qualified._requiredAncestorOwnedParameterNames = new(required.Count, StringComparer.Ordinal);
@@ -1968,7 +2044,7 @@ internal static class PropertyDependencyGraphBuilder
             if (reference is not PendingReference pending) return false;
             UseContext();
             var origin = pending.Origin;
-            if (pending.OpenPath || pending.Selection != PendingSelection.Lexical || pending.Members.Count != 0 || pending.BoundOwners.Count != 0
+            if (!pending.IsBareLexicalName || pending.BoundOwners.Count != 0
                 || !ReferenceEquals(origin.Facts, level.Facts) || origin.Facts.Facts(origin.Key)?.Body is null)
                 return false;
             var scope = LookupScope(origin);
@@ -3427,6 +3503,9 @@ internal static class PropertyDependencyGraphBuilder
         // reads a name or a reference outside a cycle.
         var holdsMembers = !MemberSeedsCopiedForTesting.Value;
         HeldMemberSeeds? held = null;
+        // PATH SHARES (TryPathShareMemberSeed): the fold budget of each path share this solve made.
+        var pathShares = holdsMembers && !MemberPathSharesCopiedForTesting.Value;
+        Dictionary<SummarySeed, int>? pathShareBudgets = null;
         while (worklist.TryDequeue(out var index))
         {
             memos.Observations?.RecordSummaryMemberEvaluation();
@@ -3496,6 +3575,9 @@ internal static class PropertyDependencyGraphBuilder
             var baseSeed = baseSeeds[index];
             if (TryShareMemberSeed(baseSeed, recorded, level) is { } shared)
                 return shared;
+            if (pathShares && inCycle?[index] != true
+                && TryPathShareMemberSeed(baseSeed, recorded, level, pathShareBudgets ??= new(ReferenceEqualityComparer.Instance)) is { } pathShared)
+                return pathShared;
 
             var key = contents[index] ??= SeedContent.Of(baseSeed, memos.Observations);
             expansions ??= new(SeedContent.Comparer);
@@ -3543,6 +3625,14 @@ internal static class PropertyDependencyGraphBuilder
     /// by production code.
     /// </summary>
     internal static readonly AsyncLocal<bool> MemberSolveInDiscoveryOrderForTesting = new();
+
+    /// <summary>
+    /// TEST SEAM (<c>ExposurePathPartTests</c>): while set on the calling flow, the member solver makes no PATH SHARE
+    /// (<see cref="TryPathShareMemberSeed"/>): a member that reads one predecessor and carries pending references takes the
+    /// full expansion, which copies the predecessor and folds it, the union every path share must equal in content and
+    /// reference order. Never set by production code.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> MemberPathSharesCopiedForTesting = new();
 
     /// <summary>
     /// The member solver's worklist (<see cref="SolveMemberSeeds"/>). Each evaluation unit is RANKED by its position in the
@@ -3796,6 +3886,130 @@ internal static class PropertyDependencyGraphBuilder
             ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
         delta.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
         return shared is null ? delta : delta.AbsorbCompleted(shared);
+    }
+
+    /// <summary>
+    /// PATH SHARES (November 2026; implementation only, no requirement, classification, diagnostic or Lean rule): the
+    /// expansion of a member outside a cycle whose base seed carries pending references and reads ONE distinct nonempty
+    /// member seed of the level (every visible name a member, the others empty), built by HOLDING that seed instead of
+    /// copying it. The full expansion (<see cref="ExpandAtLevel"/>, union mode) writes the base seed's requirements, then
+    /// the member's content, then each base reference anchored at the level, and qualifies the names the level binds; the
+    /// member is already its own expansion at the level, so the qualification distributes over the union and qualifies
+    /// nothing of the member's. A path share holds the base requirements, qualified, in its own sets, then the member and
+    /// then a DELTA seed with the anchored references, as parts: a fold writes its own sets, then each part depth first in
+    /// order, so the same entries are written in the same order, and the references keep the union's order and the narrowing
+    /// of a key written twice (MEMBERS BY REFERENCE: ORDER). A base reference that selects a member of the level (which the
+    /// expansion would replace by that member's seed) leaves the member to the full expansion, and so does a predecessor
+    /// the full expansion would copy anyway (a flat seed of at most <see cref="SummarySeed.CopiedCompletedEntries"/>
+    /// entries) or one whose fold budget is spent.
+    /// <para>THE FOLD BUDGET. A reader that folds a path share walks its chain of held predecessors. A flat predecessor's
+    /// budget is its entry count, and a path share's is its predecessor's less its two parts; a member whose budget would
+    /// fall below zero takes the full expansion, which folds the chain into a flat seed of at least that width. Along the
+    /// chain a fold therefore walks fewer parts than the flat seed it ends at holds entries, and a chain whose width keeps
+    /// growing folds at widths that grow geometrically.</para>
+    /// </summary>
+    private static SummarySeed? TryPathShareMemberSeed(SummarySeed baseSeed, RecordingMemberSeeds seeds, LevelContext level,
+        Dictionary<SummarySeed, int> budgets)
+    {
+        if (baseSeed.PendingReferences.Count == 0 || baseSeed.VisiblePropertyDependencyNames.Count == 0)
+            return null;
+
+        SummarySeed? held = null;
+        var memo = level.Memos.SharedMemo;
+        var visited = 0;
+        foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+        {
+            if ((visited++ & 255) == 0) memo.CancellationToken.ThrowIfCancellationRequested();
+            if (!seeds.Seeds.TryGetValue(name, out var member))
+                return null;
+            if (member.IsEmptyWithoutFolding())
+                continue;
+            if (held is not null && !ReferenceEquals(held, member))
+                return null;
+            held = member;
+        }
+
+        if (held is null || held.AbsorbedPartsWithoutFolding is null && held.OwnEntryCount <= SummarySeed.CopiedCompletedEntries)
+            return null;
+        var budget = PathShareBudget(held, budgets, memo.CancellationToken) - 2L;
+        if (budget < 0)
+            return null;
+
+        var context = level.Memos.CompletedContext;
+        foreach (var pending in baseSeed.PendingReferences)
+        {
+            if ((visited++ & 255) == 0) memo.CancellationToken.ThrowIfCancellationRequested();
+            if (memo.SelectsLocalMember(pending, context) && seeds.Seeds.ContainsKey(pending.Head))
+                return null;
+        }
+
+        // The full expansion's cancellation checkpoint (ExpandAtLevel observes one on entry).
+        memo.ObserveCancellation();
+        foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+        {
+            if ((visited++ & 255) == 0) memo.CancellationToken.ThrowIfCancellationRequested();
+            seeds.Reads.Add(name);
+        }
+        var value = new SummarySeed(baseSeed.RequiredAncestorOwnedParameterNames,
+            ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
+        value.QualifyOwnParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
+        var delta = new SummarySeed();
+        foreach (var pending in baseSeed.PendingReferences)
+        {
+            if ((visited++ & 255) == 0) memo.CancellationToken.ThrowIfCancellationRequested();
+            memo.UseContext();
+            delta.AddPendingReference(pending.At(context), keepHeldParts: false);
+        }
+
+        value.AbsorbReference(held);
+        value.AbsorbReference(delta);
+        budgets[value] = (int)budget;
+        // A delta is a leaf of the share's own entries: it limits no chain (its references are entries of every fold).
+        budgets[delta] = int.MaxValue;
+        level.Memos.Observations?.RecordSummaryMemberPathShare();
+        return value;
+    }
+
+    // PATH SHARES: the fold budget of a member seed — its entry count when it holds no part, the one recorded for a path share
+    // or a delta, otherwise the least budget among its parts less its part count (MEMBERS BY REFERENCE's budget, which a
+    // seed a share or a copy made holding parts has too). Each seed is decided once per solve, in post-order on the heap.
+    private static long PathShareBudget(SummarySeed root, Dictionary<SummarySeed, int> budgets, CancellationToken cancellationToken)
+    {
+        if (root.AbsorbedPartsWithoutFolding is null)
+            return root.OwnEntryCount;
+        if (budgets.TryGetValue(root, out var known))
+            return known;
+        var pending = new Stack<(SummarySeed Seed, bool PartsDone)>();
+        pending.Push((root, false));
+        while (pending.TryPop(out var entry))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (seed, partsDone) = entry;
+            if (seed.AbsorbedPartsWithoutFolding is not { } parts || budgets.ContainsKey(seed))
+                continue;
+            if (!partsDone)
+            {
+                pending.Push((seed, true));
+                for (var i = parts.Count - 1; i >= 0; i--)
+                {
+                    if ((i & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    if (parts[i].AbsorbedPartsWithoutFolding is not null && !budgets.ContainsKey(parts[i]))
+                        pending.Push((parts[i], false));
+                }
+                continue;
+            }
+
+            long least = int.MaxValue;
+            for (var i = 0; i < parts.Count; i++)
+            {
+                if ((i & 255) == 0) cancellationToken.ThrowIfCancellationRequested();
+                var part = parts[i];
+                least = Math.Min(least, budgets.TryGetValue(part, out var partBudget) ? partBudget : part.OwnEntryCount);
+            }
+            budgets.Add(seed, (int)Math.Max(int.MinValue + 1L, least - parts.Count));
+        }
+
+        return budgets[root];
     }
 
     // Exact content equality of a member's new and previous seed, without folding when structure decides.

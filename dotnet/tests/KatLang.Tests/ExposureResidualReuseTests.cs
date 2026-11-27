@@ -36,6 +36,9 @@ using Mode = PropertyExposureResolver.SettlementShareMode;
 /// qualified name by name while anchored through a level that binds parameters, and read once per requirement when settled
 /// (output rows reading K chained library members under their owner: K² / 2 names, 404 MB at K = 2,000). Each part is now
 /// qualified once per level and kept, and each settlement looks each owner up once, with the folded walk's record.</item>
+/// <item>PATH PARTS (2026-11-27; <see cref="ExposurePathPartTests"/>): the path control below (<c>path</c>: parts that hold
+/// paths) was settled from the folded seed, every predecessor path again per row (K² / 2 frames). Path-bearing members now
+/// hold their one predecessor, such seeds are anchored part by part, and their parts are settled one by one and kept.</item>
 /// <item>OFF-CHAIN (<c>exposure-offchain-terminal-disables-footprints</c>): NOT repaired. A settlement with an owner
 /// lookup off its site's chain answers its exact key only, because extending it changes the metadata of THE OFF-CHAIN
 /// GAP's programs, an owner decision. Its negative controls and the latent <c>LocalOnlyProperty</c> are pinned here.</item>
@@ -1268,12 +1271,13 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
 
     /// <summary>
     /// NEGATIVE CONTROLS (the levels between the library and the reader). A seed is carried through an intervening level
-    /// unchanged only when that level binds no parameter and the seed holds no name or path. Here the outer intervening
-    /// block binds <c>p3</c> itself, so the members' <c>p3</c> is qualified at that block (whose activation no reader holds)
-    /// instead of reaching <c>F</c>'s; or the members read <c>Q.X</c> and the inner block declares its own <c>Q</c>, which
-    /// that level selects instead of <c>F</c>'s. Those seeds are expanded at every level as before: the metadata is the
-    /// former walk's, the readers do not require <c>F</c>'s <c>p3</c>, and none requires <c>F</c>'s <c>y</c> through
-    /// <c>F</c>'s <c>Q</c>. Carried through, they would.
+    /// unchanged only when that level binds no parameter and the seed holds no name, and no reference an expansion could
+    /// replace (PATH PARTS: a member path stays). Here the outer intervening block binds <c>p3</c> itself, so the members'
+    /// <c>p3</c> is qualified at that block (whose activation no reader holds) instead of reaching <c>F</c>'s; or the members
+    /// read <c>Q.X</c> and the inner block declares its own <c>Q</c>, which the path, anchored at the library, selects
+    /// instead of <c>F</c>'s whether the seed is expanded at each level or carried through with the path unchanged. The
+    /// metadata is the former walk's, the readers do not require <c>F</c>'s <c>p3</c>, and none requires <c>F</c>'s <c>y</c>
+    /// through <c>F</c>'s <c>Q</c>.
     /// </summary>
     [Theory]
     [InlineData("parameter")]
@@ -1590,9 +1594,10 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
 
     /// <summary>
     /// NEGATIVE CONTROLS (what QUALIFIED SEED PARTS take). Parts that hold a path — every member also reads <c>Q.X{i}</c>, a
-    /// pending reference in every part (<c>path</c>) — are neither qualified part by part when anchored nor read owner by
-    /// owner when settled: the seed is expanded, folded and its paths settled as before (no part copied, no owner looked up
-    /// for parts), and the metadata is the former walk's. Parts that hold required names alone, read by members of the
+    /// pending reference in every part (<c>path</c>) — are never read owner by owner when settled (no owner looked up for
+    /// parts): PATH PARTS (<c>ExposurePathPartTests</c>) qualifies them part by part when anchored through <c>F</c> and settles
+    /// them one by one, and the metadata is the former walk's (here with SEED PARTS off, which also turns PATH PARTS off
+    /// while the member solve still makes path shares). Parts that hold required names alone, read by members of the
     /// library's own owner (the navigated chain with output <c>0</c>), keep the name-only SEED PARTS route.
     /// </summary>
     [Fact]
@@ -1601,8 +1606,9 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
         const int Members = 24;
         var pathSource = OwnerQualifiedRows(Members, "path");
         var path = AssertSameAsFormerWalk(pathSource, PropertyExposureResolver.SeedPartsFoldedForTesting).Production;
-        Assert.Equal(0, path.SettlementQualifiedPartCopies);
         Assert.Equal(0, path.SettlementQualifiedPartOwnerLookups);
+        Assert.True(path.SettlementPathPartAnchorings > 0);
+        Assert.True(path.SettlementPathPartSeeds > 0);
         ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(Root(pathSource), "F"));
         Assert.Equal(Rows(Members, i => i * (i + 1) / 2 + Enumerable.Range(1, i).Sum(j => 7 + j)), Value(pathSource));
 
@@ -1639,12 +1645,13 @@ public sealed class ExposureResidualReuseTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// NEGATIVE CONTROL (a path in a PART, at an owner that binds parameters; the shape of the targeted generator's
+    /// CONTROL (a path in a PART, at an owner that binds parameters; the shape of the targeted generator's
     /// <c>q3_00698</c>). <c>D = G.Lib.P{K}</c> in <c>F</c> reads <c>G</c>'s library without calling <c>G</c>, so the member's
     /// seed is anchored through <c>G</c>'s level, which binds every <c>p{i}</c>. <c>P1</c> reads the path <c>Q.X</c>, and the
-    /// late members hold it by reference: their own sets hold names only, but a part holds the path. Such a seed is expanded
-    /// at <c>G</c>'s level as before, never qualified part by part (a part with a path is no requirement set), and <c>D</c>
-    /// requires <c>F</c>'s <c>y</c> through the path while <c>G</c>'s names charge nothing off its chain.
+    /// late members hold it by reference: their own sets hold names only, but a part holds the path. QUALIFIED SEED PARTS
+    /// does not take such a seed (a part with a path is no requirement set); PATH PARTS qualifies it part by part, copying
+    /// the path with each part, since no expansion replaces a member path. <c>D</c> requires <c>F</c>'s <c>y</c> through the
+    /// path while <c>G</c>'s names charge nothing off its chain, as in the former walk.
     /// </summary>
     [Theory]
     [InlineData("X")]

@@ -30,12 +30,24 @@ public sealed class SharedPredecessorExpansionTests(ITestOutputHelper output)
         finally { MemberSeedsCopiedForTesting.Value = previous; }
     }
 
+    /// <summary>
+    /// The eager parse of <paramref name="source"/> without PATH SHARES (<see cref="MemberPathSharesCopiedForTesting"/>),
+    /// on both sides of every comparison here: a member that carries a reference and reads one predecessor would otherwise
+    /// hold it in production and not in the copied union, which these counters compare. The path shares have their own
+    /// oracle and counters (<c>ExposurePathPartTests</c>, which also reads <see cref="PathReaders"/>).
+    /// </summary>
     private static (string Diagnostics, string Metadata, FrontEndTraversalObservations Observations) Parse(string source)
     {
-        var observations = new FrontEndTraversalObservations();
-        var parsed = Parser.ParseObserved(source, options: null, observations);
-        var diagnostics = string.Join("\n", parsed.Diagnostics.Select(d => $"{d.Code}/{d.Severity}@{d.Span}: {d.Message}"));
-        return (diagnostics, ExposureSettlementFrameChargeTests.Metadata(parsed.Root), observations);
+        var previous = MemberPathSharesCopiedForTesting.Value;
+        MemberPathSharesCopiedForTesting.Value = true;
+        try
+        {
+            var observations = new FrontEndTraversalObservations();
+            var parsed = Parser.ParseObserved(source, options: null, observations);
+            var diagnostics = string.Join("\n", parsed.Diagnostics.Select(d => $"{d.Code}/{d.Severity}@{d.Span}: {d.Message}"));
+            return (diagnostics, ExposureSettlementFrameChargeTests.Metadata(parsed.Root), observations);
+        }
+        finally { MemberPathSharesCopiedForTesting.Value = previous; }
     }
 
     /// <summary>
@@ -113,7 +125,7 @@ public sealed class SharedPredecessorExpansionTests(ITestOutputHelper output)
     /// and with <paramref name="secondOrder"/> <c>S(i) = R(i) + Lib.Y</c>, which reads a seed carrying a reference and so
     /// copies and folds it: its fold walks <c>P(i)</c>'s held parts.
     /// </summary>
-    private static string PathReaders(int members, int width, bool secondOrder)
+    internal static string PathReaders(int members, int width, bool secondOrder)
     {
         var body = TwoPredecessorChain(members, "0", width);
         var readers = new StringBuilder("Lib = {\npublic X = 1\npublic Y = 2\n}\n");
