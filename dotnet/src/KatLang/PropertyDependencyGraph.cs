@@ -321,16 +321,26 @@ internal static class DependencyFirstOrder
 
     /// <summary>
     /// The strongly connected components of the equations over the static read edges, dependency
-    /// first (Tarjan's order: a component is emitted after every component it reads). Iterative.
+    /// first (Tarjan's order: a component is emitted after every component it reads), each listing its
+    /// members in the order the walk discovered them. Iterative.
     /// </summary>
-    public static List<List<int>> Components(int count, Func<int, bool> isEquation, Func<int, IEnumerable<int>> reads)
+    /// <param name="count">The number of equations.</param>
+    /// <param name="isEquation">Whether an index is an equation to order (a name's representative).</param>
+    /// <param name="reads">The equation indices an equation statically reads.</param>
+    /// <param name="finished">Each equation's position in the walk's postorder, the order <see cref="Of"/> returns: within
+    /// one component, ascending positions put every member after the members it reads, the cycles broken where the walk
+    /// closed them (an index that is not an equation keeps 0).</param>
+    public static List<List<int>> Components(int count, Func<int, bool> isEquation, Func<int, IEnumerable<int>> reads,
+        out int[] finished)
     {
         var components = new List<List<int>>();
         var index = new int[count];
         var lowLink = new int[count];
         var onStack = new bool[count];
+        finished = new int[count];
         Array.Fill(index, -1);
         var nextIndex = 0;
+        var nextFinished = 0;
         var stack = new Stack<int>();
         var frames = new Stack<(int Node, IEnumerator<int> Reads)>();
         for (var root = 0; root < count; root++)
@@ -355,6 +365,7 @@ internal static class DependencyFirstOrder
 
                 frame.Reads.Dispose();
                 frames.Pop();
+                finished[frame.Node] = nextFinished++;
                 if (frames.TryPeek(out var caller))
                     lowLink[caller.Node] = Math.Min(lowLink[caller.Node], lowLink[frame.Node]);
                 if (lowLink[frame.Node] != index[frame.Node])
@@ -3291,6 +3302,18 @@ internal static class PropertyDependencyGraphBuilder
     /// qualified; a fold only moves what it holds into its own sets), and every consumer clones a member seed
     /// before accumulating, so sharing is unobservable. Change detection compares structure first (own sets
     /// and the seeds held by reference) and folds only when that cannot decide.</para>
+    ///
+    /// <para>SCHEDULE (MIXED-CYCLE SCHEDULE, November 27 2026; implementation only). Every evaluation unit is ranked in its
+    /// first-evaluation order — components dependency first, and the members of a component solved member by member (a
+    /// MIXED component, whose members do not all have the share shape) in the postorder of the same walk, so that each
+    /// member follows the members it reads except across the edges that close a cycle — and the worklist always evaluates
+    /// the queued unit of least rank (<see cref="MemberWorklist"/>). A change therefore travels a component in rank order,
+    /// and a component converges before any unit that reads it is first evaluated: a chain closed into a cycle converges
+    /// in two passes. The walk's discovery order, used before, put such a chain's members before the members they read,
+    /// so each pass moved a change about two members: K² / 2 evaluations of full width over a cycle of K. The fixed point's
+    /// content does not depend on the schedule; the order of the pending references in the seeds of a mixed component, and
+    /// whether a later expansion holds a seed or copies it, do, and with them the settlement frames and part charges of
+    /// some programs (evaluator-and-hosting.md, MIXED-CYCLE SCHEDULE).</para>
     /// </summary>
     private static void SolveMemberSeeds(
         Algorithm algorithm,
@@ -3366,14 +3389,16 @@ internal static class PropertyDependencyGraphBuilder
         // qualified here, united with the seeds the component reads from outside. It is solved as ONE
         // unit (its first member stands for it) instead of propagating each member's requirements
         // around the cycle member by member.
-        var components = DependencyFirstOrder.Components(properties.Count, i => equationOf[properties[i].Name] == i, StaticReads);
+        var components = DependencyFirstOrder.Components(properties.Count, i => equationOf[properties[i].Name] == i, StaticReads,
+            out var finished);
         var componentOf = new int[properties.Count];
         Array.Fill(componentOf, -1);
-        var queue = new Queue<int>();
-        var queued = new bool[properties.Count];
+        var discoveryOrder = MemberSolveInDiscoveryOrderForTesting.Value;
+        var worklist = new MemberWorklist(properties.Count, firstInFirstOut: discoveryOrder);
         // The members evaluated one by one in a cycle (several members, or one that reads itself): they are evaluated
         // again while the cycle converges, and each change detection compares their seeds whole, so they keep the
-        // folded seed of a full expansion (MEMBERS BY REFERENCE holds members only for the others).
+        // folded seed of a full expansion (MEMBERS BY REFERENCE holds members only for the others). A MIXED component's
+        // members are ranked dependency first too, in the walk's postorder (see the summary).
         for (var c = 0; c < components.Count; c++)
         {
             var component = components[c];
@@ -3381,17 +3406,17 @@ internal static class PropertyDependencyGraphBuilder
             {
                 foreach (var member in component)
                     componentOf[member] = c;
-                queue.Enqueue(component[0]);
-                queued[component[0]] = true;
+                worklist.Add(component[0]);
                 continue;
             }
 
+            if (component.Count > 1 && !discoveryOrder)
+                component.Sort((left, right) => finished[left].CompareTo(finished[right]));
             foreach (var member in component)
             {
                 if (component.Count > 1)
                     (inCycle ??= new bool[properties.Count])[member] = true;
-                queue.Enqueue(member);
-                queued[member] = true;
+                worklist.Add(member);
             }
         }
 
@@ -3402,9 +3427,8 @@ internal static class PropertyDependencyGraphBuilder
         // reads a name or a reference outside a cycle.
         var holdsMembers = !MemberSeedsCopiedForTesting.Value;
         HeldMemberSeeds? held = null;
-        while (queue.TryDequeue(out var index))
+        while (worklist.TryDequeue(out var index))
         {
-            queued[index] = false;
             memos.Observations?.RecordSummaryMemberEvaluation();
             recorded.Reads.Clear();
             var component = componentOf[index];
@@ -3439,11 +3463,7 @@ internal static class PropertyDependencyGraphBuilder
                 foreach (var dependent in dependents)
                 {
                     memos.Observations?.RecordSummaryMemberReaderNotification();
-                    if (!queued[dependent])
-                    {
-                        queued[dependent] = true;
-                        queue.Enqueue(dependent);
-                    }
+                    worklist.Enqueue(dependent);
                 }
             }
         }
@@ -3515,6 +3535,84 @@ internal static class PropertyDependencyGraphBuilder
     /// the held representation must equal in content and reference order. Never set by production code.
     /// </summary>
     internal static readonly AsyncLocal<bool> MemberSeedsCopiedForTesting = new();
+
+    /// <summary>
+    /// TEST SEAM (<c>MixedCycleMemberScheduleTests</c>): while set on the calling flow, the member solver keeps the schedule
+    /// it had before November 27 2026 — a mixed component's members queued in the order the walk discovered them, and the
+    /// worklist taken first in, first out — the oracle the ranked schedule must equal in every member's content. Never set
+    /// by production code.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> MemberSolveInDiscoveryOrderForTesting = new();
+
+    /// <summary>
+    /// The member solver's worklist (<see cref="SolveMemberSeeds"/>). Each evaluation unit is RANKED by its position in the
+    /// first-evaluation order and is queued at most once at a time; the solver always takes the queued unit of least rank.
+    /// A unit re-queued because a member seed it read changed is therefore evaluated before every unit ranked after it: a
+    /// component converges before any unit that reads it is first evaluated, and a change reaches a component's later
+    /// members before they are evaluated again. With nothing re-queued (an acyclic level) the order is the first-evaluation
+    /// order itself. The test seam's schedule takes the units first in, first out instead.
+    /// </summary>
+    private sealed class MemberWorklist
+    {
+        private readonly int[] _units;
+        private readonly int[] _ranks;
+        private readonly bool[] _queued;
+        private readonly Queue<int>? _arrivals;
+        private int _ranked;
+        private int _least;
+
+        public MemberWorklist(int capacity, bool firstInFirstOut)
+        {
+            _units = new int[capacity];
+            _ranks = new int[capacity];
+            _queued = new bool[capacity];
+            _arrivals = firstInFirstOut ? new Queue<int>() : null;
+        }
+
+        /// <summary>Ranks <paramref name="unit"/> after every unit added before it, and queues it.</summary>
+        public void Add(int unit)
+        {
+            _ranks[unit] = _ranked;
+            _units[_ranked++] = unit;
+            Enqueue(unit);
+        }
+
+        /// <summary>Queues a ranked unit unless it is queued already.</summary>
+        public void Enqueue(int unit)
+        {
+            var rank = _ranks[unit];
+            if (_queued[rank])
+                return;
+            _queued[rank] = true;
+            if (_arrivals is not null)
+                _arrivals.Enqueue(unit);
+            else if (rank < _least)
+                _least = rank;
+        }
+
+        public bool TryDequeue(out int unit)
+        {
+            if (_arrivals is not null)
+            {
+                if (!_arrivals.TryDequeue(out unit))
+                    return false;
+                _queued[_ranks[unit]] = false;
+                return true;
+            }
+
+            while (_least < _ranked && !_queued[_least])
+                _least++;
+            if (_least == _ranked)
+            {
+                unit = -1;
+                return false;
+            }
+
+            _queued[_least] = false;
+            unit = _units[_least++];
+            return true;
+        }
+    }
 
     /// <summary>
     /// MEMBERS BY REFERENCE (<see cref="ExpandAtLevel"/>): the member seeds of ONE level solve that an expansion may hold
