@@ -717,9 +717,7 @@ theorem linkDisc_noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : P
   unfold noteMemberAccess
   split
   · exact linkDisc_pure ()
-  · split
-    · exact linkDisc_noteCellInput _ _ _
-    · exact linkDisc_pure ()
+  · exact linkDisc_cellInputsStep _
 
 /-- The judgment of a reuse is a step of the input records: a refusal in the starting state, or the
     admission of the reader. -/

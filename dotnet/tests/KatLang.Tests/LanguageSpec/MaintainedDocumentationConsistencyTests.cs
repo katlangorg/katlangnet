@@ -507,6 +507,13 @@ public class MaintainedDocumentationConsistencyTests
             @"\bgrowth\b[^.;]{0,120}\babsorbed\b",
             "elaboration depth growth absorbed by the structural ceiling's margin instead of gated (superseded 2026-11-26)"
         },
+        // Returned callables across detached reads (2026-11-27): an exported evaluation is detached from its ENCLOSING
+        // CALLS, the activations of its binding's declaring chain, not from every activation that exists when it starts,
+        // so no current text says that every earlier activation is detached in it.
+        {
+            @"\bevery\s+activation\s+recorded\s+before\s+(?:the|an?|that)\s+(?:exported\s+)?evaluation\s+started\s+is\s+detached\b|\bdetached\s+from\s+every\s+activation\s+that\s+exists\b|\breads\s+no\s+input\s+of\s+an\s+activation\s+that\s+existed\s+when\b",
+            "an exported evaluation detached from every activation that exists when it starts (superseded 2026-11-27 by its enclosing calls)"
+        },
         // The stratified structure of an `open` target has no length limit (2026-11-27): an admitted acyclic chain of
         // any length opens its target, and only a reference reached twice on the walk's current chain is the alias
         // cycle, so no current text calls the walk fuel-bounded or a long chain the alias cycle.

@@ -748,9 +748,7 @@ theorem pubDisc_noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : Pr
   unfold noteMemberAccess
   split
   · exact pubDisc_pure ()
-  · split
-    · exact pubDisc_noteCellInput _ _ _
-    · exact pubDisc_pure ()
+  · exact pubDisc_cellInputsStep _
 
 /-- The judgment of a reuse is a step of the input records: a refusal in the starting state, or the
     admission of the reader. -/

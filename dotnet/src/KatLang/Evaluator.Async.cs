@@ -2108,8 +2108,8 @@ public static partial class Evaluator
     {
         // The exported evaluation is SERVED while it runs (ledger R-1; Lean `servingDetached`): an input
         // read it demands in a retained cell's computation, however deferred, is judged against its watermark.
-        var detached = DetachedEvaluation(ctx, valEnv, out var values);
-        detached.Budget.EnterServing(detached.DetachedBefore);
+        var detached = DetachedEvaluation(ctx, valEnv, resolvedAlgorithm.Parent, out var values);
+        detached.Budget.EnterServing(detached.ServingOwners);
         try { return await EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, detached, values).ConfigureAwait(FoldTrampoline.CaptureFoldContext); }
         finally { detached.Budget.ExitServing(); }
     }

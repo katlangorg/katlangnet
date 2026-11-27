@@ -507,18 +507,15 @@ internal sealed class NeedCell : NeedNode
         internal ObservationScope? Outer { get; }
         internal ResolutionRecord? Record { get; }
         internal NeedCell? Pending { get; private set; }
-        // Both channels carry a nonnegative watermark. Its complement denotes CALLABLE so
-        // carrying it across a retry needs only the original observation scope's one word.
-        private long _pendingWatermark;
-        internal Channel PendingChannel => _pendingWatermark < 0 ? Channel.Callable : Channel.Value;
-        internal long PendingWatermark => _pendingWatermark < 0 ? ~_pendingWatermark : _pendingWatermark;
+        internal Channel PendingChannel { get; private set; }
+        internal Evaluator.DetachedOwnerSet? PendingOwners { get; private set; }
 
         // Identity resolution is synchronous and non-initiating. Keep the brackets it enters
         // here until it records a pending operation or returns, even when another thread is
-        // observing the same run. Nested observations inherit the enclosing reader's watermark.
-        private Stack<(EvaluationBudget Budget, long Watermark)>? _serving;
+        // observing the same run. Nested observations inherit the enclosing reader's detached owners.
+        private Stack<(EvaluationBudget Budget, Evaluator.DetachedOwnerSet? Owners)>? _serving;
 
-        internal long ServingDetached(EvaluationBudget budget)
+        internal Evaluator.DetachedOwnerSet? ServingDetached(EvaluationBudget budget)
         {
             for (var scope = this; scope is not null; scope = scope.Outer)
             {
@@ -526,14 +523,14 @@ internal sealed class NeedCell : NeedNode
                 foreach (var entry in entries)
                 {
                     if (ReferenceEquals(entry.Budget, budget))
-                        return entry.Watermark;
+                        return entry.Owners;
                 }
             }
-            return 0;
+            return null;
         }
 
-        internal void EnterServing(EvaluationBudget budget, long watermark)
-            => (_serving ??= new()).Push((budget, Math.Max(ServingDetached(budget), watermark)));
+        internal void EnterServing(EvaluationBudget budget, Evaluator.DetachedOwnerSet? owners)
+            => (_serving ??= new()).Push((budget, Evaluator.DetachedOwnerSet.Union(ServingDetached(budget), owners)));
 
         internal void ExitServing() => _serving!.Pop();
 
@@ -558,9 +555,9 @@ internal sealed class NeedCell : NeedNode
             {
                 Pending = cell;
                 // ResolveAsync executes this operation after the synchronous observation unwinds.
-                // Carry the watermark that applied at the demand or projection itself.
-                var watermark = cell._budget?.ServingDetached ?? 0;
-                _pendingWatermark = channel == Channel.Callable ? ~watermark : watermark;
+                // Carry the detached owners that applied at the demand or projection itself.
+                PendingOwners = cell._budget?.ServingDetached;
+                PendingChannel = channel;
             }
             return EvalError.ObservationPending.Instance;
         }
@@ -988,19 +985,19 @@ internal sealed class NeedCell : NeedNode
     /// (its flight is the one <see cref="ProjectCallable"/> joins); an identity-only projection
     /// evaluates nothing, so it is the synchronous projection.
     /// </summary>
-    internal ValueTask<EvalResult<Algorithm?>> ProjectCallableAsync(long servingWatermark = 0)
-        => _projection is ProjectionNode node ? ProjectRuntimeAsync(node, servingWatermark) : new(ProjectCallable());
+    internal ValueTask<EvalResult<Algorithm?>> ProjectCallableAsync(Evaluator.DetachedOwnerSet? servingOwners = null)
+        => _projection is ProjectionNode node ? ProjectRuntimeAsync(node, servingOwners) : new(ProjectCallable());
 
-    // A positive watermark came from this cell's budget in ObservationScope.MarkPending.
+    // A served owner set came from this cell's budget in ObservationScope.MarkPending.
     // Both channels restore it before making the outcome available to a waiter.
     private ValueTask<EvalResult<T>> ComputeObservedStepAsync<TState, T>(
-        long watermark, TState state, Func<TState, ValueTask<EvalResult<T>>> compute)
-        => watermark == 0 ? compute(state) : ComputeDetachedStepAsync(watermark, state, compute);
+        Evaluator.DetachedOwnerSet? owners, TState state, Func<TState, ValueTask<EvalResult<T>>> compute)
+        => owners is null ? compute(state) : ComputeDetachedStepAsync(owners, state, compute);
 
     private async ValueTask<EvalResult<T>> ComputeDetachedStepAsync<TState, T>(
-        long watermark, TState state, Func<TState, ValueTask<EvalResult<T>>> compute)
+        Evaluator.DetachedOwnerSet? owners, TState state, Func<TState, ValueTask<EvalResult<T>>> compute)
     {
-        _budget!.EnterServing(watermark);
+        _budget!.EnterServing(owners);
         try { return await compute(state).ConfigureAwait(FoldTrampoline.CaptureFoldContext); }
         finally { _budget.ExitServing(); }
     }
@@ -1066,7 +1063,7 @@ internal sealed class NeedCell : NeedNode
         finally { node.RemoveDependency(parent); }
     }
 
-    private async ValueTask<EvalResult<Algorithm?>> ProjectRuntimeAsync(ProjectionNode node, long servingWatermark)
+    private async ValueTask<EvalResult<Algorithm?>> ProjectRuntimeAsync(ProjectionNode node, Evaluator.DetachedOwnerSet? servingOwners)
     {
         if (ObserveProjected(node, ObserveRun()) is { } known) return known;
         ThrowIfInitiatingWhileObserving();
@@ -1084,7 +1081,7 @@ internal sealed class NeedCell : NeedNode
             }
             if (task is null)
             {
-                await ProjectRuntimeComputationAsync(node, servingWatermark).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+                await ProjectRuntimeComputationAsync(node, servingOwners).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 return ProjectionStarterOutcome(node);
             }
             // A joined flight suspends this flow: its frames post their resumptions in an inline pump.
@@ -1099,7 +1096,7 @@ internal sealed class NeedCell : NeedNode
         finally { node.RemoveDependency(parent); }
     }
 
-    private async ValueTask ProjectRuntimeComputationAsync(ProjectionNode node, long servingWatermark)
+    private async ValueTask ProjectRuntimeComputationAsync(ProjectionNode node, Evaluator.DetachedOwnerSet? servingOwners)
     {
         // TWIN-ONLY (intentional difference from the synchronous ProjectRuntime): see StackHop.
         // The second condition is the flow rule, as in DemandAsync.
@@ -1109,7 +1106,7 @@ internal sealed class NeedCell : NeedNode
         try
         {
             CompleteProjection(node, RuntimeHelpers.TryEnsureSufficientExecutionStack()
-                ? await ComputeObservedStepAsync(servingWatermark, (Cell: this, Node: node), static state =>
+                ? await ComputeObservedStepAsync(servingOwners, (Cell: this, Node: node), static state =>
                     state.Cell._suspension is { } suspension
                         ? Evaluator.ProjectSuspendedCallableAsync(state.Cell, state.Cell.Source!, suspension)
                         : state.Node.ProjectAsync!()).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
@@ -1266,7 +1263,7 @@ internal sealed class NeedCell : NeedNode
     /// one suspended frame of its demand on the heap, not a second one below it; a <c>reduce</c> step waiting
     /// for its accumulator holds two such demands.
     /// </summary>
-    internal async ValueTask<EvalResult<Evaluator.CountedResult>> DemandAsync(long servingWatermark = 0)
+    internal async ValueTask<EvalResult<Evaluator.CountedResult>> DemandAsync(Evaluator.DetachedOwnerSet? servingOwners = null)
     {
         var terminal = ObserveRun();
         lock (this)
@@ -1304,7 +1301,7 @@ internal sealed class NeedCell : NeedNode
                 try
                 {
                     Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
-                        ? await ComputeObservedStepAsync(servingWatermark, this, static cell =>
+                        ? await ComputeObservedStepAsync(servingOwners, this, static cell =>
                             cell._suspension is { } suspension
                                 ? Evaluator.EvalSuspendedValueAsync(cell, suspension)
                                 : cell.ComputeAsync()).ConfigureAwait(FoldTrampoline.CaptureFoldContext)

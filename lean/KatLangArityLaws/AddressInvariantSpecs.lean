@@ -59,9 +59,7 @@ theorem noteMemberAccess_spec {P : Array NeedCell → Prop} {ctx : EvalCtx} {con
   unfold noteMemberAccess
   split
   · exact SoundI.pure () (fun _ _ => trivial)
-  · split
-    · exact noteCellInput_spec
-    · exact SoundI.pure () (fun _ _ => trivial)
+  · exact cellInputsStep_spec
 
 /-- The judgment of a reuse is a step of the input records. -/
 theorem judgeRetainedCellReuse_spec {P : Array NeedCell → Prop} {cell : Nat} {ctx : EvalCtx} :

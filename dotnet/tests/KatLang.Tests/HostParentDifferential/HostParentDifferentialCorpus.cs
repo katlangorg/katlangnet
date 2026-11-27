@@ -978,6 +978,44 @@ public static class HostParentDifferentialCorpus
 
             cases.Add(new("HP-21a", "the escaped element projects its alias under the element's detached watermark and refuses y before tick",
                 MisExposedSource(EscapedAliasCall, "F.P"), L("P")) { ExpectedTickCount = 0 });
+
+            // HP-23: RETURNED CALLABLES ACROSS DETACHED READS (November 2026). A detached evaluation detaches only the
+            // activations of the levels enclosing its binding (`EvalCtx.detachedOwners`), so the activation behind a
+            // callable a retained cell or another exported evaluation returned keeps supplying that callable's own
+            // inputs, whichever row came first; an input of an enclosing call is still refused. Positive cases are
+            // classified by the front end itself.
+            const string Returned = "Cap(meta r) = r\nBuild(z) = {\n  G(x) = x + z\n  Cap(G(0))\n}\nB = Build(5).Algorithm\nObserve = B(1) + 0\n";
+            const string ReturnedInner = "Cap(meta r) = r\nF(y) = {\n  Build(z) = {\n    G(x) = x + z\n    Cap(G(0))\n  }\n  B = Build(5).Algorithm\n  Observe = B(1) + 0\n  {0}\n}\n";
+            const string ReturnedReadingY = "Cap(meta r) = r\nF(y) = {\n  Build(z) = {\n    G(x) = x + z + y\n    Cap(G(0))\n  }\n  B = Build(5).Algorithm\n  Observe = B(1) + 0\n  {0}\n}\nF(1)\n";
+            Case("HP-23a", "returned callable: the row establishes B first, the detached Observe reads Build's z through it (formerly unknownName z)",
+                Classified(Returned + "B(2), Observe\n"), "Observe");
+            Case("HP-23b", "returned callable: the detached Observe first (S[6, 7] before and after)",
+                Classified(Returned + "Observe, B(2)\n"), "Observe");
+            Case("HP-23c", "returned callable inside a call of F, the row first: F's activation encloses Observe, Build's does not",
+                Classified(With(ReturnedInner, "B(2), Observe, y") + "F(1)\n"), "Observe");
+            Case("HP-23d", "returned callable inside fresh calls F(1), F(2), the sibling first",
+                Classified(With(ReturnedInner, "Observe, B(2), y") + "F(1), F(2)\n"), "Observe");
+            Case("HP-23e", "the callable of a call-reference value, C.Algorithm(2) first",
+                Classified("Cap(meta r) = r\nBuild(z) = {\n  G(x) = x + z\n  Cap(G(0))\n}\nC = Build(5)\nObserve = C.Algorithm(1) + 0\nC.Algorithm(2), Observe\n"), "Observe");
+            Case("HP-23f", "a local-only member of the callable's level, keyed on Build's activation, read by the callable for the detached Observe",
+                Classified("Cap(meta r) = r\nBuild(z) = {\n  L = z + 1\n  G(x) = x + L\n  Cap(G(0))\n}\nB = Build(5).Algorithm\nObserve = B(1) + 0\nB(2), Observe\n"), "Observe");
+            Case("HP-23g", "R-1: a local-only alias of the callable's level read Mk's y; the reuse judgment admits the detached Observe (dependsFor)",
+                Classified(Selector + "Mk(y) = {\n  C = Sel(y).Algorithm\n  G(x) = C(x) + 0\n  Cap(G(0))\n}\nB = Mk(1).Algorithm\nObserve = B(5) + 0\nB(5), Observe\n"), "Observe");
+            Case("HP-23h", "R-1: a retained cell's row invokes another cell's returned callable; the detached Observe reuses it",
+                Classified("Cap(meta r) = r\nBuild(z) = {\n  G(x) = x + z\n  Cap(G(0))\n}\nB2 = Build(5).Algorithm\nRe(w) = {\n  u = B2(w)\n  H(x) = x + w\n  if(u > 0, Cap(H(0)), Cap(H(1)))\n}\nB = Re(1).Algorithm\nObserve = B(1) + 0\nB2(1), B(2), Observe\n"), "Observe");
+            Case("HP-23i", "the callable reads F's y too: forced exported, the detached Observe is refused at y (the row first)",
+                MisExposedSource(With(ReturnedReadingY, "B(2), Observe"), "F.B", "F.Observe"), "Observe");
+            Case("HP-23j", "the callable reads F's y too: forced exported, refused at y (the sibling first)",
+                MisExposedSource(With(ReturnedReadingY, "Observe, B(2)"), "F.B", "F.Observe"), "Observe");
+            Case("HP-23k", "a falsely exported Q declared in the callable's level, read through the callable, is refused at z",
+                MisExposedSource("Cap(meta r) = r\nBuild(z) = {\n  Q = z + 1\n  G(x) = x + Q\n  Cap(G(0))\n}\nB = Build(5).Algorithm\nObserve = B(1) + 0\nB(2), Observe\n", "Build.Q"), "Observe");
+            Case("HP-23l", "a deferred position of the returned callable's cell reads its own captured y while Observe is served",
+                Classified("Cap(meta r) = r\nMk(y) = {\n  Z(*xs) = [1, 2].map{ n + y }\n  C = Cap(Z()).Algorithm\n  G(i) = C[i] + 0\n  Cap(G(0))\n}\nB = Mk(1).Algorithm\nObserve = B(1) + 0\nB(0), Observe\n"), "Observe");
+            Case("HP-23n", "R-1: the reader's own enclosing call is recorded after the cell's read of Mk's y; the record keeps every read and the reader detaches none",
+                Classified(Selector + "Mk(y) = {\n  C = Sel(y).Algorithm\n  G(x) = C(x) + 0\n  Cap(G(0))\n}\nB = Mk(1).Algorithm\nK(v) = {\n  Observe = B(5) + 0\n  Observe, v\n}\nB(5), K(3)\n"), "Observe");
+            cases.Add(new("HP-23m", "per-call isolation: each call of F has its own activation of Build and its own exported T, shared by the row and Observe",
+                Classified(With(ReturnedInner, "B(2), Observe, y").Replace("    G(x) = x + z", "    T = tick()\n    G(x) = x + z + T", StringComparison.Ordinal) + "F(1), F(2)\n"),
+                L("Observe", "T")) { ExpectedTickCount = 2 });
         }
 
         return cases.AsReadOnly();

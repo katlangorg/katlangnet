@@ -437,7 +437,7 @@ theorem pres_cellInputsStep {α : Type} (step : CellRecords → Except Error (α
 theorem presAt_cellInputsStep {α : Type} {st : EvalState} (step : CellRecords → Except Error (α × CellRecords)) :
     PresAt R st (cellInputsStep step) :=
   PresAt.of_pres (pres_cellInputsStep step)
-/-- The input records' one writer of reads (ledger R-1). -/
+/-- Recording one activation read in the input records (ledger R-1). -/
 theorem pres_noteCellInput (ctx : EvalCtx) (activation : Nat) (refusal : Error) :
     Preserves R (noteCellInput ctx activation refusal) := by
   unfold noteCellInput
@@ -450,9 +450,7 @@ theorem pres_noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : PropD
   unfold noteMemberAccess
   split
   · exact pres_pure ()
-  · split
-    · exact pres_noteCellInput _ _ _
-    · exact pres_pure ()
+  · exact pres_cellInputsStep _
 /-- The judgment of a reuse is a step of the input records: a refusal in the starting state, or the
     admission of the reader. -/
 theorem pres_judgeRetainedCellReuse (cell : Nat) (ctx : EvalCtx) : Preserves R (judgeRetainedCellReuse cell ctx) :=
@@ -625,23 +623,23 @@ variable {R : EvalState → EvalState → Prop} [StateRel R] [WriteFrame R]
 
 /-- Serving a detached evaluation (ledger R-1) preserves what the evaluation preserves: the two
     writes around it are steps of the input records. -/
-theorem pres_servingDetached {α : Type} (watermark : Nat) {m : EvalM α} (hm : Preserves R m) :
-    Preserves R (servingDetached watermark m) := by
+theorem pres_servingDetached {α : Type} (owners : List Nat) {m : EvalM α} (hm : Preserves R m) :
+    Preserves R (servingDetached owners m) := by
   unfold servingDetached; pres_tac_mid
 
 /-- Serving under a relation that reads a state only through its property cache and its owner set
-    (`FieldFrame`): the two writes of the served watermark keep both. -/
+    (`FieldFrame`): extending and restoring the served owner set preserve both. -/
 theorem pres_servingDetached_field {F : EvalState → EvalState → Prop} [StateRel F] [FieldFrame F]
-    {α : Type} (watermark : Nat) {m : EvalM α} (hm : Preserves F m) :
-    Preserves F (servingDetached watermark m) := by
+    {α : Type} (owners : List Nat) {m : EvalM α} (hm : Preserves F m) :
+    Preserves F (servingDetached owners m) := by
   intro s
   rw [servingDetached_runState]
   split
   · exact hm s
-  · have h1 : F s { s with cellInputs := { s.cellInputs with serving := watermark } } :=
+  · have h1 : F s { s with cellInputs := { s.cellInputs with serving := owners ++ s.cellInputs.serving } } :=
       FieldFrame.frame _ _ rfl rfl
-    have h2 := hm { s with cellInputs := { s.cellInputs with serving := watermark } }
-    rcases hrun : m.runState { s with cellInputs := { s.cellInputs with serving := watermark } } with ⟨outcome, t⟩
+    have h2 := hm { s with cellInputs := { s.cellInputs with serving := owners ++ s.cellInputs.serving } }
+    rcases hrun : m.runState { s with cellInputs := { s.cellInputs with serving := owners ++ s.cellInputs.serving } } with ⟨outcome, t⟩
     rw [hrun] at h2
     simp only []
     split
@@ -1842,7 +1840,7 @@ theorem active_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept
     intro hne
     obtain ⟨entered, hentered, hcomplete, _, hexit⟩ := servingDetached_complete _ _ s hne
     have hstep := active_publication_step rec hrec accessKind owner binding resolvedAlgorithm
-      (ctx.detach s.lexicalActivations.size) [] request entered hcomplete
+      (ctx.detach s.lexicalActivations.size (chainActivations resolvedAlgorithm.parent)) [] request entered hcomplete
     show _ = s.activeZeroArgProperties
     rw [hexit]
     show _ = s.activeZeroArgProperties

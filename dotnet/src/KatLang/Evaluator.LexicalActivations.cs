@@ -839,7 +839,10 @@ public static partial class Evaluator
             return ParameterActivation.Unbound;
         if (ctx.CallStack is AnnotatedReadOnlyList<Algorithm> annotated)
         {
-            if (annotated.DetachedBefore != 0 && activation.Serial < annotated.DetachedBefore)
+            // Detached: below the watermark AND an enclosing call of a binding being evaluated detached
+            // (Lean `EvalCtx.isDetached`); the level of a callable another computation returned is neither.
+            if (annotated.DetachedBefore != 0 && activation.Serial < annotated.DetachedBefore
+                && annotated.Owners is { } owners && owners.Contains(activation.Serial))
                 return ParameterActivation.UnboundDetached;
             // Inside a retained cell's computation the read is the cell's INPUT READ (ledger R-1; Lean:
             // the `noteCellInput` of `capturedParameterActivation?`) — REFUSED instead when it lands below a

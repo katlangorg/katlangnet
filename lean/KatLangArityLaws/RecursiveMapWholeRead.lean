@@ -544,17 +544,19 @@ def entryCtx (ctxC : EvalCtx) (X b : Nat) : EvalCtx :=
   { ctxC with bindingContext := b, needEnv := [("x", X)], enteringInvocation := true }
 
 theorem enterF (ctxC : EvalCtx) (X b : Nat) (s : EvalState)
-    (hd : ctxC.detachedBefore = 0) (ho : ctxC.outerDetached = []) (hi : ctxC.inputRecord = none) :
+    (hd : ctxC.detachedBefore = 0) (ho : ctxC.outerDetached = []) (hw : ctxC.detachedOwners = [])
+    (hi : ctxC.inputRecord = none) :
     (enterAlgorithmBody FW (entryCtx ctxC X b) []).runState s =
       (.ok (fCtx ctxC.callStack X b s.lexicalActivations.size), recordAct s X b) := by
-  rcases ctxC with ⟨cs, ne, bc, hs, db, od, ei, ir⟩
-  simp only at hd ho hi
-  subst hd ho hi
+  rcases ctxC with ⟨cs, ne, bc, hs, db, od, dw, ei, ir⟩
+  simp only at hd ho hw hi
+  subst hd ho hw hi
   simp [enterAlgorithmBody, entryCtx, recordParameterActivation, recordAct, fActivation, EvalM.bind_runState]
   rfl
 
 theorem preparedF (ctxC : EvalCtx) (X b : Nat) (s t : EvalState) (out : PreparedAlgorithmOutput)
-    (hd : ctxC.detachedBefore = 0) (ho : ctxC.outerDetached = []) (hi : ctxC.inputRecord = none)
+    (hd : ctxC.detachedBefore = 0) (ho : ctxC.outerDetached = []) (hw : ctxC.detachedOwners = [])
+    (hi : ctxC.inputRecord = none)
     (h : EvF (.evalOutputRowsPreparedCore [fBody] (fCtx ctxC.callStack X b s.lexicalActivations.size) [])
       (recordAct s X b) (.ok out) t) :
     EvF (.evalAlgOutputPreparedCore FW (entryCtx ctxC X b) []) s (.ok out) t :=
@@ -566,7 +568,7 @@ theorem preparedF (ctxC : EvalCtx) (X b : Nat) (s t : EvalState) (out : Prepared
         (do let pushedCtx ← enterAlgorithmBody FW (entryCtx ctxC X b) []
             (evalFuel j).evalOutputRowsPreparedCore [fBody] pushedCtx []) := rfl
     rw [hbody]
-    exact Ev.bind (Ev.of_eq (enterF ctxC X b s hd ho hi)) (h.ev j)
+    exact Ev.bind (Ev.of_eq (enterF ctxC X b s hd ho hw hi)) (h.ev j)
 
 
 theorem countedF (ctxE : EvalCtx) (s t : EvalState) (out : PreparedAlgorithmOutput)
@@ -655,14 +657,16 @@ theorem callSupplied_receiver (ctxC : EvalCtx) (X : Nat) (s : EvalState) :
 
 /-- The caller's need environment is empty or contains only bindings named `x`. The call of
     `F` binds `x` to the supplied cell `X`.
-    With the caller's detachment fields empty and no input record, each completed approximation
+    With the caller's detachment fields (watermark, outer watermarks, detached owners) empty and no
+    input record, each completed approximation
     returns `[deferred (N + 2)]`, where `N` is the incoming heap size. The call allocates the
     receiver `[x]` at `N` and the mapper `F` at `N + 1`, completes the receiver with its one
     item `X`, and allocates the mapped position at `N + 2`. It records one activation and one
     binding context. -/
 theorem fCall (ctxC : EvalCtx) (X : Nat) (s : EvalState)
     (hne : ctxC.needEnv.filter (fun entry => !(["x"] : List Ident).contains entry.fst) = [])
-    (hd : ctxC.detachedBefore = 0) (ho : ctxC.outerDetached = []) (hi : ctxC.inputRecord = none) :
+    (hd : ctxC.detachedBefore = 0) (ho : ctxC.outerDetached = []) (hw : ctxC.detachedOwners = [])
+    (hi : ctxC.inputRecord = none) :
     EvF (.evalNeedUserSupply FW [X] ctxC []) s (.ok (.listValue [.deferred (s.needs.size + 2)], 1))
       (callState ctxC X s) := by
   have hL : EvF (.demandNeedRecursive s.needs.size) (callSupplied ctxC X s)
@@ -683,7 +687,7 @@ theorem fCall (ctxC : EvalCtx) (X : Nat) (s : EvalState)
     (bindMap (X := X) s.needs.size (s.needs.size + 1) (callCtx ctxC X s) [] _ _ _ hL rfl)
   rw [hsize] at hmap
   have := userSupplyF ctxC X s (callState ctxC X s) _ hne
-    (countedF _ _ _ _ (preparedF ctxC X s.nextBindingContext (bumpBC s) _ _ hd ho hi
+    (countedF _ _ _ _ (preparedF ctxC X s.nextBindingContext (bumpBC s) _ _ hd ho hw hi
       (rowsBody _ _ _ _ (countedBody _ _ _ _ _ _ _
         (dotMap _ _ _ _ _ _ _ (lexicalMap _ _ _ _ _ _ _ (resolvedMap _ _ _ _
           (suppliedMap _ _ _ _ _ _ (applyMap _ _ _ _ _ _ hmap)))))))))
@@ -905,7 +909,7 @@ theorem demandPosition (c X Mp : Nat) (stk : List Algorithm) (B A : Nat) (s : Ev
   have hpMp := projectMapper Mp stk X B A _ cellMp hMp1 hMpC hMpSusp
   have hsize : (positionRead s c X Mp).needs.size = s.needs.size := by simp [positionRead]
   have hcall := fCall (fCtx stk X B A) (positionRead s c X Mp).needs.size
-    (pushCell (positionRead s c X Mp) (.ready (.atom 1, 1))) rfl rfl rfl rfl
+    (pushCell (positionRead s c X Mp) (.ready (.atom 1, 1))) rfl rfl rfl rfl rfl
   simp only [pushCell_size, hsize] at hcall
   have := demandRec_applied c s _ cellC (.builtin .mappedBuiltin) [(X, none), (Mp, none)] (fCtx stk X B A) []
     "map transform" _ hc hcS hcSusp
@@ -1561,7 +1565,7 @@ theorem root_output :
     EvF (.evalZeroArgumentDemandOutputCounted progW topCtx []) EvalState.empty
       (.ok (.listValue [.deferred 3], 1)) rootOutputState :=
   zeroArg_root _ _ (countedCore_root _ _ (prepared_root _ _ (rows_root _ _ (counted_root _ _ (callExpr_root _ _
-    (resolved_root _ _ (supplied_root _ _ _ (fCall rootCtx 0 rootSupplied rfl rfl rfl rfl))))))))
+    (resolved_root _ _ (supplied_root _ _ _ (fCall rootCtx 0 rootSupplied rfl rfl rfl rfl rfl))))))))
 
 theorem rootOutputState_size : rootOutputState.needs.size = 4 := by
   simp [rootOutputState, callState_size, rootSupplied, EvalState.empty]

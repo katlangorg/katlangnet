@@ -431,61 +431,63 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal object RetainedCellGate { get; } = new();
 
-    // The watermark being served and the entry watermarks of the brackets in progress (innermost last).
-    private long _servingDetached;
-    private long[] _servingEntries = [];
+    // The detached owners being served and the entry sets of the brackets in progress (innermost last).
+    private Evaluator.DetachedOwnerSet? _servingDetached;
+    private Evaluator.DetachedOwnerSet?[] _servingEntries = [];
     private int _servingDepth;
 
     /// <summary>
-    /// THE WATERMARK OF THE DETACHED EVALUATION THE RUN IS SERVING (ledger R-1; owner decision November 24
-    /// 2026; Lean <c>CellRecords.serving</c>): the deepest watermark among the exported evaluations in
+    /// THE DETACHED OWNERS THE RUN IS SERVING (ledger R-1; owner decision November 24
+    /// 2026; Lean <c>CellRecords.serving</c>): the union of the owners detached by exported evaluations in
     /// progress (<c>Evaluator.EvaluateDetachedZeroArgPropertyResult</c> and the zero-supply invocation's
     /// publication) and the readers whose reuse is running a retained cell's channel
-    /// (<c>Evaluator.RetainedCellValue</c>, the alias chase's runtime step); zero while the run serves none.
+    /// (<c>Evaluator.RetainedCellValue</c>, the alias chase's runtime step); null while the run serves none.
     /// An input read a retained cell's computation makes — however deferred — is refused only while the
     /// evaluation that demands it detaches the activation it goes through
     /// (<c>Evaluator.AliasCellInputs.Note</c>): the same read demanded after that evaluation returned
     /// belongs to an attached reader, which may use its own inputs.
     /// </summary>
-    internal long ServingDetached
+    internal Evaluator.DetachedOwnerSet? ServingDetached
     {
         get
         {
             var current = Volatile.Read(ref _servingDetached);
             return NeedCell.CurrentObservation is { } observation
-                ? Math.Max(current, observation.ServingDetached(this))
+                ? Evaluator.DetachedOwnerSet.Union(current, observation.ServingDetached(this))
                 : current;
         }
     }
 
     /// <summary>
-    /// Serves <paramref name="watermark"/> until the matching <see cref="ExitServing"/> (Lean
-    /// <c>servingDetached</c>): the served watermark rises to it, never falls, and the entry watermark is
+    /// Serves <paramref name="owners"/> until the matching <see cref="ExitServing"/> (Lean
+    /// <c>servingDetached</c>): the additional owners join the served set, and the entry set is
     /// kept on the run for a computation or on its observation scope for a synchronous probe.
     /// A continuation may resume the computation on another thread.
     /// </summary>
-    internal void EnterServing(long watermark)
+    internal void EnterServing(Evaluator.DetachedOwnerSet? owners)
     {
         if (NeedCell.CurrentObservation is { } observation)
         {
-            observation.EnterServing(this, watermark);
+            observation.EnterServing(this, owners);
             return;
         }
         var entered = _servingDetached;
         if (_servingDepth == _servingEntries.Length)
             Array.Resize(ref _servingEntries, Math.Max(4, _servingDepth * 2));
         _servingEntries[_servingDepth++] = entered;
-        if (watermark > entered)
-            Volatile.Write(ref _servingDetached, watermark);
+        Volatile.Write(ref _servingDetached, Evaluator.DetachedOwnerSet.Union(entered, owners));
     }
 
-    /// <summary>Ends the innermost <see cref="EnterServing"/>: the watermark it found is served again.</summary>
+    /// <summary>Ends the innermost <see cref="EnterServing"/>: the entry set is served again.</summary>
     internal void ExitServing()
     {
         if (NeedCell.CurrentObservation is { } observation)
             observation.ExitServing();
         else
+        {
             Volatile.Write(ref _servingDetached, _servingEntries[--_servingDepth]);
+            _servingEntries[_servingDepth] = null;
+        }
     }
 
     /// <summary>

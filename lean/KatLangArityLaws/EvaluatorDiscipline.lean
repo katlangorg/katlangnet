@@ -324,9 +324,7 @@ theorem disciplined_noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p 
   unfold noteMemberAccess
   split
   · exact disciplined_pure ()
-  · split
-    · exact disciplined_noteCellInput _ _ _
-    · exact disciplined_pure ()
+  · exact disciplined_cellInputsStep _
 
 /-- The judgment of a reuse is a step of the input records: a refusal in the starting state, or the
     admission of the reader. -/

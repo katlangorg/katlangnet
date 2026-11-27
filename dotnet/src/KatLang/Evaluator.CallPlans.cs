@@ -1079,8 +1079,8 @@ public static partial class Evaluator
                 // CACHE-PUB-1: the plan's empty supply of a callee whose origin names a binding.
                 if (cells.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
                 {
-                    var bodyCtx = InvocationBodyContext(binding, ctx, plan.Values, out var bodyValues);
-                    return EvalPublishedZeroSupplyInvocation(binding, callee, ctx, plan.Values,
+                    var bodyCtx = InvocationBodyContext(binding, callee, ctx, plan.Values, out var bodyValues);
+                    return EvalPublishedZeroSupplyInvocation(binding, callee, ctx, plan.Values, bodyCtx.ServingOwners,
                         () => ToPropertyResult(EvalNeedFamilySupplyCounted(callee, cells, bodyCtx, bodyValues, name)));
                 }
                 return EvalNeedFamilySupplyCounted(callee, cells, ctx, plan.Values, name);
@@ -1116,8 +1116,8 @@ public static partial class Evaluator
             if (cells.Count == 0 && ZeroSupplyPublication(origin, property, ctx) is { } binding)
             {
                 var familyBoundary = property is Algorithm.Conditional;
-                var bodyCtx = InvocationBodyContext(binding, ctx, plan.Values, out var bodyValues);
-                return EvalPublishedZeroSupplyInvocation(binding, property, ctx, plan.Values,
+                var bodyCtx = InvocationBodyContext(binding, property, ctx, plan.Values, out var bodyValues);
+                return EvalPublishedZeroSupplyInvocation(binding, property, ctx, plan.Values, bodyCtx.ServingOwners,
                     () => ToPropertyResult(EvalNeedUserSupplyCounted(callee, cells, bodyCtx, bodyValues, name, variadicArityStyle: true,
                         occurrences, valueBoundary: familyBoundary)));
             }
@@ -1254,8 +1254,8 @@ public static partial class Evaluator
                 var cells = PlanCells(supply.Value);
                 if (cells.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
                 {
-                    var bodyCtx = InvocationBodyContext(binding, ctx, plan.Values, out var bodyValues);
-                    return await EvalPublishedZeroSupplyInvocationAsync(binding, callee, ctx, plan.Values,
+                    var bodyCtx = InvocationBodyContext(binding, callee, ctx, plan.Values, out var bodyValues);
+                    return await EvalPublishedZeroSupplyInvocationAsync(binding, callee, ctx, plan.Values, bodyCtx.ServingOwners,
                         async () => ToPropertyResult(await EvalNeedFamilySupply(callee, cells, bodyCtx, bodyValues, name)
                             .ConfigureAwait(FoldTrampoline.CaptureFoldContext))).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 }
@@ -1292,8 +1292,8 @@ public static partial class Evaluator
             if (cells.Count == 0 && ZeroSupplyPublication(origin, property, ctx) is { } binding)
             {
                 var familyBoundary = property is Algorithm.Conditional;
-                var bodyCtx = InvocationBodyContext(binding, ctx, plan.Values, out var bodyValues);
-                return await EvalPublishedZeroSupplyInvocationAsync(binding, property, ctx, plan.Values,
+                var bodyCtx = InvocationBodyContext(binding, property, ctx, plan.Values, out var bodyValues);
+                return await EvalPublishedZeroSupplyInvocationAsync(binding, property, ctx, plan.Values, bodyCtx.ServingOwners,
                     async () => ToPropertyResult(await EvalNeedUserSupply(callee, cells, bodyCtx, bodyValues, name,
                         variadicArityStyle: true, occurrences, valueBoundary: familyBoundary).ConfigureAwait(FoldTrampoline.CaptureFoldContext))).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }

@@ -287,11 +287,24 @@ def pubFailedOwnerKeepsOtherEntries : Bool :=
 -- watermark cuts off its own work, and an attached demand may read even an earlier input.
 private def retainedReadAfterReaderReturned : KatLang.CellRecords :=
   { records := [(0, { watermark := 10, refusal := .divByZero, forwards := [1] }),
-                (1, { watermark := 5, refusal := .divByZero, readers := 8 })],
-    serving := 8 }
+                (1, { watermark := 5, refusal := .divByZero, readers := [4, 6] })],
+    serving := [4, 6] }
 
 #guard retainedReadAfterReaderReturned.lateRefused 0 4
 #guard !retainedReadAfterReaderReturned.lateRefused 0 6
-#guard !({ retainedReadAfterReaderReturned with serving := 0 } : KatLang.CellRecords).lateRefused 0 4
+-- Equal-sized sets can name different owners. Each side must detach this very read.
+#guard !({ retainedReadAfterReaderReturned with serving := [3, 6] } : KatLang.CellRecords).lateRefused 0 4
+#guard !({ retainedReadAfterReaderReturned with serving := [3, 6] } : KatLang.CellRecords).lateRefused 0 3
+#guard !({ retainedReadAfterReaderReturned with serving := [] } : KatLang.CellRecords).lateRefused 0 4
+
+-- A member access uses both owners. Refusing the later one rejects the whole access.
+#guard match retainedReadAfterReaderReturned.noteReads 0 [3, 4] .divByZero with
+  | .error .divByZero => true
+  | _ => false
+#guard match ({ retainedReadAfterReaderReturned with serving := [] } : KatLang.CellRecords).noteReads 0 [3, 4] .divByZero with
+  | .ok (_, inputs) => match KatLang.cellInputsAt? 0 inputs.records with
+    | some record => record.dependsFor 8 [3] && record.dependsFor 8 [4]
+    | none => false
+  | _ => false
 
 end KatLangTests

@@ -524,7 +524,7 @@ theorem runtimeAliasStep_failure_propagates (project : Nat → EvalM (Option Alg
     (target : Expr) (ctx : EvalCtx) (s u u' t : EvalState) (a : Nat) (e : Error)
     (hcell : (aliasBindingCell owner target ctx).runState s = (.ok a, u))
     (hjudge : (judgeRetainedCellReuse a ctx).runState u = (.ok (), u'))
-    (hfail : (servingDetached ctx.detachedBefore (project a)).runState u' = (.error e, t)) :
+    (hfail : (servingDetached ctx.servingOwners (project a)).runState u' = (.error e, t)) :
     (runtimeAliasStepWith project owner target ctx).runState s = (.error e, t) := by
   simp only [runtimeAliasStepWith, reuseRetainedCell, bind_run, hcell, hjudge, hfail]
 
@@ -545,7 +545,7 @@ theorem runtimeAliasStep_absence_is_terminal (project : Nat → EvalM (Option Al
     (target : Expr) (ctx : EvalCtx) (s u u' t : EvalState) (a : Nat)
     (hcell : (aliasBindingCell owner target ctx).runState s = (.ok a, u))
     (hjudge : (judgeRetainedCellReuse a ctx).runState u = (.ok (), u'))
-    (hnone : (servingDetached ctx.detachedBefore (project a)).runState u' = (.ok none, t)) :
+    (hnone : (servingDetached ctx.servingOwners (project a)).runState u' = (.ok none, t)) :
     (runtimeAliasStepWith project owner target ctx).runState s = (.ok .terminal, t) := by
   simp only [runtimeAliasStepWith, reuseRetainedCell, bind_run, hcell, hjudge, hnone]
   rfl
@@ -556,7 +556,7 @@ theorem runtimeAliasStep_identity (project : Nat → EvalM (Option Algorithm)) (
     (target : Expr) (ctx : EvalCtx) (s u u' t : EvalState) (a : Nat) (identity : Algorithm)
     (hcell : (aliasBindingCell owner target ctx).runState s = (.ok a, u))
     (hjudge : (judgeRetainedCellReuse a ctx).runState u = (.ok (), u'))
-    (hsome : (servingDetached ctx.detachedBefore (project a)).runState u' = (.ok (some identity), t)) :
+    (hsome : (servingDetached ctx.servingOwners (project a)).runState u' = (.ok (some identity), t)) :
     (runtimeAliasStepWith project owner target ctx).runState s = (.ok (.continue identity), t) := by
   simp only [runtimeAliasStepWith, reuseRetainedCell, bind_run, hcell, hjudge, hsome]
   rfl

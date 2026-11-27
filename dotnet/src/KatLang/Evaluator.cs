@@ -138,16 +138,31 @@ public static partial class Evaluator
 
         /// <summary>
         /// THE ACTIVATION WATERMARK of this context (EXPORTED-DETACHED, November 2026), or zero when no
-        /// exported evaluation entered it: every <see cref="ParameterActivation"/> whose
-        /// <see cref="ParameterActivation.Serial"/> is below it is DETACHED here
-        /// (<see cref="IsDetached"/>) — still an identity, never a source of inputs. It rides on the
-        /// call-stack node (<see cref="AnnotatedReadOnlyList{T}"/>), so this struct keeps its size and
-        /// every derived context — a pushed head, a bound callee, a suspended cell's caller — carries
-        /// it: a closure or plan created inside an exported evaluation stays detached wherever it is
-        /// demanded later. Lean: <c>EvalCtx.detachedBefore</c>.
+        /// exported evaluation entered it: a <see cref="ParameterActivation"/> whose
+        /// <see cref="ParameterActivation.Serial"/> is below it and that is one of the context's
+        /// <see cref="DetachedOwners"/> — an activation of a level enclosing a binding whose detached
+        /// evaluation the context is inside — is DETACHED here (<see cref="IsDetached"/>): still an
+        /// identity, never a source of inputs. It rides on the call-stack node
+        /// (<see cref="AnnotatedReadOnlyList{T}"/>), so this struct keeps its size and every derived
+        /// context — a pushed head, a bound callee, a suspended cell's caller — carries it: a closure or
+        /// plan created inside an exported evaluation stays detached wherever it is demanded later.
+        /// Lean: <c>EvalCtx.detachedBefore</c>.
         /// </summary>
         internal long DetachedBefore
             => CallStack is AnnotatedReadOnlyList<Algorithm> annotated ? annotated.DetachedBefore : 0;
+
+        /// <summary>
+        /// THE DETACHED OWNERS of this context (RETURNED CALLABLES ACROSS DETACHED READS, November 2026), or
+        /// null: the declaring chains of the bindings whose detached evaluation the context is inside, whose
+        /// activations are the evaluations' ENCLOSING CALLS. Only those are detached below the watermark; an
+        /// activation recorded before the evaluation started by a computation it did not run inside — the
+        /// level of a callable a retained cell or another exported evaluation returned — stays usable. Carried
+        /// by the call-stack node beside the input record. Lean: <c>EvalCtx.detachedOwners</c>.
+        /// </summary>
+        internal DetachedOwnerSet? DetachedOwners
+            => CallStack is AnnotatedReadOnlyList<Algorithm> annotated ? annotated.Owners : null;
+
+        internal DetachedOwnerSet? ServingOwners => DetachedOwnerSet.Union(null, DetachedOwners, DetachedBefore);
 
         /// <summary>
         /// THE INPUT RECORD of this context (ledger R-1, November 2026), or null: the record of the
@@ -166,14 +181,15 @@ public static partial class Evaluator
 
         /// <summary>
         /// THE DETACHED CONTEXT of an exported evaluation that starts under <paramref name="watermark"/>
-        /// (<see cref="EvaluationBudget.ActivationWatermark"/>): the same call stack, head scope, services
-        /// and budget, NO inherited need cell, and the watermark raised to at least
-        /// <paramref name="watermark"/> (a nested detachment never lowers it). The caller supplies the
-        /// empty value environment beside it (<see cref="DetachedEvaluation"/>). Lean:
-        /// <c>EvalCtx.detach</c>.
+        /// (<see cref="EvaluationBudget.ActivationWatermark"/>), of a binding declared under
+        /// <paramref name="declaringChain"/> (its wired parent): the same call stack, head scope, services
+        /// and budget, NO inherited need cell, the watermark raised to at least <paramref name="watermark"/>
+        /// (a nested detachment never lowers it) and the chain's activations added to the detached owners
+        /// (<see cref="DetachedOwners"/>). The caller supplies the empty value environment beside it
+        /// (<see cref="DetachedEvaluation"/>). Lean: <c>EvalCtx.detach</c> over <c>chainActivations</c>.
         /// </summary>
-        internal EvalCtx Detach(long watermark)
-            => this with { CallStack = AnnotatedReadOnlyList<Algorithm>.Mark(CallStack, watermark), NeedEnv = [] };
+        internal EvalCtx Detach(long watermark, ScopeCtx? declaringChain)
+            => this with { CallStack = AnnotatedReadOnlyList<Algorithm>.Mark(CallStack, watermark, declaringChain), NeedEnv = [] };
 
         /// <summary>
         /// THIS CONTEXT AT AN ACTIVATION'S OWN WATERMARK (ledger R-1, November 2026; Lean
@@ -613,19 +629,19 @@ public static partial class Evaluator
     /// cannot reach (one above an activated level of the container's chain) refuses the access. So
     /// an accepted member reads its owner's bindings.
     /// A DETACHED owner activation refuses the access too (EXPORTED-DETACHED, November 2026,
-    /// <see cref="IsDetached"/>): inside an exported evaluation the activations that existed when it
-    /// started are identities, never inputs, so a local-only member one of them owns is inaccessible
+    /// <see cref="IsDetached"/>): inside an exported evaluation the enclosing calls it detaches
+    /// supply no inputs, so a local-only member one of them owns is inaccessible
     /// — the same <see cref="EvalError.LocalOnlyProperty"/>. <see cref="LexicalChainContains"/> needs
     /// no watermark of its own: the level it accepts carries the owner's own activation
     /// (<see cref="CompatibleActivations"/>), which this test has already found usable.
     /// Direct lexical hits already select on that chain. An admitted access is noted as an input read
-    /// of the retained cell whose computation makes it (<see cref="AdmitMemberAccess"/>) unless
+    /// of the retained cell whose computation makes it (<see cref="AliasCellInputs.AdmitMemberAccess"/>) unless
     /// <paramref name="noteAdmission"/> is false: the <c>open</c> route's state-free judgments pass false
     /// — an <c>open</c>-provided name is noted where its selection is consumed (<see cref="AdmitOpenAccess"/>),
     /// an <c>open</c> target's path step is not noted (ledger R-1, open-target qualification).
     /// Lean: memberAccessible? (with <c>noteMemberAccess</c> at the noting callers).
     /// </summary>
-    private static bool IsAccessibleFrom(Property member, Algorithm container, EvalCtx ctx, bool noteAdmission = true)
+    internal static bool IsAccessibleFrom(Property member, Algorithm container, EvalCtx ctx, bool noteAdmission = true)
     {
         if (IsExported(member))
             return true;
@@ -633,8 +649,9 @@ public static partial class Evaluator
             return false;
 
         var declaringScope = ScopeInContext(container, ctx);
-        // The least serial among the owner activations the access goes through (Lean `memberAccessActivation?`).
-        var least = long.MaxValue;
+        // Record all owners only after every access check succeeds (Lean: memberAccessActivations).
+        var record = noteAdmission ? ctx.InputRecord : null;
+        List<long>? used = null;
         if (member.CaptureRequirements is { } requirements)
         {
             foreach (var requirement in requirements)
@@ -648,10 +665,10 @@ public static partial class Evaluator
                     || IsDetached(activation, ctx)
                     || !LexicalChainContains(ctx, owner))
                     return false;
-                if (activation.Serial < least)
-                    least = activation.Serial;
+                if (record is not null)
+                    (used ??= []).Add(activation.Serial);
             }
-            return !noteAdmission || AdmitMemberAccess(least, ctx);
+            return record is null || record.AdmitMemberAccess(used);
         }
         foreach (var name in member.RequiredAncestorParameters)
         {
@@ -660,33 +677,12 @@ public static partial class Evaluator
                 || IsDetached(activation, ctx)
                 || !LexicalChainContains(ctx, owner))
                 return false;
-            if (activation.Serial < least)
-                least = activation.Serial;
+            if (record is not null)
+                (used ??= []).Add(activation.Serial);
         }
 
-        return !noteAdmission || AdmitMemberAccess(least, ctx);
+        return record is null || record.AdmitMemberAccess(used);
     }
-
-    /// <summary>
-    /// THE MEMBER ACCESS'S INPUT READ (ledger R-1, November 2026; Lean <c>noteMemberAccess</c>): an access
-    /// the law ADMITTED used the owner activations it requires, so inside a retained runtime-alias cell's
-    /// computation it is an input read through the least of them (<paramref name="leastOwnerSerial"/>) —
-    /// whether or not the member's body ever reads the owner's parameter. It is recorded on the cell, and
-    /// REFUSED instead (false: the caller reports its own <see cref="EvalError.LocalOnlyProperty"/>, exactly
-    /// as for an inaccessible member) when it lands below a reader admitted to the cell while a detached
-    /// evaluation that detaches the owner is served. Outside every retained cell's computation it admits.
-    /// Noted, as in Lean, on the STRUCTURAL routes (a dot access, a static alias path step) and, for an
-    /// <c>open</c>-PROVIDED name, where an evaluation consumes the selected member
-    /// (<see cref="AdmitOpenAccess"/>): the lexical lookup that admitted it is a state-free judgment of the
-    /// model, so it only reports the admission (<see cref="ResolvedLexicalProperty.OpenProvider"/>). The member
-    /// steps of an <c>open</c> TARGET's path (<see cref="OpenStructure"/>, <see cref="ResolveAlgForOpen"/>)
-    /// are not noted (ledger R-1, open-target qualification).
-    /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private static bool AdmitMemberAccess(long leastOwnerSerial, in EvalCtx ctx)
-        => ctx.CallStack is not AnnotatedReadOnlyList<Algorithm> { InputRecord: { } record }
-           || leastOwnerSerial == long.MaxValue
-           || !record.Note(leastOwnerSerial);
 
     /// <summary>
     /// The scope owning parameter <paramref name="name"/> as seen from <paramref name="scope"/>:
@@ -1954,13 +1950,16 @@ public static partial class Evaluator
         /// Whether these providers answer a reader whose activation watermark is <paramref name="reader"/>
         /// (EXPORTED-DETACHED, November 2026; <see cref="EvalCtx.DetachedBefore"/>). Resolving a level's
         /// opens passes access checks that read the activations of the level's chain, and a watermark
-        /// only ever REMOVES usable activations (<see cref="IsDetached"/>). So a successful resolution
-        /// answers every reader at or below the watermark it ran under — the same checks pass with
-        /// more usable activations, and the providers are the same — and a reader ABOVE it exactly
-        /// when no activation of the chain lies between the two watermarks; the known bound then
-        /// rises, so the walk is paid once. Otherwise the reader resolves again in its own context
-        /// (and a refused dotted target is its ordinary failure, memoized nowhere). A reader outside
-        /// every exported evaluation (watermark zero) is always answered.
+        /// only ever REMOVES usable activations (<see cref="IsDetached"/>: at most those below it). The
+        /// known bound starts at the watermark the resolution ran under, lowered below every activation of
+        /// the chain that was still usable there although below it — the level of a returned callable
+        /// (<see cref="OpenLevelResolutionBound"/>) — so every chain activation below the bound was
+        /// unusable to the resolution. A successful resolution therefore answers every reader at or below
+        /// the bound — the same checks pass with no fewer usable activations, and the providers are the
+        /// same — and a reader ABOVE it exactly when no activation of the chain lies between the two
+        /// watermarks; the known bound then rises, so the walk is paid once. Otherwise the reader resolves
+        /// again in its own context (and a refused dotted target is its ordinary failure, memoized
+        /// nowhere). A reader outside every exported evaluation (watermark zero) is always answered.
         /// </summary>
         internal bool AnswersWatermark(long reader)
         {
@@ -2583,7 +2582,7 @@ public static partial class Evaluator
         var resolvedResult = ResolveAllOpens(opener, innerCtx);
         if (resolvedResult.IsError) return resolvedResult.Error;
 
-        var resolved = new ResolvedOpenLevel(level, ctx.Budget, resolvedResult.Value, ctx.DetachedBefore);
+        var resolved = new ResolvedOpenLevel(level, ctx.Budget, resolvedResult.Value, OpenLevelResolutionBound(level, ctx));
         if (level is not null)
         {
             if (level.Activation is { } activation)
@@ -2593,6 +2592,28 @@ public static partial class Evaluator
         }
 
         return EvalResult<ResolvedOpenLevel>.Ok(resolved);
+    }
+
+    /// <summary>
+    /// The watermark a level's providers resolved in <paramref name="ctx"/> are known to stand under
+    /// (<see cref="ResolvedOpenLevel.AnswersWatermark"/>): the context's watermark, lowered to the serial of the
+    /// least activation of <paramref name="level"/>'s chain that lies below it and is NOT detached there — the
+    /// level of a callable another computation returned (RETURNED CALLABLES ACROSS DETACHED READS, November
+    /// 2026; <see cref="IsDetached"/>). Every activation of the chain below the bound was then unusable to the
+    /// resolution, so a reader at or below it finds no fewer usable activations, as the memo assumes. In a
+    /// context whose detached chain activations are all detached owners it is the watermark itself.
+    /// </summary>
+    private static long OpenLevelResolutionBound(ScopeCtx? level, in EvalCtx ctx)
+    {
+        var bound = ctx.DetachedBefore;
+        if (bound == 0)
+            return 0;
+        for (var scope = level; scope is not null; scope = scope.Parent)
+        {
+            if (scope.Activation is { } activation && activation.Serial < bound && !IsDetached(activation, ctx))
+                bound = activation.Serial;
+        }
+        return bound;
     }
 
     /// <summary>
@@ -2816,9 +2837,9 @@ public static partial class Evaluator
     /// <c>open</c> provided (<see cref="ResolvedLexicalProperty.OpenProvider"/>) passed that route's access law
     /// at the reading site, so the access used the owner activations the law requires — whether or not the
     /// member's body ever reads the owner's parameter — and inside a retained runtime-alias cell's
-    /// computation it is an input read through the least of them (<see cref="AdmitMemberAccess"/>, reached
+    /// computation it is an input read through each of them (<see cref="AliasCellInputs.AdmitMemberAccess"/>, reached
     /// through the same law in the same context, which admits again), refused, with the open route's own
-    /// <see cref="EvalError.LocalOnlyProperty"/> naming the provider, when it lands below a reader admitted to
+    /// <see cref="EvalError.LocalOnlyProperty"/> naming the provider, when an owner it uses is detached by a reader admitted to
     /// the cell while a detached evaluation that detaches the owner is served. Outside every retained cell's
     /// computation it notes nothing and returns the selection.
     /// </summary>
@@ -4824,8 +4845,52 @@ public static partial class Evaluator
     // every other push builds the node it always built.
     private static IReadOnlyList<T> Prepend<T>(T item, IReadOnlyList<T> list)
         => list is AnnotatedReadOnlyList<T> annotated
-            ? new AnnotatedPrependedReadOnlyList<T>(item, list, annotated.DetachedBefore, annotated.InputRecord)
+            ? new AnnotatedPrependedReadOnlyList<T>(item, list, annotated.DetachedBefore, annotated.Annotations)
             : new PrependedReadOnlyList<T>(item, list);
+
+    /// <summary>Detached lexical activation serials. These immutable sets carry no references to calls or
+    /// need cells, including when a retained cell records the owners of a reader that has returned.</summary>
+    internal sealed class DetachedOwnerSet(long serial, DetachedOwnerSet? next = null)
+    {
+        internal long Serial { get; } = serial;
+        internal DetachedOwnerSet? Next { get; } = next;
+        private readonly long _maximum = Math.Max(serial, next?._maximum ?? 0);
+
+        internal bool Contains(long value)
+        {
+            for (var node = this; node is not null && value <= node._maximum; node = node.Next)
+                if (node.Serial == value) return true;
+            return false;
+        }
+
+        internal static DetachedOwnerSet? With(ScopeCtx? chain, DetachedOwnerSet? owners)
+        {
+            if (DeclaringActivation(chain) is null) return owners;
+            for (var scope = chain; scope is not null; scope = scope.Parent)
+                if (scope.Activation is { } activation && owners?.Contains(activation.Serial) != true)
+                    owners = new(activation.Serial, owners);
+            return owners;
+        }
+
+        internal static DetachedOwnerSet? Union(DetachedOwnerSet? owners, DetachedOwnerSet? additions, long below = long.MaxValue)
+        {
+            if (owners is null && additions is not null && additions._maximum < below) return additions;
+            for (var node = additions; node is not null && !ReferenceEquals(node, owners); node = node.Next)
+                if (node.Serial < below && owners?.Contains(node.Serial) != true)
+                    owners = new(node.Serial, owners);
+            return owners;
+        }
+    }
+
+    // The input record and the detached owners of an annotated node that has both (a detached evaluation
+    // inside a retained cell's computation whose binding encloses an activated level). Either alone is
+    // stored as itself, so a node keeps the size it had before the owners existed.
+    private sealed class AnnotationPair(AliasCellInputs inputRecord, DetachedOwnerSet owners)
+    {
+        internal AliasCellInputs InputRecord { get; } = inputRecord;
+
+        internal DetachedOwnerSet Owners { get; } = owners;
+    }
 
     /// <summary>
     /// A call stack that carries an ACTIVATION WATERMARK (EXPORTED-DETACHED, November 2026;
@@ -4837,15 +4902,44 @@ public static partial class Evaluator
     /// exported evaluation and every retained cell's computation allocates exactly the
     /// <see cref="PrependedReadOnlyList{T}"/> it always did. Two shapes: the marker an annotation starts
     /// with (<see cref="AnnotationMarkerReadOnlyList{T}"/>, element-free) and a head pushed above an
-    /// annotated stack (<see cref="AnnotatedPrependedReadOnlyList{T}"/>).
+    /// annotated stack (<see cref="AnnotatedPrependedReadOnlyList{T}"/>). A detached stack also carries its
+    /// DETACHED OWNERS (<see cref="EvalCtx.DetachedOwners"/>), in the slot of the input record
+    /// (<see cref="Annotations"/>).
     /// </summary>
-    private abstract class AnnotatedReadOnlyList<T>(long detachedBefore, AliasCellInputs? inputRecord) : IReadOnlyList<T>
+    private abstract class AnnotatedReadOnlyList<T>(long detachedBefore, object? annotations) : IReadOnlyList<T>
     {
-        /// <summary>Activations with a serial below this are detached in the context (zero: none is).</summary>
+        /// <summary>
+        /// Activations with a serial below this are detached in the context when they are detached owners
+        /// (zero: none is).
+        /// </summary>
         internal readonly long DetachedBefore = detachedBefore;
 
+        /// <summary>
+        /// The input record and the detached owners in one slot: null, an <see cref="AliasCellInputs"/>, a
+        /// <see cref="DetachedOwnerSet"/>, or an <see cref="AnnotationPair"/> of both. A push passes it on as it is.
+        /// </summary>
+        internal readonly object? Annotations = annotations;
+
         /// <summary>The record of the retained cell whose computation the context belongs to, if any.</summary>
-        internal readonly AliasCellInputs? InputRecord = inputRecord;
+        internal AliasCellInputs? InputRecord
+            => Annotations switch
+            {
+                AliasCellInputs record => record,
+                AnnotationPair pair => pair.InputRecord,
+                _ => null,
+            };
+
+        /// <summary>The detached owners of the context, if any (<see cref="EvalCtx.DetachedOwners"/>).</summary>
+        internal DetachedOwnerSet? Owners
+            => Annotations switch
+            {
+                DetachedOwnerSet owners => owners,
+                AnnotationPair pair => pair.Owners,
+                _ => null,
+            };
+
+        private static object? Pack(AliasCellInputs? inputRecord, DetachedOwnerSet? owners)
+            => inputRecord is null ? owners : owners is null ? inputRecord : new AnnotationPair(inputRecord, owners);
 
         public abstract int Count { get; }
 
@@ -4863,32 +4957,36 @@ public static partial class Evaluator
             => stack is AnnotatedReadOnlyList<T> annotated ? annotated.DetachedBefore : 0;
 
         /// <summary>
-        /// <paramref name="stack"/> under at least <paramref name="watermark"/>: the same elements, the same
-        /// input record, and a watermark that a nested detachment never lowers. A marker that carries no
-        /// watermark of its own (it only marked an input record) is never wrapped in a marker, so a
+        /// <paramref name="stack"/> under at least <paramref name="watermark"/>, with the activations of
+        /// <paramref name="declaringChain"/> added to its detached owners: the same elements, the same input
+        /// record, and a watermark that a nested detachment never lowers. A marker that carries no watermark of
+        /// its own (it only marked an input record, or only added owners) is never wrapped in a marker, so a
         /// re-marked stack reads its elements in one hop; a marker that does carry one stays in the chain,
         /// because the watermark it holds is the one in force outside this detachment
         /// (<see cref="Reattach"/>).
         /// </summary>
-        internal static AnnotatedReadOnlyList<T> Mark(IReadOnlyList<T> stack, long watermark)
+        internal static AnnotatedReadOnlyList<T> Mark(IReadOnlyList<T> stack, long watermark, ScopeCtx? declaringChain)
         {
             if (stack is not AnnotatedReadOnlyList<T> annotated)
-                return new AnnotationMarkerReadOnlyList<T>(stack, watermark, null);
+                return new AnnotationMarkerReadOnlyList<T>(stack, watermark, DetachedOwnerSet.With(declaringChain, null));
 
             watermark = Math.Max(watermark, annotated.DetachedBefore);
+            var owners = annotated.Owners;
+            var extended = DetachedOwnerSet.With(declaringChain, owners);
             return new AnnotationMarkerReadOnlyList<T>(
                 annotated is AnnotationMarkerReadOnlyList<T> marker && marker.DetachedBefore == WatermarkOf(marker.Inner)
                     ? marker.Inner
                     : stack,
                 watermark,
-                annotated.InputRecord);
+                ReferenceEquals(extended, owners) ? annotated.Annotations : Pack(annotated.InputRecord, extended));
         }
 
         /// <summary>
         /// <paramref name="stack"/> under the watermark that was in force when the activation with serial
         /// <paramref name="activationSerial"/> was recorded (Lean <c>EvalCtx.attachedLevel</c>): the first
         /// watermark, from this node outwards, that does not detach it — zero when every one does. The same
-        /// elements and input record.
+        /// elements, input record and detached owners (Lean: <c>reattach</c> leaves <c>detachedOwners</c>; an owner
+        /// at or above the lowered watermark is no longer detached).
         /// </summary>
         internal static AnnotatedReadOnlyList<T> Reattach(AnnotatedReadOnlyList<T> stack, long activationSerial)
         {
@@ -4901,24 +4999,26 @@ public static partial class Evaluator
                     break;
                 }
             }
-            return new AnnotationMarkerReadOnlyList<T>(stack, level, stack.InputRecord);
+            return new AnnotationMarkerReadOnlyList<T>(stack, level, stack.Annotations);
         }
 
         /// <summary><paramref name="stack"/> with its input record replaced by <paramref name="record"/>: the same
-        /// elements and watermark.</summary>
+        /// elements, watermark and detached owners.</summary>
         internal static AnnotatedReadOnlyList<T> MarkInputRecord(IReadOnlyList<T> stack, AliasCellInputs? record)
         {
             if (stack is not AnnotatedReadOnlyList<T> annotated)
                 return new AnnotationMarkerReadOnlyList<T>(stack, 0, record);
 
             return new AnnotationMarkerReadOnlyList<T>(
-                annotated is AnnotationMarkerReadOnlyList<T> marker ? marker.Inner : stack, annotated.DetachedBefore, record);
+                annotated is AnnotationMarkerReadOnlyList<T> marker ? marker.Inner : stack,
+                annotated.DetachedBefore,
+                Pack(record, annotated.Owners));
         }
     }
 
     // The marker an annotation starts with: the reader's stack, unchanged, under the annotations.
-    private sealed class AnnotationMarkerReadOnlyList<T>(IReadOnlyList<T> inner, long detachedBefore, AliasCellInputs? inputRecord)
-        : AnnotatedReadOnlyList<T>(detachedBefore, inputRecord)
+    private sealed class AnnotationMarkerReadOnlyList<T>(IReadOnlyList<T> inner, long detachedBefore, object? annotations)
+        : AnnotatedReadOnlyList<T>(detachedBefore, annotations)
     {
         internal IReadOnlyList<T> Inner => inner;
 
@@ -4937,8 +5037,8 @@ public static partial class Evaluator
         private readonly T _head;
         private readonly IReadOnlyList<T> _tail;
 
-        public AnnotatedPrependedReadOnlyList(T head, IReadOnlyList<T> tail, long detachedBefore, AliasCellInputs? inputRecord)
-            : base(detachedBefore, inputRecord)
+        public AnnotatedPrependedReadOnlyList(T head, IReadOnlyList<T> tail, long detachedBefore, object? annotations)
+            : base(detachedBefore, annotations)
         {
             _head = head;
             _tail = tail;
@@ -4997,23 +5097,26 @@ public static partial class Evaluator
     /// zero-argument key runs in — the read's miss and re-entrant calculation
     /// (<see cref="GetOrEvaluateZeroArgPropertyResultCore"/>), the qualifying zero-supply invocation
     /// (CACHE-PUB-1), their async twins, and the row of an exported runtime alias's binding cell.
-    /// The reader's context under the run's current watermark (<see cref="EvalCtx.Detach"/>,
-    /// <see cref="EvaluationBudget.ActivationWatermark"/>) and an empty value environment that keeps
+    /// The reader's context under the run's current watermark, over the binding's declaring chain
+    /// <paramref name="declaringChain"/> (its wired parent; <see cref="EvalCtx.Detach"/>,
+    /// <see cref="EvaluationBudget.ActivationWatermark"/>), and an empty value environment that keeps
     /// the reader's binding identity (<see cref="DetachedValueEnvironment"/>). Every activation that
     /// exists now stays an IDENTITY — cache keys, alias memos, anchoring and CACHE-OWNER-D1
-    /// inheritance are unchanged — and, on the checked paths, supplies no INPUT: every executed
-    /// operation on a captured parameter through one is refused
-    /// (<see cref="CapturedParameterActivation"/>, <see cref="UnboundParameter"/>), a local-only member
-    /// one of them owns is inaccessible (<see cref="IsAccessibleFrom"/>) and a local-only property
+    /// inheritance are unchanged — and one of the chain's — an ENCLOSING CALL of the binding —, on the
+    /// checked paths, supplies no INPUT: every executed operation on a captured parameter through one is
+    /// refused (<see cref="CapturedParameterActivation"/>, <see cref="UnboundParameter"/>), a local-only
+    /// member one of them owns is inaccessible (<see cref="IsAccessibleFrom"/>) and a local-only property
     /// keyed on one is refused (<see cref="DetachedLocalOnlyRead"/>). So on those paths a wrong
     /// <c>Exported</c> flag is a refusal instead of a value shared across calls, and so is the reuse of a
     /// retained runtime-alias binding cell whose computation read an input of a detached activation
-    /// (<see cref="RetainedCellAdmission"/>, ledger R-1). One helper, never inlined: its locals stay out of the
-    /// property and call seams' calibrated frames. Lean: <c>EvalCtx.detach</c> in
-    /// <c>EvalBody.evalZeroArgPropertyAccessCounted</c>.
+    /// (<see cref="RetainedCellAdmission"/>, ledger R-1). An activation that encloses no binding being
+    /// evaluated detached — the level of a callable a retained cell or another exported evaluation
+    /// returned — keeps supplying that callable's inputs (<see cref="EvalCtx.DetachedOwners"/>). One
+    /// helper, never inlined: its locals stay out of the property and call seams' calibrated frames.
+    /// Lean: <c>EvalCtx.detach</c> in <c>EvalBody.evalZeroArgPropertyAccessCounted</c>.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    internal static EvalCtx DetachedEvaluation(EvalCtx ctx, ValEnv readerValues, out ValEnv values)
+    internal static EvalCtx DetachedEvaluation(EvalCtx ctx, ValEnv readerValues, ScopeCtx? declaringChain, out ValEnv values)
     {
         if (!ctx.Budget.DetachesExportedEvaluations)
         {
@@ -5022,21 +5125,28 @@ public static partial class Evaluator
         }
 
         values = new DetachedValueEnvironment(BindingContextIdentity(ctx, readerValues));
-        return ctx.Detach(ctx.Budget.ActivationWatermark);
+        return ctx.Detach(ctx.Budget.ActivationWatermark, declaringChain);
     }
 
     /// <summary>
     /// Whether <paramref name="activation"/> is DETACHED in <paramref name="ctx"/>: recorded before the
-    /// exported evaluation the context is inside started (<see cref="EvalCtx.DetachedBefore"/>). False
-    /// in every context no exported evaluation entered. THE one predicate of the watermark. Lean:
-    /// <c>EvalCtx.isDetached</c>.
+    /// exported evaluation the context is inside started (<see cref="EvalCtx.DetachedBefore"/>) AND an
+    /// activation of a level enclosing a binding whose detached evaluation the context is inside
+    /// (<see cref="EvalCtx.DetachedOwners"/>). False in every context no exported evaluation entered, and
+    /// for the level of a callable another computation returned. THE one predicate of the watermark (the
+    /// captured-parameter lookup inlines the same test). Lean: <c>EvalCtx.isDetached</c>.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     internal static bool IsDetached(ParameterActivation activation, in EvalCtx ctx)
     {
         var watermark = ctx.DetachedBefore;
-        return watermark != 0 && activation.Serial < watermark;
+        return watermark != 0 && activation.Serial < watermark && IsDetachedOwner(activation, ctx);
     }
+
+    // The owner half of IsDetached, out of line: only an activation already below the watermark comes here.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool IsDetachedOwner(ParameterActivation activation, in EvalCtx ctx)
+        => ctx.DetachedOwners is { } owners && owners.Contains(activation.Serial);
 
     private sealed class PrependedReadOnlyList<T> : IReadOnlyList<T>
     {

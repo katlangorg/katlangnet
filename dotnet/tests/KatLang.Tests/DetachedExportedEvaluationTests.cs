@@ -2099,8 +2099,10 @@ public class DetachedExportedEvaluationTests
     /// <summary>
     /// AN ALIAS WITHOUT AN OWNING PROPERTY (keyed as a local-only one by its declaring binding identity):
     /// its retained cell records the captured read of the activated level's parameter like any other, and
-    /// the judgment refuses exactly the readers that detach that activation — not an attached reader, and
-    /// not a reader whose watermark lies below the activation — with the alias's own refusal.
+    /// the judgment refuses exactly the readers that detach that activation — not an attached reader, not a
+    /// reader whose watermark lies below the activation, and not a reader above it whose declaring chain
+    /// does not hold it (a binding that reached the cell through a callable another computation returned:
+    /// RETURNED CALLABLES ACROSS DETACHED READS) — with the alias's own refusal.
     /// </summary>
     [Fact]
     public void R1_APropertylessAliasCell_IsJudgedLikeAnyRetainedCell()
@@ -2114,13 +2116,14 @@ public class DetachedExportedEvaluationTests
         _ = cell.Demand();
 
         Assert.Null(Evaluator.RetainedCellAdmission(cell, ctx));
-        Assert.Null(Evaluator.RetainedCellAdmission(cell, ctx.Detach(below)));
-        var refusal = Evaluator.RetainedCellAdmission(cell, ctx.Detach(ctx.Budget.ActivationWatermark));
+        Assert.Null(Evaluator.RetainedCellAdmission(cell, ctx.Detach(below, level)));
+        Assert.Null(Evaluator.RetainedCellAdmission(cell, ctx.Detach(ctx.Budget.ActivationWatermark, null)));
+        var refusal = Evaluator.RetainedCellAdmission(cell, ctx.Detach(ctx.Budget.ActivationWatermark, level));
         var localOnly = Assert.IsType<EvalError.LocalOnlyProperty>(Assert.IsAssignableFrom<EvalError>(refusal).UnwrapContext());
         Assert.Equal("alias", localOnly.PropertyName);
 
         var terminal = ctx.Budget.RefuseTransientSupply(long.MaxValue);
-        Assert.Same(terminal, Evaluator.RetainedCellAdmission(cell, ctx.Detach(ctx.Budget.ActivationWatermark)));
+        Assert.Same(terminal, Evaluator.RetainedCellAdmission(cell, ctx.Detach(ctx.Budget.ActivationWatermark, level)));
     }
 
     /// <summary>
@@ -2136,7 +2139,7 @@ public class DetachedExportedEvaluationTests
         var ctx = Evaluator.EvalCtx.Empty;
         var reused = new Evaluator.AliasCellInputs(10, ctx.Budget);
         var reader = new Evaluator.AliasCellInputs(20, ctx.Budget);
-        Assert.Null(reused.Admit(0, reader));
+        Assert.Null(reused.Admit(0, null, reader));
         var dropped = AdmitADroppedReader(reused, ctx.Budget);
 
         GC.Collect();
@@ -2160,7 +2163,7 @@ public class DetachedExportedEvaluationTests
         Evaluator.AliasCellInputs reused, EvaluationBudget budget)
     {
         var reader = new Evaluator.AliasCellInputs(30, budget);
-        Assert.Null(reused.Admit(0, reader));
+        Assert.Null(reused.Admit(0, null, reader));
         return new WeakReference<Evaluator.AliasCellInputs>(reader);
     }
 
@@ -2177,11 +2180,18 @@ public class DetachedExportedEvaluationTests
         GC.Collect();
         Assert.False(intermediate.TryGetTarget(out _));
 
-        Assert.Null(reader.Admit(8, null));
-        budget.EnterServing(8);
+        Assert.Null(reader.Admit(8, new(5, new(7)), null));
+        budget.EnterServing(new(6));
+        try
+        {
+            Assert.False(source.Note(6)); // Served only.
+            Assert.False(source.Note(7)); // Admitted only.
+        }
+        finally { budget.ExitServing(); }
+        budget.EnterServing(new(5));
         Assert.True(source.Note(5));
         budget.ExitServing();
-        Assert.False(reader.DependsBelow(8));
+        Assert.False(reader.DependsBelow(6));
         Assert.False(source.Note(5));
         Assert.True(reader.DependsBelow(8));
     }
@@ -2200,7 +2210,7 @@ public class DetachedExportedEvaluationTests
         GC.Collect();
         Assert.False(reader.TryGetTarget(out _));
 
-        budget.EnterServing(8);
+        budget.EnterServing(new(4, new(6)));
         try
         {
             // Only serials below the reader's establishment watermark (5) are its inputs.
@@ -2219,10 +2229,10 @@ public class DetachedExportedEvaluationTests
     {
         var reader = new Evaluator.AliasCellInputs(5, budget);
         if (admitReaderFirst)
-            Assert.Null(reader.Admit(8, null));
-        Assert.Null(source.Admit(0, reader));
+            Assert.Null(reader.Admit(8, new(4, new(6)), null));
+        Assert.Null(source.Admit(0, null, reader));
         if (!admitReaderFirst)
-            Assert.Null(reader.Admit(8, null));
+            Assert.Null(reader.Admit(8, new(4, new(6)), null));
         return new WeakReference<Evaluator.AliasCellInputs>(reader);
     }
 
@@ -2231,8 +2241,8 @@ public class DetachedExportedEvaluationTests
         Evaluator.AliasCellInputs source, Evaluator.AliasCellInputs reader, EvaluationBudget budget)
     {
         var intermediate = new Evaluator.AliasCellInputs(20, budget);
-        Assert.Null(source.Admit(0, intermediate));
-        Assert.Null(intermediate.Admit(0, reader));
+        Assert.Null(source.Admit(0, null, intermediate));
+        Assert.Null(intermediate.Admit(0, null, reader));
         return new WeakReference<Evaluator.AliasCellInputs>(intermediate);
     }
 
@@ -2243,19 +2253,22 @@ public class DetachedExportedEvaluationTests
     [InlineData(true, true)]
     public async Task R1_AThrowingDemandRestoresItsReadersWatermark(bool asynchronous, bool cancel)
     {
-        var ctx = Evaluator.EvalCtx.Empty.Detach(8);
+        var root = Evaluator.EvalCtx.Empty;
+        var level = new ScopeCtx(null, [], [], ["y"]) { Activation = ParameterActivation.Capture(["y"], root, []) };
+        var ctx = root.Detach(root.Budget.ActivationWatermark, level);
         var budget = ctx.Budget;
         Exception failure = cancel ? new OperationCanceledException() : new InvalidOperationException("host failure");
         var calls = 0;
         EvalResult<Evaluator.CountedResult> Fail()
         {
             calls++;
-            Assert.Equal(8, budget.ServingDetached);
+            Assert.True(budget.ServingDetached?.Contains(level.Activation!.Serial));
+            Assert.True(budget.ServingDetached?.Contains(30));
             throw failure;
         }
 
         var cell = new NeedCell(Fail, async () => { await Task.Yield(); return Fail(); });
-        budget.EnterServing(3);
+        budget.EnterServing(new(30));
         try
         {
             for (var i = 0; i < 2; i++)
@@ -2264,12 +2277,13 @@ public class DetachedExportedEvaluationTests
                     ? await Record.ExceptionAsync(async () => await Evaluator.RetainedCellValueAsync(cell, ctx))
                     : Record.Exception(() => Evaluator.RetainedCellValue(cell, ctx));
                 Assert.Same(failure, thrown);
-                Assert.Equal(3, budget.ServingDetached);
+                Assert.Equal(30, budget.ServingDetached!.Serial);
+                Assert.Null(budget.ServingDetached.Next);
             }
             Assert.Equal(1, calls);
         }
         finally { budget.ExitServing(); }
-        Assert.Equal(0, budget.ServingDetached);
+        Assert.Null(budget.ServingDetached);
     }
 
     /// <summary>
@@ -2318,6 +2332,333 @@ public class DetachedExportedEvaluationTests
         var (result, budget) = Evaluator.RunCountedObserved(program, enableOptimizations: false);
         value = AsyncEvaluationHarness.NeutralOf(result).Replace("ok raw=", "", StringComparison.Ordinal).Replace(" n=1", "", StringComparison.Ordinal);
         return budget;
+    }
+
+    // ── 5e. Returned callables across detached reads ────────────────────────────────────────────
+
+    /// <summary>
+    /// THE ROOT WITNESS (<c>artifacts/validation/r1-repair/baseline-closure-cases.txt</c>): <c>Build</c> returns
+    /// a callable whose body captures <c>Build</c>'s own <c>z</c>, and the front end classifies both <c>B</c> and
+    /// <c>Observe</c> exported, correctly — neither reads an input of any call around it. Until November 2026 an
+    /// exported evaluation detached EVERY activation recorded before it started: with the rows <c>B(2), Observe</c>
+    /// the row established <c>B</c>'s cell first, recording <c>Build</c>'s activation, and <c>Observe</c>'s detached
+    /// evaluation then refused <c>z</c> (<c>UnknownName(z)</c>) although that activation is the returned callable's
+    /// own, while <c>Observe, B(2)</c> gave <c>(6, 7)</c>. A detached evaluation now detaches only the activations of
+    /// the levels ENCLOSING its binding (<c>EvalCtx.DetachedOwners</c>; Lean <c>EvalCtx.detachedOwners</c>).
+    /// </summary>
+    private const string ReturnedCallableRoot = """
+        Cap(meta r) = r
+        Build(z) = {
+          G(x) = x + z
+          Cap(G(0))
+        }
+        B = Build(5).Algorithm
+        Observe = B(1) + 0
+
+        """;
+
+    /// <summary>The inner witness: the same shape inside a call of <c>F</c>, whose activation does enclose <c>B</c> and <c>Observe</c>.</summary>
+    private const string ReturnedCallableInner = """
+        Cap(meta r) = r
+        F(y) = {
+          Build(z) = {
+            G(x) = x + z
+            Cap(G(0))
+          }
+          B = Build(5).Algorithm
+          Observe = B(1) + 0
+          ROWS
+        }
+
+        """;
+
+    /// <summary>The inner witness's callable ALSO reads <c>F</c>'s <c>y</c>: the input of the call around <c>B</c> and <c>Observe</c>.</summary>
+    private const string ReturnedCallableReadingY = """
+        Cap(meta r) = r
+        F(y) = {
+          Build(z) = {
+            G(x) = x + z + y
+            Cap(G(0))
+          }
+          B = Build(5).Algorithm
+          Observe = B(1) + 0
+          ROWS
+        }
+        F(1)
+
+        """;
+
+    /// <summary>
+    /// A local-only alias in the returned callable's own level (ledger R-1): its retained cell records the
+    /// read of <c>Mk</c>'s <c>y</c>, an activation recorded before <c>Observe</c> started that encloses no binding
+    /// <c>Observe</c> evaluates, so the reuse judgment admits <c>Observe</c> (<c>CellInputs.dependsFor</c>).
+    /// </summary>
+    private const string ReturnedCallableLevelAlias = """
+        Cap(meta r) = r
+        Inc(n) = n + 1
+        Dbl(n) = n * 2
+        Sel(k) = if(k == 1, Cap(Inc(0)), Cap(Dbl(0)))
+        Mk(y) = {
+          C = Sel(y).Algorithm
+          G(x) = C(x) + 0
+          Cap(G(0))
+        }
+        B = Mk(1).Algorithm
+        Observe = B(5) + 0
+
+        """;
+
+    /// <summary>A retained cell's ROW invokes another cell's returned callable: the read of <c>Build</c>'s <c>z</c> is recorded on <c>B</c>.</summary>
+    private const string ReturnedCallableInACellRow = """
+        Cap(meta r) = r
+        Build(z) = {
+          G(x) = x + z
+          Cap(G(0))
+        }
+        B2 = Build(5).Algorithm
+        Re(w) = {
+          u = B2(w)
+          H(x) = x + w
+          if(u > 0, Cap(H(0)), Cap(H(1)))
+        }
+        B = Re(1).Algorithm
+        Observe = B(1) + 0
+
+        """;
+
+    private const string ReturnedCallableDeferred = """
+            Cap(meta r) = r
+            Mk(y) = {
+              Z(*xs) = [1, 2].map{ n + y }
+              C = Cap(Z()).Algorithm
+              G(i) = C[i] + 0
+              Cap(G(0))
+            }
+            B = Mk(1).Algorithm
+            Observe = B(1) + 0
+
+            """;
+
+    private static string Inner(string rows, string calls = "F(1)")
+        => ReturnedCallableInner.Replace("ROWS", rows, StringComparison.Ordinal) + calls + "\n";
+
+    /// <summary>
+    /// Correctly classified returned-callable programs: the source, the declarations the front end must itself
+    /// classify exported, and the value every route gives — the value of a run without detachment
+    /// (<see cref="ReturnedCallable_KeepsTheValueOfAnAttachedRun"/>).
+    /// </summary>
+    public static TheoryData<string, string, string[], string> ReturnedCallableCases() => new()
+    {
+        { "deferred position in the returned closure, row first", ReturnedCallableDeferred + "B(0), Observe\n", ["B", "Observe"], "ok raw=S[2, 3] n=2" },
+        { "deferred position in the returned closure, reader first", ReturnedCallableDeferred + "Observe, B(0)\n", ["B", "Observe"], "ok raw=S[3, 2] n=2" },
+        { "root, the row first", ReturnedCallableRoot + "B(2), Observe\n", ["B", "Observe"], "ok raw=S[7, 6] n=2" },
+        { "root, the sibling first", ReturnedCallableRoot + "Observe, B(2)\n", ["B", "Observe"], "ok raw=S[6, 7] n=2" },
+        { "inner, the row first", Inner("B(2), Observe, y"), ["F.B", "F.Observe"], "ok raw=S[7, 6, 1] n=1" },
+        { "inner, the sibling first", Inner("Observe, B(2), y"), ["F.B", "F.Observe"], "ok raw=S[6, 7, 1] n=1" },
+        { "inner, fresh calls", Inner("B(2), Observe, y", "F(1), F(2)"), ["F.B", "F.Observe"], "ok raw=S[S[7, 6, 1], S[7, 6, 2]] n=2" },
+        { "inner, fresh calls, the sibling first", Inner("Observe, B(2), y", "F(1), F(2)"), ["F.B", "F.Observe"], "ok raw=S[S[6, 7, 1], S[6, 7, 2]] n=2" },
+        {
+            "reuse: two exported readers, one read twice",
+            ReturnedCallableRoot.Replace("Observe = B(1) + 0", "P = B(1) + 0\nQ = B(10) + 0", StringComparison.Ordinal) + "B(2), P, Q, P\n",
+            ["B", "P", "Q"], "ok raw=S[7, 6, 15, 6] n=4"
+        },
+        {
+            "the callable of a call-reference value",
+            ReturnedCallableRoot.Replace("B = Build(5).Algorithm\nObserve = B(1) + 0", "C = Build(5)\nObserve = C.Algorithm(1) + 0", StringComparison.Ordinal) + "C.Algorithm(2), Observe\n",
+            ["C", "Observe"], "ok raw=S[7, 6] n=2"
+        },
+        {
+            "a local-only member of the callable's level",
+            ReturnedCallableRoot.Replace("  G(x) = x + z", "  L = z + 1\n  G(x) = x + L", StringComparison.Ordinal) + "B(2), Observe\n",
+            ["B", "Observe"], "ok raw=S[8, 7] n=2"
+        },
+        { "a local-only alias of the callable's level, the row first", ReturnedCallableLevelAlias + "B(5), Observe\n", ["B", "Observe"], "ok raw=S[6, 6] n=2" },
+        { "a local-only alias of the callable's level, the sibling first", ReturnedCallableLevelAlias + "Observe, B(5)\n", ["B", "Observe"], "ok raw=S[6, 6] n=2" },
+        { "a cell row invoking another cell's callable", ReturnedCallableInACellRow + "B2(1), B(2), Observe\n", ["B2", "B", "Observe"], "ok raw=S[6, 3, 2] n=3" },
+        { "a cell row invoking another cell's callable, the sibling first", ReturnedCallableInACellRow + "Observe, B2(1), B(2)\n", ["B2", "B", "Observe"], "ok raw=S[2, 6, 3] n=3" },
+        {
+            // The reader's own enclosing call (K's activation) is recorded AFTER the cell's read of Mk's y: the record
+            // keeps every read (CellInputs.reads), and the reader detaches none of them.
+            "a reader whose own call was recorded after the level's read",
+            ReturnedCallableLevelAlias.Replace("Observe = B(5) + 0\n", "K(v) = {\n  Observe = B(5) + 0\n  Observe, v\n}\n", StringComparison.Ordinal) + "B(5), K(3)\n",
+            ["B", "K.Observe"], "ok raw=S[6, S[6, 3]] n=2"
+        },
+    };
+
+    /// <summary>
+    /// A CORRECTLY CLASSIFIED RETURNED CALLABLE KEEPS ITS VALUE ACROSS DETACHED READS, in both row orders, at the
+    /// root and inside a call, for fresh calls and for an exported reader that reads the callable again, on
+    /// every route including the genuinely suspending one. The front end itself classifies the readers exported
+    /// (<see cref="ExportedAlready"/>). Every run leaves no detached evaluation served.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ReturnedCallableCases))]
+    public async Task ReturnedCallable_KeepsItsValue_InEveryRowOrder_OnEveryRoute(string name, string source, string[] exported, string expected)
+    {
+        var program = ExportedAlready(source, exported);
+
+        foreach (var route in new[] { Route.Optimized, Route.Generic, Route.AsyncTwin, Route.Suspending })
+        {
+            var (result, budget) = await RunWithBudget(program, route);
+            Assert.True(expected == AsyncEvaluationHarness.NeutralOf(result), $"{name} on {route}: {AsyncEvaluationHarness.NeutralOf(result)}");
+            Assert.Null(budget.ServingDetached);
+        }
+    }
+
+    /// <summary>
+    /// NEUTRALITY: each returned-callable program gives the value, steps, depth, materialized items and ticks of a
+    /// run without detachment (<see cref="DetachedEvaluationTestSeam.DisableDetachment"/>), on the generic route
+    /// where every read is charged.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ReturnedCallableCases))]
+    public void ReturnedCallable_KeepsTheValueOfAnAttachedRun(string name, string source, string[] exported, string expected)
+    {
+        var program = ExportedAlready(source, exported);
+
+        var (detached, detachedBudget) = Evaluator.RunCountedObserved(program, enableOptimizations: false);
+        EvalResult<Evaluator.CountedResult> attached;
+        EvaluationBudget attachedBudget;
+        using (DetachedEvaluationTestSeam.DisableDetachment())
+            (attached, attachedBudget) = Evaluator.RunCountedObserved(program, enableOptimizations: false);
+
+        Assert.True(expected == AsyncEvaluationHarness.NeutralOf(detached), name);
+        Assert.Equal(AsyncEvaluationHarness.NeutralOf(attached), AsyncEvaluationHarness.NeutralOf(detached));
+        Assert.Equal(attachedBudget.ConsumedSteps, detachedBudget.ConsumedSteps);
+        Assert.Equal(attachedBudget.PeakDepth, detachedBudget.PeakDepth);
+        Assert.Equal(attachedBudget.MaterializedItems, detachedBudget.MaterializedItems);
+        Assert.Equal(attachedBudget.TickCount, detachedBudget.TickCount);
+    }
+
+    /// <summary>
+    /// PER-CALL ISOLATION: every call of <c>F</c> has its own <c>B</c>, its own activation of <c>Build</c> and its
+    /// own exported <c>T</c> of that activation, which the row and the detached <c>Observe</c> share within the
+    /// call: one tick per call, in either row order.
+    /// </summary>
+    [Theory]
+    [InlineData("B(2), Observe, y", "ok raw=S[S[8, 7, 1], S[9, 8, 2]] n=2")]
+    [InlineData("Observe, B(2), y", "ok raw=S[S[7, 8, 1], S[8, 9, 2]] n=2")]
+    public async Task ReturnedCallable_EveryCallHasItsOwnActivation_SharedWithinTheCall(string rows, string expected)
+    {
+        var source = Inner(rows, "F(1), F(2)").Replace("    G(x) = x + z", "    T = tick()\n    G(x) = x + z + T", StringComparison.Ordinal);
+        var program = ExportedAlready(source, "F.B", "F.Observe", "F.Build.T");
+
+        foreach (var route in new[] { Route.Optimized, Route.Generic, Route.AsyncTwin, Route.Suspending })
+        {
+            var (result, budget) = await RunWithBudget(program, route);
+            Assert.Equal(expected, AsyncEvaluationHarness.NeutralOf(result));
+            Assert.Equal(2, budget.TickCount);
+        }
+    }
+
+    /// <summary>
+    /// A GENUINELY UNAVAILABLE ENCLOSING INPUT IS STILL REFUSED. The callable reads <c>F</c>'s <c>y</c> too, so the
+    /// front end classifies <c>B</c> and <c>Observe</c> local-only; forced exported, <c>F</c>'s activation encloses
+    /// the binding being evaluated detached, and the read of <c>y</c> through the returned callable is
+    /// <c>UnknownName(y)</c> in both row orders — with <c>Observe</c> alone forced, too.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task ReturnedCallable_ReadingTheEnclosingCallsInput_IsStillRefused(Route route)
+    {
+        foreach (var rows in new[] { "B(2), Observe", "Observe, B(2)" })
+        {
+            var source = ReturnedCallableReadingY.Replace("ROWS", rows, StringComparison.Ordinal);
+            await AssertRefusedFor("y", MisExposed(source, "F.B", "F.Observe"), route);
+            await AssertRefusedFor("y", MisExposed(source, "F.Observe"), route);
+        }
+    }
+
+    /// <summary>
+    /// A falsely exported member DECLARED INSIDE the returned callable's level, read through the callable, is
+    /// still refused: its own detached evaluation detaches <c>Build</c>'s activation, an enclosing call of
+    /// <c>Q</c>, so <c>z</c> is <c>UnknownName(z)</c> in both row orders. Only the bindings a detached evaluation
+    /// evaluates decide what it detaches, not the activations a callable happens to be wired under.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RoutesWithSuspension))]
+    public async Task ReturnedCallable_AMisExposedMemberOfItsLevel_IsStillRefused(Route route)
+    {
+        var level = ReturnedCallableRoot.Replace("  G(x) = x + z", "  Q = z + 1\n  G(x) = x + Q", StringComparison.Ordinal);
+        foreach (var rows in new[] { "B(2), Observe\n", "Observe, B(2)\n" })
+            await AssertRefusedFor("z", MisExposed(level + rows, "Build.Q"), route);
+    }
+
+    /// <summary>
+    /// CLEANUP: each call's detached reader of a returned callable keeps no completed call reachable — the live alias
+    /// partitions after a full collection do not grow with the number of calls, as without detachment.
+    /// </summary>
+    [Fact]
+    public void ReturnedCallable_ReadByEveryCall_KeepsNoCompletedCallReachable()
+    {
+        const int MaxLivePartitions = 4;
+        foreach (var calls in new[] { 32, 512 })
+        {
+            var program = ReturnedCallableInner.Replace("ROWS", "B(2) + Observe - y", StringComparison.Ordinal)
+                + "Step(n) = F(n) + n\nrepeat(Step(0), " + calls.ToString(CultureInfo.InvariantCulture) + ")\n";
+            var (detachedLive, detachedValue) = LiveAliasPartitionsAfterRun(program, detach: true);
+            var (attachedLive, attachedValue) = LiveAliasPartitionsAfterRun(program, detach: false);
+
+            Assert.Equal("13", detachedValue);
+            Assert.Equal(attachedValue, detachedValue);
+            Assert.InRange(attachedLive, 0, MaxLivePartitions);
+            Assert.InRange(detachedLive, 0, MaxLivePartitions);
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static (int Live, string Value) LiveAliasPartitionsAfterRun(string source, bool detach)
+    {
+        using var attached = detach ? null : DetachedEvaluationTestSeam.DisableDetachment();
+        var budget = RunForItsBudget(Parsed(source), out var value);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        var live = budget.AliasBindingCells.LivePartitionCount();
+        GC.KeepAlive(budget);
+        return (live, value);
+    }
+
+    /// <summary>A DIRECT read of an unavailable captured parameter <paramref name="name"/>: <c>UnknownName</c> with the detached-parameter context.</summary>
+    private static async Task AssertRefusedFor(string name, Expr program, Route route)
+    {
+        var result = await Run(program, route);
+        Assert.True(result.IsError, AsyncEvaluationHarness.NeutralOf(result));
+        var unknown = Assert.IsType<EvalError.UnknownName>(result.Error.UnwrapContext());
+        Assert.Equal(name, unknown.Name);
+        Assert.Contains(Contexts(result.Error), context =>
+            context is TextErrorContext { Message: var message } && message == Evaluator.DetachedParameterMessage(name));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RetainedMemberAccessRecordsBothRequiredOwners(bool useDepths)
+    {
+        var root = Evaluator.EvalCtx.Empty;
+        var outer = new ScopeCtx(null, [], [], ["x"]) { Activation = ParameterActivation.Capture(["x"], root, []) };
+        var inner = new ScopeCtx(outer, [], [], ["y"]) { Activation = ParameterActivation.Capture(["y"], root, []) };
+        var container = new Algorithm.User(null, [], [], [], OutputBundle.Empty);
+        var member = new Property("G", container, Exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters)
+        {
+            RequiredAncestorParameters = ["x", "y"],
+            CaptureRequirements = useDepths ? [new("x", 1), new("y", 0)] : null,
+        };
+        var watermark = root.Budget.ActivationWatermark;
+        var record = new Evaluator.AliasCellInputs(watermark, root.Budget);
+        var ctx = root.Push(container, inner).MarkInputRecord(record);
+        Assert.True(Evaluator.IsAccessibleFrom(member, container, ctx));
+        foreach (var owner in new[] { outer, inner })
+            Assert.IsType<EvalError.LocalOnlyProperty>(record.Admit(watermark, new(owner.Activation!.Serial), null));
+        Assert.Null(record.Admit(watermark, null, null));
+
+        var cold = new Evaluator.AliasCellInputs(watermark, root.Budget);
+        var newer = new Evaluator.DetachedOwnerSet(inner.Activation!.Serial);
+        Assert.Null(cold.Admit(watermark, newer, null));
+        root.Budget.EnterServing(newer);
+        try { Assert.False(Evaluator.IsAccessibleFrom(member, container, ctx.MarkInputRecord(cold))); }
+        finally { root.Budget.ExitServing(); }
+        Assert.Null(cold.Admit(watermark, new(outer.Activation!.Serial), null));
     }
 
     // ── 6. The mutation guard ──────────────────────────────────────────────────────────────────
@@ -2515,7 +2856,7 @@ public class DetachedExportedEvaluationTests
         Assert.Equal(0, root.DetachedBefore);
         Assert.Equal(0, root.Push(algorithm).DetachedBefore);
 
-        var detached = root.Push(algorithm).Detach(7);
+        var detached = root.Push(algorithm).Detach(7, null);
         Assert.Equal(7, detached.DetachedBefore);
         Assert.Empty(detached.NeedEnv);
         Assert.Same(algorithm, detached.Head);
@@ -2528,10 +2869,57 @@ public class DetachedExportedEvaluationTests
         Assert.All(pushed.CallStack, level => Assert.Same(algorithm, level));
 
         // A nested detachment never lowers the watermark and may raise it.
-        Assert.Equal(7, pushed.Detach(3).DetachedBefore);
-        Assert.Equal(9, pushed.Detach(9).DetachedBefore);
-        Assert.Equal(9, detached.Detach(8).Detach(9).Detach(2).DetachedBefore);
-        Assert.Single(detached.Detach(8).Detach(9).CallStack);
+        Assert.Equal(7, pushed.Detach(3, null).DetachedBefore);
+        Assert.Equal(9, pushed.Detach(9, null).DetachedBefore);
+        Assert.Equal(9, detached.Detach(8, null).Detach(9, null).Detach(2, null).DetachedBefore);
+        Assert.Single(detached.Detach(8, null).Detach(9, null).CallStack);
+    }
+
+    /// <summary>
+    /// THE DETACHED OWNERS (RETURNED CALLABLES ACROSS DETACHED READS): below the watermark only an activation of the
+    /// detached binding's declaring chain — an enclosing call — is detached. The owners ride on every derived
+    /// context: a pushed head, a nested detachment (which adds its own), an input-record marker (sharing one slot
+    /// with the record) and a reattached context, where the lowered watermark admits them. A chain with no activated
+    /// level adds nothing.
+    /// </summary>
+    [Fact]
+    public void DetachedOwners_AreTheBindingsEnclosingCalls_AndRideOnEveryDerivedContext()
+    {
+        var root = Evaluator.EvalCtx.Empty;
+        var enclosing = new ScopeCtx(null, [], [], ["y"]) { Activation = ParameterActivation.Capture(["y"], root, []) };
+        var returned = new ScopeCtx(null, [], [], ["z"]) { Activation = ParameterActivation.Capture(["z"], root, []) };
+        var algorithm = new Algorithm.User(null, [], [], [], OutputBundle.Empty);
+        var watermark = root.Budget.ActivationWatermark;
+        var enclosingActivation = enclosing.Activation!;
+        var returnedActivation = returned.Activation!;
+
+        var detached = root.Push(algorithm).Detach(watermark, enclosing);
+        Assert.True(Evaluator.IsDetached(enclosingActivation, detached));
+        Assert.False(Evaluator.IsDetached(returnedActivation, detached));
+        Assert.False(Evaluator.IsDetached(enclosingActivation, root.Push(algorithm).Detach(enclosingActivation.Serial, enclosing)));
+
+        var pushed = detached.Push(algorithm);
+        Assert.True(Evaluator.IsDetached(enclosingActivation, pushed));
+        Assert.False(Evaluator.IsDetached(returnedActivation, pushed));
+
+        var nested = pushed.Detach(watermark, returned);
+        Assert.True(Evaluator.IsDetached(returnedActivation, nested));
+        Assert.True(Evaluator.IsDetached(enclosingActivation, nested));
+
+        var record = new Evaluator.AliasCellInputs(watermark, root.Budget);
+        var marked = nested.MarkInputRecord(record);
+        Assert.Same(record, marked.InputRecord);
+        Assert.Same(record, marked.Push(algorithm).InputRecord);
+        Assert.True(Evaluator.IsDetached(enclosingActivation, marked.Push(algorithm)));
+        Assert.True(Evaluator.IsDetached(returnedActivation, marked.Push(algorithm).Detach(watermark, null)));
+
+        var reattached = marked.Reattach(enclosingActivation.Serial);
+        Assert.False(Evaluator.IsDetached(enclosingActivation, reattached));
+        Assert.Same(record, reattached.InputRecord);
+        Assert.Same(marked.DetachedOwners, reattached.DetachedOwners);
+
+        Assert.Null(root.Detach(watermark, new ScopeCtx(null, [], [], ["w"])).DetachedOwners);
+        Assert.Null(root.Detach(watermark, null).DetachedOwners);
     }
 
     [Fact]
@@ -2540,7 +2928,7 @@ public class DetachedExportedEvaluationTests
         var root = Evaluator.EvalCtx.Empty;
         IReadOnlyList<(string Name, Result Value)> readerValues = [("x", new Result.Atom(1))];
 
-        var detached = Evaluator.DetachedEvaluation(root, readerValues, out var values);
+        var detached = Evaluator.DetachedEvaluation(root, readerValues, null, out var values);
 
         Assert.Empty(values);
         Assert.NotEqual(0, detached.DetachedBefore);

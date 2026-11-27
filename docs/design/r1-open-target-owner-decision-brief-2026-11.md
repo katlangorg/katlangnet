@@ -13,6 +13,13 @@ Its independent review leaves the unrelated target question for the owner. The p
 `c9116ed6` and triage baseline `ad04bd3a` (0.9.0) are both ancestors of the reviewed main,
 `662b2435`. The returned-callable investigation has its own task.
 
+Coordination with the returned-callable repair (2026-11-27): an exported evaluation now detaches only its
+ENCLOSING CALLS, and a retained cell's reuse is refused exactly to a reader that detaches one of the cell's
+recorded reads (`evaluator-and-hosting.md` § Detached evaluation of exported properties, "Returned callables").
+In every witness of this brief the falsely exported sibling is declared in `F`, so `F`'s activation is one of
+its enclosing calls: the current pins (HP-20h/i, HP-22a…s) and the outcomes the recommended rule predicts are
+unchanged, and an admission the recommended rule would record is judged the same way.
+
 Classification (`dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md`, the exposure-enforcement row): an approved rule
 changes the observable outcome of misclassified and host-built trees, so it needs Lean first, then the C#
 twins and parity tests.

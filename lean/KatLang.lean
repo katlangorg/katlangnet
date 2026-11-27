@@ -2381,19 +2381,22 @@ structure EvalCtx where
   needEnv : Assoc Ident Nat := []
   bindingContext : Nat := 0
   headScope : Option ScopeCtx := none
-  /-- THE ACTIVATION WATERMARK (EXPORTED-DETACHED, November 2026): every lexical activation whose
-      id (its index in `EvalState.lexicalActivations`) is below this number is DETACHED in this
-      context. It stays an IDENTITY — cache keys, alias memos, anchoring and declaring-context
-      inheritance read it exactly as before — but it supplies no INPUT: a captured parameter read
-      through it finds no binding (`capturedParameter`), a local-only member whose required owner it
-      is is inaccessible (`memberAccessible?`), and a local-only property keyed on it is refused
-      (`localOnlyReadRefusal?`). Zero in every context that no exported evaluation has entered, where
-      nothing is detached. Raised only by `EvalCtx.detach` and inherited by every derived context —
-      a pushed head, a bound callee, a suspended cell's caller — so a closure or plan created inside
-      an exported evaluation stays detached wherever it is demanded later. It is lowered in ONE
-      place: the row of a local-only runtime alias's binding cell is supplied at the watermark its
-      declaring level was entered under (`EvalCtx.reattach`, ledger R-1), whichever reader reaches
-      the row first.
+  /-- THE ACTIVATION WATERMARK (EXPORTED-DETACHED, November 2026): the number of lexical activations
+      (ids are indexes in `EvalState.lexicalActivations`) recorded when the innermost exported
+      evaluation this context is inside started. An activation below it that is also one of the
+      context's DETACHED OWNERS (`EvalCtx.detachedOwners`: an activation of a level enclosing a
+      binding whose detached evaluation the context is inside) is DETACHED in this context
+      (`EvalCtx.isDetached`). A detached activation stays an IDENTITY — cache keys, alias memos,
+      anchoring and declaring-context inheritance read it exactly as before — but it supplies no
+      INPUT: a captured parameter read through it finds no binding (`capturedParameter`), a
+      local-only member whose required owner it is is inaccessible (`memberAccessible?`), and a
+      local-only property keyed on it is refused (`localOnlyReadRefused`). Zero in every context
+      that no exported evaluation has entered, where nothing is detached. Raised only by
+      `EvalCtx.detach` and inherited by every derived context — a pushed head, a bound callee, a
+      suspended cell's caller — so a closure or plan created inside an exported evaluation stays
+      detached wherever it is demanded later. It is lowered in ONE place: the row of a local-only
+      runtime alias's binding cell is supplied at the watermark its declaring level was entered
+      under (`EvalCtx.reattach`, ledger R-1), whichever reader reaches the row first.
       C#: the watermark carried by the call-stack node (`Evaluator.EvalCtx.DetachedBefore`). -/
   detachedBefore : Nat := 0
   /-- THE OUTER WATERMARKS (ledger R-1, November 2026): the watermarks this context was under before
@@ -2403,6 +2406,23 @@ structure EvalCtx where
       and `EvalCtx.reattach`; nothing else reads it. C#: the watermarks of the call-stack nodes below
       the context's own (`Evaluator.EvalCtx.Reattach`). -/
   outerDetached : List Nat := []
+  /-- THE DETACHED OWNERS (RETURNED CALLABLES ACROSS DETACHED READS, November 2026): the lexical
+      activations of the levels that enclose a binding whose detached evaluation this context is
+      inside — that binding's declaring chain as it was wired when its evaluation started
+      (`chainActivations`), innermost evaluation first. These are the evaluation's ENCLOSING CALLS,
+      the only activations whose inputs an exported (self-contained) binding must not take. Any
+      other activation recorded before the evaluation started was recorded by a computation the
+      evaluation did not run inside — a retained runtime-alias cell's row, another exported
+      evaluation — and is reached only through a value that computation produced, typically the
+      lexical chain of a callable it returned (`B = Build(5).Algorithm`, where `Build`'s activation
+      supplies the returned callable's captured `z`); a read through it is that callable's own work
+      and stays usable. Until November 2026 every activation below the watermark was detached, so
+      `B(2), Observe` with `Observe = B(1) + 0` refused `z` while `Observe, B(2)` gave its value.
+      Written only by `EvalCtx.detach`, which only ever adds to it, and inherited exactly as the
+      watermark is; `EvalCtx.reattach` leaves it, since the lowered watermark already admits every
+      owner above it. C#: the detached scopes carried by the call-stack node
+      (`Evaluator.EvalCtx.DetachedOwners`). -/
+  detachedOwners : List Nat := []
   /-- THE INVOCATION MARK (INNER-PROPERTY LIFETIME, November 2026): the NEXT body entry made in this
       context is the body of an ACTUAL CALL — a binding boundary bound a supply for the callee and is
       about to enter it. Set only by the three call sites that do so
@@ -2557,32 +2577,37 @@ structure ParameterActivation where
 
 /-- THE INPUT RECORD of a retained binding cell (ledger R-1, November 2026). `watermark` is the number
     of lexical activations recorded when the cell was established: a read through a LATER activation
-    is the cell's own work, never an input of a binding that existed before it. `least` is the least
-    activation below the watermark that the cell's computation has read an input through so far
-    (`CellInputs.note`), none while it has read none: a reader detaches a recorded read exactly when
-    it detaches that one (`CellInputs.dependsBelow`). `refusal` is what such a reader's reuse
-    reports — the alias's own `localOnlyProperty` (`aliasReuseRefusal`): the cell is a binding of an
-    enclosing call. C#: `Evaluator.AliasCellInputs`.
+    is the cell's own work, never an input of a binding that existed before it. `reads` are the
+    activations below the watermark that the cell's computation has read an input through so far,
+    each once, in the order they were first read (`CellInputs.note`), and `least` the least of them,
+    none while it has read none. A reader that DETACHES one of the reads is refused the reuse
+    (`CellInputs.dependsFor` over `EvalCtx.isDetached`; RETURNED CALLABLES ACROSS DETACHED READS,
+    November 2026: a reader detaches only its enclosing calls, so the record keeps every read, not only
+    the least — the activation of a returned callable's level that the cell read is shared by every
+    reader it does not enclose). `refusal` is what such a reader's reuse reports — the alias's own
+    `localOnlyProperty` (`aliasReuseRefusal`): the cell is a binding of an enclosing call.
+    C#: `Evaluator.AliasCellInputs`.
 
     DEFERRED READS. A computation can go on after its channel answered: a lazy collection position or
     a captured call's argument created there runs later, in the context it was created in, and
-    notes its reads then. So the record also keeps `readers` — the deepest watermark of a reader
-    ADMITTED to reuse the cell (`judgeRetainedCellReuse`), `0` while none was — and `forwards`, the
+    notes its reads then. So the record also keeps `readers` — the activation serials detached by any reader
+    admitted to reuse the cell (`judgeRetainedCellReuse`) — and `forwards`, the
     records of the retained cells whose computation reused this one: a read noted here that is an
-    input of those cells too is noted there as well (`noteCellInputsAt`). A read that lands below an
-    admitted reader's watermark while a detached evaluation that detaches it is being SERVED
+    input of those cells too is noted there as well (`noteCellInputsAt`). A read through an activation detached by an
+    admitted reader while a detached evaluation that detaches it is being SERVED
     (`CellRecords.serving`) is refused instead (`CellRecords.lateRefused`). -/
 structure CellInputs where
   watermark : Nat
   refusal : Error
   least : Option Nat := none
-  readers : Nat := 0
+  readers : List Nat := []
   forwards : List Nat := []
+  reads : List Nat := []
   deriving Repr
 
 /-- THE INPUT RECORDS OF A RUN (ledger R-1, November 2026): the record of each retained runtime-alias
-    binding cell, by cell address, and `serving` — the watermark of the DETACHED evaluation the run is
-    serving at this moment, `0` while it serves none: the deepest watermark among the exported
+    binding cell, by cell address, and `serving` — the activation serials detached by evaluations the run is
+    serving at this moment, empty while it serves none. They come from the exported
     evaluations in progress (`servingDetached` in `EvalBody.evalZeroArgPropertyAccessCounted`) and the
     readers whose reuse of a retained cell is running that cell's channel (`reuseRetainedCell`). A
     deferred input read is refused only while the evaluation that demands it detaches it: when
@@ -2590,7 +2615,7 @@ structure CellInputs where
     inputs. C#: the records of `Evaluator.AliasCellInputs` and `EvaluationBudget.ServingDetached`. -/
 structure CellRecords where
   records : List (Nat × CellInputs) := []
-  serving : Nat := 0
+  serving : List Nat := []
   deriving Repr
 
 /-- Per-run evaluator state. The zero-parameter property cache is part of the
@@ -2620,11 +2645,11 @@ structure EvalState where
       and never rolled back. Genuine language state (it decides `tick()`'s value), not an
       observation trace. C#: `EvaluationBudget`'s tick counter. -/
   tickCounter : Nat := 0
-  /-- THE INPUT RECORDS of the retained runtime-alias binding cells and the watermark being served
+  /-- THE INPUT RECORDS of the retained runtime-alias binding cells and the detached activation serials being served
       (ledger R-1, November 2026; `CellRecords`): a record is created with its cell
       (`aliasBindingCellRecorded`), extended by `noteCellInput` and by the admission of a reader
       (`judgeRetainedCellReuse`), and read where a cell's channel is reused (`reuseRetainedCell`)
-      and where an input read is noted (`CellRecords.lateRefused`); the served watermark is raised
+      and where an input read is noted (`CellRecords.lateRefused`); the served owner set is extended
       and restored by `servingDetached`. Every writer is a `cellInputsStep`, and no other evaluator
       state depends on them. C#: the `Evaluator.AliasCellInputs` stored with each cell and
       `EvaluationBudget.ServingDetached`. -/
@@ -2749,9 +2774,20 @@ namespace EvalCtx
   def head? (ctx : EvalCtx) : Option Algorithm := ctx.callStack.head?
 
   /-- Whether the lexical activation `id` is DETACHED in `ctx`: recorded before the context's
-      watermark (`EvalCtx.detachedBefore`). Nothing is detached at the default watermark `0`.
-      C#: `Evaluator.IsDetached`. -/
-  def isDetached (ctx : EvalCtx) (id : Nat) : Bool := decide (id < ctx.detachedBefore)
+      watermark (`EvalCtx.detachedBefore`) AND an activation of a level enclosing a binding whose
+      detached evaluation the context is inside (`EvalCtx.detachedOwners`). Nothing is detached at
+      the default watermark `0`, and an activation that is no detached owner — one a returned
+      callable's lexical chain brought in — is never detached. C#: `Evaluator.IsDetached`. -/
+  def isDetached (ctx : EvalCtx) (id : Nat) : Bool :=
+    decide (id < ctx.detachedBefore) && ctx.detachedOwners.contains id
+
+  /-- Activations this reader actually detaches, including after a local alias lowers its watermark. -/
+  def servingOwners (ctx : EvalCtx) : List Nat :=
+    if ctx.detachedBefore = 0 then [] else ctx.detachedOwners.filter (· < ctx.detachedBefore)
+
+  theorem servingOwners_contains (ctx : EvalCtx) (id : Nat) :
+      ctx.servingOwners.contains id = ctx.isDetached id := by
+    by_cases h : ctx.detachedBefore = 0 <;> simp [servingOwners, isDetached, h, Bool.and_comm]
 
   /-- Whether an owner level's activation can supply an INPUT in `ctx`: the level is activated and
       its activation is not detached. At the default watermark this is `Option.isSome`
@@ -2761,19 +2797,27 @@ namespace EvalCtx
     | none => false
 
   /-- THE DETACHED CONTEXT of an exported evaluation that starts when `activations` lexical
-      activations have been recorded (EXPORTED-DETACHED, "exported means detached"): the inherited
-      need tier is empty and the watermark rises to `activations`, so every activation that exists
-      at that moment is detached — and stays detached under a nested detachment (`max`). The call
-      stack, the head scope and the binding context are the reader's: activations remain
-      identities, and a key computed in the detached context is the key the reader computes. The
-      caller supplies the empty value environment beside it. C#: `Evaluator.EvalCtx.Detach`. -/
-  def detach (ctx : EvalCtx) (activations : Nat) : EvalCtx :=
+      activations have been recorded, of a binding whose declaring chain holds the activations
+      `owners` (EXPORTED-DETACHED, "exported means detached"; `chainActivations` of the binding's
+      wired parent): the inherited need tier is empty, the watermark rises to `activations` and the
+      owners join the detached owners, so every activation of a level ENCLOSING the binding that
+      exists at that moment is detached — and stays detached under a nested detachment (`max`, and
+      the owners only grow). An activation that exists then but encloses no binding being evaluated
+      detached — the activation behind a callable another computation returned — stays usable
+      (`EvalCtx.detachedOwners`). The call stack, the head scope and the binding context are the
+      reader's: activations remain identities, and a key computed in the detached context is the key
+      the reader computes. The caller supplies the empty value environment beside it.
+      C#: `Evaluator.EvalCtx.Detach`. -/
+  def detach (ctx : EvalCtx) (activations : Nat) (owners : List Nat) : EvalCtx :=
     { ctx with
       needEnv := [],
       detachedBefore := max ctx.detachedBefore activations,
       -- A raised watermark keeps the one it replaces (`EvalCtx.outerDetached`).
       outerDetached :=
-        if ctx.detachedBefore < activations then ctx.detachedBefore :: ctx.outerDetached else ctx.outerDetached }
+        if ctx.detachedBefore < activations then ctx.detachedBefore :: ctx.outerDetached else ctx.outerDetached,
+      -- The owners not already detached join them (only membership is ever read), so a request made
+      -- inside the evaluation whose context it is detaches nothing new (`detach_self`).
+      detachedOwners := owners.filter (fun id => !ctx.detachedOwners.contains id) ++ ctx.detachedOwners }
 
   /-- The first watermark of `level :: outer` that does not detach `activation`, with the watermarks
       outside it; watermark `0` — nothing detached — when every one of them detaches it. -/
@@ -2788,7 +2832,8 @@ namespace EvalCtx
       exported evaluation entered since raised the watermark above the activation, so this undoes
       exactly those; a context that does not detach the activation is unchanged
       (`reattach_attached`). Nothing else changes: the call stack, the need tier, the head scope,
-      the binding context and the input record are `ctx`'s. It is the context a local-only
+      the binding context, the input record and the detached owners are `ctx`'s (an owner at or
+      above the lowered watermark is no longer detached). It is the context a local-only
       runtime alias's row is supplied in (`aliasCellContext`): the row belongs to its declaring
       level, so its computation — and every part of it that runs later — may use that level's
       inputs whichever reader reaches the row first; what a DETACHED reader may take from it is
@@ -2800,10 +2845,10 @@ namespace EvalCtx
   /-- The context a zero-argument calculation of a binding with the given exposure runs in, with its
       value environment: the DETACHED context and no values for an `exported` binding, the reader's
       own for a local-only one. `activations` is the number of activations recorded when the
-      calculation starts. -/
-  def forExposure (ctx : EvalCtx) (env : ValEnv) (exported : Bool) (activations : Nat) :
+      calculation starts, `owners` the activations of the binding's declaring chain. -/
+  def forExposure (ctx : EvalCtx) (env : ValEnv) (exported : Bool) (activations : Nat) (owners : List Nat) :
       EvalCtx × ValEnv :=
-    if exported then (ctx.detach activations, []) else (ctx, env)
+    if exported then (ctx.detach activations owners, []) else (ctx, env)
 
   /-- The callee-side context of a parameter binding: a fresh binding context
       with the bound parameter names removed from the inherited need-cell tier
@@ -4188,16 +4233,17 @@ def lexicalChainContains (ctx : EvalCtx) (owner : ScopeCtx) : Bool :=
 
 /-- Records one input read on a cell's record (ledger R-1): kept exactly when it went through an
     activation below the record's watermark — an input that existed when the cell was established —
-    as the least such activation read so far. -/
+    among the reads (once) and as the least such activation read so far. -/
 def CellInputs.note (record : CellInputs) (activation : Nat) : CellInputs :=
   if activation < record.watermark then
-    { record with least := some (match record.least with
+    { record with
+      least := some (match record.least with
         | some least => min least activation
-        | none => activation) }
+        | none => activation)
+      reads := if record.reads.contains activation then record.reads else record.reads ++ [activation] }
   else record
 
-/-- Whether the cell's computation has read an input through an activation that a reader whose
-    watermark is `detachedBefore` DETACHES (ledger R-1): the least activation it read through lies
+/-- The watermark bound on the recorded reads (ledger R-1): the least activation it read through lies
     below that watermark. False at the default watermark (`dependsBelow_default`) and for a cell
     that has read no input. -/
 def CellInputs.dependsBelow (record : CellInputs) (detachedBefore : Nat) : Bool :=
@@ -4205,7 +4251,18 @@ def CellInputs.dependsBelow (record : CellInputs) (detachedBefore : Nat) : Bool 
   | some least => decide (least < detachedBefore)
   | none => false
 
-/-- THE REFUSAL a reader whose watermark is `detachedBefore` gets for reusing a cell with this record
+/-- Whether a reader whose watermark is `detachedBefore` and whose detached owners are `owners`
+    (`EvalCtx.detachedOwners`) DETACHES an input the cell's computation is known to have read (ledger
+    R-1; RETURNED CALLABLES ACROSS DETACHED READS, November 2026): one of the recorded reads lies below
+    the reader's watermark and is one of its enclosing calls (`EvalCtx.isDetached`). A read through the
+    level of a callable another computation returned detaches no reader it does not enclose, and such
+    a reader is admitted. EXACT for the trace of notes (`RetainedCellReuse.trace_dependsFor`); it
+    implies `dependsBelow` (`dependsFor_dependsBelow`). False at the default watermark and for a cell
+    that has read no input. C#: `Evaluator.AliasCellInputs.Admit`. -/
+def CellInputs.dependsFor (record : CellInputs) (detachedBefore : Nat) (owners : List Nat) : Bool :=
+  record.reads.any (fun read => decide (read < detachedBefore) && owners.contains read)
+
+/-- The watermark-only comparison used by the trace laws. The production judgment uses `dependsFor`
     (ledger R-1): the cell's own refusal (`CellInputs.refusal`, the alias's `localOnlyProperty`) when
     its computation is known to have read an input the reader detaches, or none. None at the default
     watermark (`refusalFor_default`). -/
@@ -4261,7 +4318,7 @@ def lateRefusedFrom : Nat → Nat → Nat → List (Nat × CellInputs) → Bool
       | none => false
       | some record =>
           decide (activation < record.watermark) &&
-            (decide (activation < record.readers) ||
+            (record.readers.contains activation ||
               record.forwards.any (fun forward => lateRefusedFrom fuel forward activation records))
 
 /-- THE LATE REFUSAL (ledger R-1, deferred reads; owner decision November 24 2026: the DEMAND
@@ -4274,7 +4331,7 @@ def lateRefusedFrom : Nat → Nat → Nat → List (Nat × CellInputs) → Bool
     counted a lazy list, say — the cell's own row may still read every position with its own
     inputs. -/
 def CellRecords.lateRefused (inputs : CellRecords) (address activation : Nat) : Bool :=
-  decide (activation < inputs.serving) &&
+  inputs.serving.contains activation &&
     lateRefusedFrom (inputs.records.length + 1) address activation inputs.records
 
 /-- A STEP OF THE INPUT RECORDS (ledger R-1): reads the input records and either REFUSES in the state
@@ -4302,14 +4359,21 @@ theorem cellInputsStep_outcome {α : Type} (step : CellRecords → Except Error 
   | error refusal => exact .inl ⟨refusal, rfl⟩
   | ok result => exact .inr ⟨result.1, result.2, rfl⟩
 
-/-- THE NOTE on the input records: refused with `refusal` when the read lands below an admitted
+/-- THE NOTE on the input records: refused with `refusal` when the read goes through an activation detached by an admitted
     reader while a detached evaluation that detaches it is served (`CellRecords.lateRefused`);
     otherwise recorded on the record of `cell` and on every record it is an input of
-    (`noteCellInputsAt`). The served watermark is unchanged. -/
+    (`noteCellInputsAt`). The set of served owners is unchanged. -/
 def CellRecords.note (inputs : CellRecords) (cell activation : Nat) (refusal : Error) :
     Except Error (Unit × CellRecords) :=
   if inputs.lateRefused cell activation then .error refusal
   else .ok ((), { inputs with records := noteCellInputsAt cell activation inputs.records })
+
+/-- Record all inputs to one admitted access, or refuse the access before recording any. A
+    retained-cell reuse also catches its reader up with this operation. -/
+def CellRecords.noteReads (inputs : CellRecords) (cell : Nat) (reads : List Nat) (refusal : Error) :
+    Except Error (Unit × CellRecords) :=
+  if reads.any (inputs.lateRefused cell) then .error refusal
+  else .ok ((), { inputs with records := reads.foldl (fun records id => noteCellInputsAt cell id records) inputs.records })
 
 /-- Whether `noteCellInput ctx activation _` refuses in `s`: `CellRecords.lateRefused` on the record of
     the cell `ctx` belongs to; never outside every retained cell's computation. -/
@@ -4324,7 +4388,7 @@ def EvalState.lateRefusedFor (s : EvalState) (ctx : EvalCtx) (activation : Nat) 
 
 /-- Nothing is refused while no detached evaluation is served. -/
 theorem EvalState.lateRefusedFor_unserved (s : EvalState) (ctx : EvalCtx) (activation : Nat)
-    (h : s.cellInputs.serving = 0) : s.lateRefusedFor ctx activation = false := by
+    (h : s.cellInputs.serving = []) : s.lateRefusedFor ctx activation = false := by
   unfold EvalState.lateRefusedFor
   split
   · rfl
@@ -4340,7 +4404,7 @@ theorem EvalState.lateRefusedFor_unserved (s : EvalState) (ctx : EvalCtx) (activ
     and an admitted access of a local-only member (`noteMemberAccess`, on a structural route or for
     an `open`-provided name, `noteOpenAccess`) — and, with the reused cell's own refusal, where the
     reuse of a retained cell passes its recorded read on (`judgeRetainedCellReuse`).
-    A read that lands below an admitted reader's watermark WHILE a detached evaluation that detaches
+    A read of an activation detached by an admitted reader WHILE a detached evaluation that detaches
     it is served (`CellRecords.lateRefused`) is REFUSED with `refusal` instead, in the state it
     started from: the read that evaluation's own detached context refuses. C#:
     `Evaluator.AliasCellInputs.Note`. -/
@@ -4419,23 +4483,26 @@ theorem EvalState.noteInput_eq (s : EvalState) (ctx : EvalCtx) (activation : Nat
     (s.noteInput ctx a).cellInputs.serving = s.cellInputs.serving := by unfold EvalState.noteInput; split <;> rfl
 
 /-- SERVING A DETACHED EVALUATION (ledger R-1; owner decision November 24 2026): `evaluation` run
-    while the input records serve the watermark `watermark` (`CellRecords.serving`) — raised to it
+    while the input records serve the additional detached `owners` (`CellRecords.serving`) — added
     for the evaluation and restored when it completes, whatever its outcome — so an input read the
     evaluation DEMANDS in a retained cell's computation, however deferred, is judged against it
-    (`CellRecords.lateRefused`), and the same read demanded after it returned is not. A watermark
-    the records already serve (in particular the default `0`) runs the evaluation itself
+    (`CellRecords.lateRefused`), and the same read demanded after it returned is not. A set of owners
+    the records already serve (in particular the empty set) runs the evaluation itself
     (`servingDetached_served`). The two writes are steps of the input records. C#:
-    `EvaluationBudget.ServeDetached`. -/
-def servingDetached {α : Type} (watermark : Nat) (evaluation : EvalM α) : EvalM α :=
+    `EvaluationBudget.EnterServing`. -/
+def servingDetached {α : Type} (owners : List Nat) (evaluation : EvalM α) : EvalM α :=
   get >>= fun entered =>
-    if watermark ≤ entered.cellInputs.serving then evaluation
-    else
-      cellInputsStep (fun inputs => .ok ((), { inputs with serving := watermark })) >>= fun _ =>
-      evalAttempt evaluation >>= fun outcome =>
-      cellInputsStep (fun inputs => .ok ((), { inputs with serving := entered.cellInputs.serving })) >>= fun _ =>
-      match outcome with
-      | .ok value => pure value
-      | .error err => throw err
+    -- Keep the membership decision in the field it controls. Evaluating an unrelated value or
+    -- publishing its cache entry does not inspect the wired owners of a structural receiver.
+    let served := owners.all entered.cellInputs.serving.contains
+    cellInputsStep (fun inputs => .ok ((), { inputs with serving :=
+      if served then inputs.serving else owners ++ inputs.serving })) >>= fun _ =>
+    evalAttempt evaluation >>= fun outcome =>
+    cellInputsStep (fun inputs => .ok ((), { inputs with serving :=
+      if served then inputs.serving else entered.cellInputs.serving })) >>= fun _ =>
+    match outcome with
+    | .ok value => pure value
+    | .error err => throw err
 
 def recordParameterActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM Nat := do
   let state <- get
@@ -4486,7 +4553,10 @@ def enterPropertyOwnerBody (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (bindi
     * `activation id` — the nearest enclosing level binding the name is activated and not
       detached: the read uses that activation's snapshot;
     * `unavailable` — that level is found, but it has no activation (a static owner, reached by
-      navigation from outside its call) or its activation is DETACHED (`EvalCtx.isDetached`): the
+      navigation from outside its call) or its activation is DETACHED (`EvalCtx.isDetached`: it
+      encloses a binding whose detached evaluation the context is inside, and existed when that
+      evaluation started; the activation behind a callable another computation returned is not
+      detached, so `B(1)` with `B = Build(5).Algorithm` reads `Build`'s `z` from any reader): the
       name is lexically OWNED and UNAVAILABLE at this site. Every operation on the written
       occurrence is refused with `unknownName` (`capturedParameterActivation?`), and none falls
       back to the context's inherited tiers, which hold whatever a dynamically live caller bound
@@ -4626,9 +4696,11 @@ def spreadCollectorSlice? (operand : Expr) (caller : EvalCtx) : EvalM (Option (L
     accepted member's reads use its owner's snapshot, never a shadowing dynamic binding. An absent
     owner refuses the access.
     A DETACHED owner activation refuses it too (EXPORTED-DETACHED, November 2026,
-    `EvalCtx.usableActivation`): inside an exported evaluation the activations that existed when it
-    started are identities, never inputs, so a local-only member one of them owns is inaccessible —
-    the same `localOnlyProperty` report. `lexicalChainContains` needs no watermark of its own: the
+    `EvalCtx.usableActivation`): inside an exported evaluation the activations of its enclosing
+    calls that existed when it started are identities, never inputs, so a local-only member one of
+    them owns is inaccessible — the same `localOnlyProperty` report (`EvalCtx.isDetached`; the
+    level of a callable another computation returned is no enclosing call, and its local-only
+    members stay accessible to the callable's body). `lexicalChainContains` needs no watermark of its own: the
     level it accepts carries the owner's own activation (`compatibleActivations`), which this test
     has already found usable.
     `.localConditional` is never assigned to a `PropDef`; declared by a host, it is
@@ -4657,41 +4729,25 @@ def memberAccessible? (ctx : EvalCtx) (container : Algorithm) (p : PropDef) : Bo
               | some owner => ctx.usableActivation owner.activation && lexicalChainContains ctx owner
               | none => false
 
-/-- The least of two optional activations (none: no activation). -/
-def leastActivation : Option Nat → Option Nat → Option Nat
-  | some a, some b => some (min a b)
-  | some a, none => some a
-  | none, other => other
-
-/-- THE ACTIVATION A MEMBER ACCESS GOES THROUGH (ledger R-1, November 2026): the least activation among
-    the owner levels `memberAccessible?` requires of the local-only member `p` of `container` at this
-    site — the levels it tests, on the same chain in context (`scopeInContext`) — or none for an
-    exported member, a member that is never accessible, and a site with no chain. An access the law
-    ADMITS used every one of them; a context that detaches the least one refuses it, and so does
-    every context that detaches any other, since it detaches the least one too. -/
-def memberAccessActivation? (ctx : EvalCtx) (container : Algorithm) (p : PropDef) : Option Nat :=
-  match p.exposure with
-  | .exported => none
-  | .localConditional => none
-  | .localCapturedAncestorParams required =>
-      match siteScope? ctx with
-      | none => none
-      | some _ =>
-          let declaringScope := scopeInContext container ctx
-          match p.requiredOwnerDepths with
-          | some requirements => requirements.foldl (fun least (requirement : Ident × Option Nat) =>
-              match requirement.2 >>= declaringScope.ancestor? with
-              | some owner => leastActivation least owner.activation
-              | none => least) none
-          | none => required.foldl (fun least name =>
-              match requiredParameterOwner? declaringScope name with
-              | some owner => leastActivation least owner.activation
-              | none => least) none
+/-- Activation serials used by an admitted member access. Different readers can detach different
+    owners, so a retained cell records each required owner. -/
+def memberAccessActivations (ctx : EvalCtx) (container : Algorithm) (p : PropDef) : List Nat :=
+  match p.exposure, siteScope? ctx with
+  | .localCapturedAncestorParams required, some _ =>
+      let scope := scopeInContext container ctx
+      match p.requiredOwnerDepths with
+      | some requirements => requirements.filterMap fun (_, depth) => do
+          let owner ← depth >>= scope.ancestor?
+          owner.activation
+      | none => required.filterMap fun name => do
+          let owner ← requiredParameterOwner? scope name
+          owner.activation
+  | _, _ => []
 
 /-- THE MEMBER ACCESS'S INPUT READ (ledger R-1, November 2026): an access of the local-only member `p`
     of `container` that `memberAccessible?` ADMITTED used the owner activations it requires, so inside
-    a retained cell's computation it is an input read through the least of them
-    (`memberAccessActivation?`), with the refusal `refusal` the site reports where the member is
+    a retained cell's computation it records all of them
+    (`memberAccessActivations`), with the refusal `refusal` the site reports where the member is
     inaccessible (`noteCellInput`): a reader that detaches an owner is refused the cell exactly as
     its own access would be, whether or not the member's body ever reads the owner's parameter.
     Outside every retained cell's computation it does nothing (`noteMemberAccess_unmarked`), and
@@ -4704,14 +4760,12 @@ def memberAccessActivation? (ctx : EvalCtx) (container : Algorithm) (p : PropDef
     `sf_lookupLexicalPropertyRaw`), so it only reports the admission (`ResolvedProperty.openRefusal`).
     NOT for the member steps of an `open` TARGET's path (`openNavigateWith`, `resolveAlgForOpen`): a
     target is resolved for every lookup that consults its level, and those admissions are not noted
-    (ledger R-1, open-target qualification). C#: `Evaluator.AdmitMemberAccess` in `IsAccessibleFrom`. -/
+    (ledger R-1, open-target qualification). C#: `Evaluator.AliasCellInputs.AdmitMemberAccess` in `IsAccessibleFrom`. -/
 def noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : PropDef) (refusal : Error) : EvalM Unit :=
   match ctx.inputRecord with
   | none => pure ()
-  | some _ =>
-      match memberAccessActivation? ctx container p with
-      | some id => noteCellInput ctx id refusal
-      | none => pure ()
+  | some cell =>
+      cellInputsStep fun inputs => inputs.noteReads cell (memberAccessActivations ctx container p) refusal
 
 theorem noteMemberAccess_unmarked (ctx : EvalCtx) (container : Algorithm) (p : PropDef) (refusal : Error)
     (h : ctx.inputRecord = none) : noteMemberAccess ctx container p refusal = pure () := by
@@ -6704,14 +6758,29 @@ def nearestActivation? : Option ScopeCtx → Option Nat
       | some id => some id
       | none => nearestActivation? parent
 
+/-- THE ENCLOSING CALLS of a declaring chain (RETURNED CALLABLES ACROSS DETACHED READS, November
+    2026): the activation of every activated level of the chain, innermost first — the activations a
+    binding declared under it is evaluated INSIDE. The detached evaluation of an exported binding
+    detaches exactly these (`EvalCtx.detach`'s `owners`, read off the binding's wired parent).
+    Structural over the finite parent chain. C#: the detached scope walked by `Evaluator.IsDetached`. -/
+def chainActivations : Option ScopeCtx → List Nat
+  | none => []
+  | some (.mk parent _ _ _ _ _ activation _) =>
+      match activation with
+      | some id => id :: chainActivations parent
+      | none => chainActivations parent
+
 /-- THE LOCAL-ONLY READ REFUSAL (EXPORTED-DETACHED, November 2026): whether a property-style read
     of the local-only `binding`, wired as `resolvedAlgorithm`, is keyed on a DETACHED activation
-    in `ctx` — the nearest activated level of its declaring chain was recorded before the
-    context's watermark. Its entry is then a value of an enclosing call that the running exported
+    in `ctx` — the nearest activated level of its declaring chain encloses a binding whose detached
+    evaluation the context is inside and was recorded before that evaluation started
+    (`EvalCtx.isDetached`). Its entry is then a value of an enclosing call that the running exported
     evaluation must not depend on, so the read is refused BEFORE the cache is consulted: a HIT is
     refused exactly like a miss, which no evaluation would expose. An exported binding is never
     refused, and neither is a local-only one whose keying activation the exported evaluation
-    itself recorded. C#: the check that opens `Evaluator.GetOrEvaluateZeroArgPropertyResultCore`. -/
+    itself recorded, nor one keyed on the activation behind a callable another computation
+    returned (a level that encloses no binding being evaluated detached).
+    C#: the check that opens `Evaluator.GetOrEvaluateZeroArgPropertyResultCore`. -/
 def localOnlyReadRefused (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) : Bool :=
   !binding.exposure.isExported &&
     match nearestActivation? resolvedAlgorithm.parent with
@@ -7587,7 +7656,7 @@ def lookupLexicalPropertyRaw (a : Algorithm) (name : Ident) (ctx : EvalCtx)
     through an `open` (`ResolvedProperty.openRefusal`) passed that route's access law at the reading
     site, so the access used the owner activations the law requires — whether or not the member's
     body ever reads the owner's parameter — and inside a retained cell's computation it is an input
-    read through the least of them (`noteMemberAccess`), with the refusal the open route reports where
+    read through each of them (`noteMemberAccess`), with the refusal the open route reports where
     the member is inaccessible: a reader that detaches the owner is refused the cell exactly as its
     own use of the name would be. A structural selection notes nothing: no access law judges it. The
     note belongs to the evaluation that CONSUMES the selected member (`lookupLexicalPropertyNoted`),
@@ -7838,8 +7907,9 @@ def aliasBindingCellKey (wired : Algorithm) (ctx : EvalCtx) (state : EvalState) 
     For an alias whose own property is `exported` (`aliasCellIsExported`) it is the DETACHED context:
     its cell is (`aliasBindingCellKey_exported`) the alias's counterpart of an exported property
     entry, so its row is supplied where an exported property is evaluated — every activation
-    recorded in `state` is an identity and no input, and the cell's later VALUE demand and CALLABLE
-    projection run under that watermark wherever they happen. For a LOCAL-ONLY alias — one cell per
+    recorded in `state` is an identity, an activation of the alias's declaring chain is no input,
+    and the cell's later VALUE demand and CALLABLE projection run under that watermark wherever they
+    happen. For a LOCAL-ONLY alias — one cell per
     declaring binding context — it is the using context AT THE WATERMARK OF THE ALIAS'S DECLARING
     LEVEL (`EvalCtx.reattach` at the nearest activation of its declaring chain, the activation its
     key names): the row is that level's own binding, so its computation, and every part of it that
@@ -7851,7 +7921,7 @@ def aliasBindingCellKey (wired : Algorithm) (ctx : EvalCtx) (state : EvalState) 
     using context, as before.
     C#: the context `Evaluator.AliasBindingCell` supplies the row in. -/
 def aliasCellContext (wired : Algorithm) (ctx : EvalCtx) (state : EvalState) : EvalCtx :=
-  if aliasCellIsExported wired then ctx.detach state.lexicalActivations.size
+  if aliasCellIsExported wired then ctx.detach state.lexicalActivations.size (chainActivations wired.parent)
   else
     match nearestActivation? wired.parent with
     | some activation => ctx.reattach activation
@@ -7932,57 +8002,58 @@ def valueViewCell? (a : Algorithm) (ctx : EvalCtx) : EvalM (Option Nat) := do
       pure (lookupAssoc (aliasBindingCellKey a ctx state) state.aliasCells)
   | _ => pure none
 
-/-- The record with the reader whose watermark is `detachedBefore` ADMITTED (ledger R-1): `readers`
-    raised to it, and — for a reader inside the computation of the retained cell at `reader` — that
+/-- The record with `owners` added to the activation serials detached by admitted readers, and — for a reader inside the computation of the retained cell at `reader` — that
     cell's record added to the records this one forwards its reads to. -/
-def CellInputs.admit (record : CellInputs) (address detachedBefore : Nat) (reader : Option Nat) : CellInputs :=
+def CellInputs.admit (record : CellInputs) (address : Nat) (owners : List Nat) (reader : Option Nat) : CellInputs :=
   { record with
-    readers := max record.readers detachedBefore
+    readers := owners.filter (fun id => !record.readers.contains id) ++ record.readers
     forwards := match reader with
       | some r => if r = address || record.forwards.contains r then record.forwards else record.forwards ++ [r]
       | none => record.forwards }
 
 /-- `records` with the reader admitted to the record of the cell at `address`. -/
-def admitReaderAt (address detachedBefore : Nat) (reader : Option Nat) :
+def admitReaderAt (address : Nat) (owners : List Nat) (reader : Option Nat) :
     List (Nat × CellInputs) → List (Nat × CellInputs)
   | [] => []
   | (cell, record) :: rest =>
-      if cell = address then (cell, record.admit address detachedBefore reader) :: rest
-      else (cell, record) :: admitReaderAt address detachedBefore reader rest
+      if cell = address then (cell, record.admit address owners reader) :: rest
+      else (cell, record) :: admitReaderAt address owners reader rest
 
 /-- THE JUDGMENT on the input records of a reuse of the retained cell at `cell` by a reader whose
-    watermark is `detachedBefore` and whose own record is `reader` (ledger R-1). A cell without a
-    record is not judged. Otherwise, in order:
+    watermark is `detachedBefore`, whose detached owners are `owners` and whose own record is `reader`
+    (ledger R-1). A cell without a record is not judged. Otherwise, in order:
     * a cell whose computation is KNOWN to have read an input the reader detaches
-      (`CellInputs.dependsBelow`) is refused with the cell's own refusal — before anything of the
-      cell runs;
-    * a reader inside another retained cell's computation takes the cell's recorded read into its
-      own record, where it is refused like any note that lands below an admitted reader
+      (`CellInputs.dependsFor`: one of the recorded reads is an enclosing call of the reader, below its
+      watermark) is refused with the cell's own refusal — before anything of the cell runs;
+    * a reader inside another retained cell's computation takes every recorded read of the cell into its
+      own record, where each is refused like any note that lands below an admitted reader
       (`CellRecords.lateRefused`) — with this cell's refusal, for it is this cell the evaluation
       being served must not take;
     * the reader is ADMITTED (`CellInputs.admit`), so a read the cell's computation makes later is
       judged against it and reaches the reader's own record. -/
-def CellRecords.admit (inputs : CellRecords) (cell detachedBefore : Nat) (reader : Option Nat) :
+def CellRecords.admit (inputs : CellRecords) (cell detachedBefore : Nat) (owners : List Nat) (reader : Option Nat) :
     Except Error (Unit × CellRecords) :=
   match cellInputsAt? cell inputs.records with
   | none => .ok ((), inputs)
   | some record =>
-      if record.dependsBelow detachedBefore then .error record.refusal
+      if record.dependsFor detachedBefore owners then .error record.refusal
       else
-        match reader, record.least with
-        | some own, some least =>
-            if inputs.lateRefused own least then .error record.refusal
-            else .ok ((), { inputs with
-              records := admitReaderAt cell detachedBefore reader (noteCellInputsAt own least inputs.records) })
-        | _, _ => .ok ((), { inputs with records := admitReaderAt cell detachedBefore reader inputs.records })
+        match reader with
+        | some own =>
+            -- Every recorded read becomes the reader's own record's read (each an input there as far as
+            -- it is one): the reader's later readers are judged against all of them, not only the least.
+            do
+              let (_, noted) ← inputs.noteReads own record.reads record.refusal
+              return ((), { noted with records := admitReaderAt cell (owners.filter (· < detachedBefore)) reader noted.records })
+        | none => .ok ((), { inputs with records := admitReaderAt cell (owners.filter (· < detachedBefore)) reader inputs.records })
 
 /-- THE JUDGMENT of a reuse of the retained cell at `cell` by the reader `ctx` (ledger R-1), BEFORE the
-    channel runs (`CellRecords.admit` over the reader's watermark and input record): the refusal of
-    a reader that detaches an input the cell is known to have read, in the state it started from —
-    nothing of the cell runs for it — or the admission of the reader. A step of the input
-    records. C#: `Evaluator.AliasCellInputs.Admit`. -/
+    channel runs (`CellRecords.admit` over the reader's watermark, detached owners and input record):
+    the refusal of a reader that detaches an input the cell is known to have read, in the state it
+    started from — nothing of the cell runs for it — or the admission of the reader. A step of the
+    input records. C#: `Evaluator.AliasCellInputs.Admit`. -/
 def judgeRetainedCellReuse (cell : Nat) (ctx : EvalCtx) : EvalM Unit :=
-  cellInputsStep (fun inputs => inputs.admit cell ctx.detachedBefore ctx.inputRecord)
+  cellInputsStep (fun inputs => inputs.admit cell ctx.detachedBefore ctx.detachedOwners ctx.inputRecord)
 
 /-- THE REUSE OF A RETAINED BINDING CELL (ledger R-1, DETACHED REUSE, November 2026): a reader's use of
     the VALUE or CALLABLE channel `channel` of the cell at `cell`.
@@ -7991,9 +8062,9 @@ def judgeRetainedCellReuse (cell : Nat) (ctx : EvalCtx) : EvalM Unit :=
        (`CellInputs.refusal`, the alias's `localOnlyProperty`) and the channel does NOT run: no
        effect of the cell is executed for a reader that may not have it. Otherwise the reader is
        admitted.
-    2. THE CHANNEL RUNS SERVING THE READER (`servingDetached` at the reader's watermark). An input
+    2. THE CHANNEL RUNS SERVING THE READER (`servingDetached` for the reader's detached owners). An input
        read the cell's computation makes now through an activation the reader detaches is refused
-       WHERE IT HAPPENS, with its own refusal (`noteCellInput`) — the refusal the reader's own supply
+       WHERE IT HAPPENS, with its own refusal (`noteCellInput` and `CellRecords.lateRefused`) — the refusal the reader's own supply
        of the row meets there (`unknownName` for a captured parameter, `localOnlyProperty` for a
        local-only member or property) — so an exported evaluation takes no enclosing call's input
        from a retained cell, whichever row established it and whichever channel is cold.
@@ -8003,7 +8074,7 @@ def judgeRetainedCellReuse (cell : Nat) (ctx : EvalCtx) : EvalM Unit :=
     never judged. C#: `Evaluator.RetainedCellReuse`. -/
 def reuseRetainedCell {α : Type} (cell : Nat) (ctx : EvalCtx) (channel : EvalM α) : EvalM α :=
   judgeRetainedCellReuse cell ctx >>= fun _ =>
-  servingDetached ctx.detachedBefore channel
+  servingDetached ctx.servingOwners channel
 
 /-- The outcome of ONE runtime step of an alias chase (META-S3-2, M4★): `terminal` — the binding cell
     supplied no callable identity (the alias is a value view); or the projected identity the chase
@@ -9947,59 +10018,60 @@ instance : Lean.Order.MonoBind EvalM where
   · left; unfold EvalM.IsIncompleteAt at h' ⊢; simp [evalAttempt, h', Except.isIncomplete]
   · right; simp [evalAttempt, h']
 
-/-- THE RUN OF A SERVED EVALUATION (ledger R-1). A watermark the input records already serve runs the
-    evaluation itself. A deeper one runs it from the entry state with the served watermark raised,
-    and — whatever its completed outcome — leaves the state it left with the entry watermark
-    RESTORED; the incomplete outcome propagates unchanged. Nothing but the served watermark differs
+/-- THE RUN OF A SERVED EVALUATION (ledger R-1). An owner set the input records already serve runs the
+    evaluation itself. Additional owners run it from the entry state with the set of served owners extended,
+    and — whatever its completed outcome — leaves the state it left with the entry owner set
+    RESTORED; the incomplete outcome propagates unchanged. Nothing but the set of served owners differs
     from the evaluation's own run. -/
-theorem servingDetached_runState {α : Type} (watermark : Nat) (m : EvalM α) (s : EvalState) :
-    (servingDetached watermark m).runState s =
-      if watermark ≤ s.cellInputs.serving then m.runState s
+theorem servingDetached_runState {α : Type} (owners : List Nat) (m : EvalM α) (s : EvalState) :
+    (servingDetached owners m).runState s =
+      if owners.all s.cellInputs.serving.contains = true then m.runState s
       else
-        match m.runState { s with cellInputs := { s.cellInputs with serving := watermark } } with
+        match m.runState { s with cellInputs := { s.cellInputs with serving := owners ++ s.cellInputs.serving } } with
         | (outcome, t) =>
             if outcome.isIncomplete then (.error .fuelExhausted, t)
             else (outcome, { t with cellInputs := { t.cellInputs with serving := s.cellInputs.serving } }) := by
   unfold servingDetached
   rw [EvalM.bind_runState]
-  show (if watermark ≤ s.cellInputs.serving then m else _).runState s = _
-  split
-  · rfl
-  · rw [EvalM.bind_runState, cellInputsStep_run]
-    show (evalAttempt m >>= _).runState { s with cellInputs := { s.cellInputs with serving := watermark } } = _
+  change (cellInputsStep _ >>= _).runState s = _
+  rw [EvalM.bind_runState, cellInputsStep_run]
+  cases hs : owners.all s.cellInputs.serving.contains <;> simp only [Bool.false_eq_true, ↓reduceIte]
+  all_goals
     rw [EvalM.bind_runState]
-    rcases hm : m.runState { s with cellInputs := { s.cellInputs with serving := watermark } } with ⟨outcome, t⟩
+    generalize hm : m.runState _ = run
+    obtain ⟨outcome, t⟩ := run
     cases hi : outcome.isIncomplete with
     | true =>
       rw [evalAttempt_runState_of_incomplete m _ t (by rw [hm, Except.isIncomplete_eq_true hi])]
-      simp only [hi]
-      rfl
+      simp [Except.isIncomplete_eq_true hi, Except.isIncomplete]
     | false =>
       rw [evalAttempt_runState_of_complete m _ t outcome hm hi]
-      show (cellInputsStep _ >>= _).runState t = _
+      change (cellInputsStep _ >>= _).runState t = _
       rw [EvalM.bind_runState, cellInputsStep_run]
-      simp only [hi]
+      simp only [hi, Bool.false_eq_true, ↓reduceIte]
       cases outcome <;> rfl
 
 /-- A SERVED EVALUATION IS THE EVALUATION, UP TO THE INPUT RECORDS (ledger R-1). When serving completes,
     its outcome is the evaluation's own from an entry state that differs from the serving's in the input
-    records alone (the served watermark), and its exit state differs from the evaluation's in the input
-    records alone (the watermark restored). So whatever the evaluation establishes about any other field
+    records alone (the set of served owners), and its exit state differs from the evaluation's in the input
+    records alone (the served owners restored). So whatever the evaluation establishes about any other field
     of the state holds of the served evaluation. -/
-theorem servingDetached_complete {α : Type} (watermark : Nat) (m : EvalM α) (s : EvalState)
-    (hne : ((servingDetached watermark m).runState s).1 ≠ .error .fuelExhausted) :
+theorem servingDetached_complete {α : Type} (owners : List Nat) (m : EvalM α) (s : EvalState)
+    (hne : ((servingDetached owners m).runState s).1 ≠ .error .fuelExhausted) :
     ∃ entered : EvalState, entered = { s with cellInputs := entered.cellInputs } ∧
       (m.runState entered).1 ≠ .error .fuelExhausted ∧
-      ((servingDetached watermark m).runState s).1 = (m.runState entered).1 ∧
-      ((servingDetached watermark m).runState s).2 =
-        { (m.runState entered).2 with cellInputs := ((servingDetached watermark m).runState s).2.cellInputs } := by
+      ((servingDetached owners m).runState s).1 = (m.runState entered).1 ∧
+      ((servingDetached owners m).runState s).2 =
+        { (m.runState entered).2 with cellInputs := ((servingDetached owners m).runState s).2.cellInputs } := by
   rw [servingDetached_runState] at hne ⊢
-  by_cases h : watermark ≤ s.cellInputs.serving
-  · simp only [h, ↓reduceIte] at hne ⊢
+  cases h : owners.all s.cellInputs.serving.contains with
+  | true =>
+    simp only [h, ↓reduceIte] at hne ⊢
     exact ⟨s, rfl, hne, rfl, rfl⟩
-  · simp only [h, ↓reduceIte] at hne ⊢
-    refine ⟨{ s with cellInputs := { s.cellInputs with serving := watermark } }, rfl, ?_⟩
-    rcases hm : m.runState { s with cellInputs := { s.cellInputs with serving := watermark } } with ⟨outcome, t⟩
+  | false =>
+    simp only [h, Bool.false_eq_true, ↓reduceIte] at hne ⊢
+    refine ⟨{ s with cellInputs := { s.cellInputs with serving := owners ++ s.cellInputs.serving } }, rfl, ?_⟩
+    rcases hm : m.runState { s with cellInputs := { s.cellInputs with serving := owners ++ s.cellInputs.serving } } with ⟨outcome, t⟩
     rw [hm] at hne
     cases hi : outcome.isIncomplete with
     | true =>
@@ -10018,12 +10090,11 @@ theorem servingDetached_complete {α : Type} (watermark : Nat) (m : EvalM α) (s
 /-- Serving a detached evaluation (ledger R-1) is monotone in the evaluation: only it depends on the
     evaluator answer, and the two writes around it are steps of the input records. -/
 @[partial_fixpoint_monotone] theorem monotone_servingDetached {α γ : Type} [Lean.Order.PartialOrder γ]
-    (watermark : Nat) (f : γ → EvalM α) (h : Lean.Order.monotone f) :
-    Lean.Order.monotone (fun x => servingDetached watermark (f x)) := by
+    (owners : List Nat) (f : γ → EvalM α) (h : Lean.Order.monotone f) :
+    Lean.Order.monotone (fun x => servingDetached owners (f x)) := by
   unfold servingDetached
   refine Lean.Order.monotone_bind EvalM (fun _ => get) _ (Lean.Order.monotone_const _) ?_
   refine Lean.Order.monotone_of_monotone_apply _ (fun entered => ?_)
-  refine Lean.Order.monotone_ite _ _ _ h ?_
   refine Lean.Order.monotone_bind EvalM _ _ (Lean.Order.monotone_const _) ?_
   refine Lean.Order.monotone_of_monotone_apply _ (fun _ => ?_)
   exact Lean.Order.monotone_bind EvalM (fun x => evalAttempt (f x)) _ (monotone_evalAttempt f h)
@@ -10036,7 +10107,7 @@ theorem servingDetached_complete {α : Type} (watermark : Nat) (m : EvalM α) (s
     Lean.Order.monotone (fun x => reuseRetainedCell cell ctx (f x)) := by
   unfold reuseRetainedCell
   refine Lean.Order.monotone_bind EvalM _ _ (Lean.Order.monotone_const _) ?_
-  exact Lean.Order.monotone_of_monotone_apply _ (fun _ => monotone_servingDetached ctx.detachedBefore f h)
+  exact Lean.Order.monotone_of_monotone_apply _ (fun _ => monotone_servingDetached ctx.servingOwners f h)
 
 @[partial_fixpoint_monotone] theorem monotone_normalizeIncomplete {α γ : Type} [Lean.Order.PartialOrder γ]
     (f : γ → EvalM α) (h : Lean.Order.monotone f) :
@@ -12263,11 +12334,15 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       EXPORTED MEANS DETACHED. Every request of an `exported` binding — a property-style read and
       a qualifying zero-supply invocation alike, so the miss, a re-entrant calculation and a fresh
       invocation of an established entry — runs over the DETACHED context (`EvalCtx.detach` at the
-      number of activations recorded when the request starts) and NO inherited values. The
-      activations that exist at that moment stay identities and supply no input: a captured
-      parameter read through one finds nothing (`capturedParameter`, `unknownName`), a local-only
-      member one of them owns is inaccessible (`memberAccessible?`, `localOnlyProperty`) and a
-      local-only property keyed on one is refused (below). An input an earlier attached read
+      number of activations recorded when the request starts, over the activations of the binding's
+      declaring chain, `chainActivations`) and NO inherited values. The activations that exist at
+      that moment stay identities, and those of the levels enclosing the binding — its enclosing
+      calls — supply no input: a captured parameter read through one finds nothing
+      (`capturedParameter`, `unknownName`), a local-only member one of them owns is inaccessible
+      (`memberAccessible?`, `localOnlyProperty`) and a local-only property keyed on one is refused
+      (below). An activation that encloses no binding being evaluated detached — the one behind a
+      callable a retained cell or another exported evaluation returned — supplies that callable's
+      own inputs to its body as always. An input an earlier attached read
       retained in a runtime-alias binding cell is refused where the cell is reused
       (`reuseRetainedCell`, ledger R-1). The reader's declaring chain still supplies its owning
       invocation to `zeroArgPropertyCacheKey`.
@@ -12285,10 +12360,10 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     if binding.exposure.isExported then
       let state <- get
       -- The exported evaluation is SERVED while it runs (ledger R-1): an input read it demands in a
-      -- retained cell's computation, however deferred, is judged against its watermark.
-      servingDetached (ctx.detach state.lexicalActivations.size).detachedBefore
+      -- retained cell's computation, however deferred, is judged against the owners it detaches.
+      servingDetached (ctx.detach state.lexicalActivations.size (chainActivations resolvedAlgorithm.parent)).servingOwners
         (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm
-          (ctx.detach state.lexicalActivations.size) [] request)
+          (ctx.detach state.lexicalActivations.size (chainActivations resolvedAlgorithm.parent)) [] request)
     else if request.isRead && localOnlyReadRefused binding resolvedAlgorithm ctx then
       throw (Error.localOnlyProperty detachedReadDescription binding.name binding.exposure)
     else do

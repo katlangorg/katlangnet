@@ -13,9 +13,12 @@ read of whatever a dynamically live caller had bound under the same name. Since 
 evaluator ENFORCES the flag:
 
 * **Exported means detached.** `EvalBody.evalZeroArgPropertyAccessCounted` runs every request of an
-  exported binding over `EvalCtx.detach`: no inherited need cell, no inherited value, and a
-  WATERMARK (`EvalCtx.detachedBefore`) under which every lexical activation recorded so far is
-  detached. A detached activation stays an identity and supplies no input.
+  exported binding over `EvalCtx.detach`: no inherited need cell, no inherited value, a WATERMARK
+  (`EvalCtx.detachedBefore`) and the binding's DETACHED OWNERS (`EvalCtx.detachedOwners`, the
+  activations of its declaring chain, `chainActivations`): an activation recorded so far is detached
+  exactly when it is one of those ENCLOSING CALLS (RETURNED CALLABLES ACROSS DETACHED READS, 2026-11-27;
+  until then every activation recorded so far was). A detached activation stays an identity and
+  supplies no input; the activation behind a callable another computation returned stays usable.
 * **Captured reads are lexical-only.** `capturedParameter` decides how a parameter read finds its
   binding from the context's lexical chain alone. A name whose lexical owner has no usable
   activation is UNAVAILABLE: every executed operation on the written occurrence — its VALUE read,
@@ -34,15 +37,21 @@ that detaches the activation is served, is the same refusal (`activation_late_re
 
 What is proved here, over the production definitions of `KatLang.lean`:
 
-* § 1 **The watermark.** Nothing is detached by default (`nothing_detached_by_default`,
-  `usableActivation_attached`: the former `Option.isSome` test). `EvalCtx.detach` detaches every
-  activation recorded so far (`detach_detaches_recorded`), keeps every later one usable
-  (`detach_keeps_later`), never lowers the watermark (`detach_never_lowers`), empties the need tier
-  and changes nothing else (`detach_keeps_identity`); a pushed head and a bound callee inherit it
-  (`push_inherits_watermark`, `bindParameters_inherits_watermark`).
+* § 1 **The watermark and the owners.** Nothing is detached by default (`nothing_detached_by_default`,
+  `usableActivation_attached`: the former `Option.isSome` test), nothing at or above the watermark
+  (`not_detached_of_le`) and nothing that is no detached owner (`not_detached_of_not_owner`).
+  `EvalCtx.detach` detaches every activation of the binding's declaring chain recorded so far
+  (`detach_detaches_recorded`), keeps every later one usable (`detach_keeps_later`) and every one
+  that encloses no binding being evaluated detached (**`detach_keeps_non_owner`**), keeps every
+  detached one detached (`detach_keeps_detached`, `detach_never_lowers`), detaches nothing new inside
+  the evaluation whose context it is (`detach_self`), empties the need tier and changes no identity
+  (`detach_keeps_identity`); a pushed head and a bound callee inherit it (`push_inherits_watermark`,
+  `push_inherits_owners`, `bindParameters_inherits_watermark`).
 * § 2 **Captured reads.** The classifier's three outcomes (`captured_own_of_head`,
-  `captured_own_without_owner`, `captured_activation`, `captured_unavailable_static`,
-  `captured_unavailable_detached`); the lookup of an unavailable parameter is the `unknownName`
+  `captured_own_without_owner`, `captured_activation_of_usable`, `captured_activation`,
+  `captured_unavailable_static`, `captured_unavailable_detached`); a read through the level of a
+  returned callable uses it (**`returned_callable_read_admitted`**) and a read through an enclosing
+  call of the binding being evaluated is unavailable (**`enclosing_call_read_refused`**); the lookup of an unavailable parameter is the `unknownName`
   REFUSAL in the state it started from (`unavailable_lookup_refused`), and so is every executed
   operation on the written occurrence: its VALUE read (**`detached_param_read_refused`**, with the
   static-owner case `static_owner_read_refused`; `unavailable_context_refused`), its direct
@@ -102,18 +111,40 @@ theorem throw_run {α : Type} (e : Error) (s : EvalState) :
 /-! ## 1. The watermark -/
 
 theorem isDetached_iff (ctx : EvalCtx) (id : Nat) :
-    ctx.isDetached id = true ↔ id < ctx.detachedBefore := by
+    ctx.isDetached id = true ↔ id < ctx.detachedBefore ∧ id ∈ ctx.detachedOwners := by
   simp [EvalCtx.isDetached]
+
+/-- Below the watermark is necessary: an activation at or above it is never detached. -/
+theorem isDetached_lt (ctx : EvalCtx) (id : Nat) (h : ctx.isDetached id = true) : id < ctx.detachedBefore :=
+  ((isDetached_iff ctx id).mp h).1
+
+/-- At or above the watermark an activation is usable, whatever the detached owners. -/
+theorem not_detached_of_le (ctx : EvalCtx) (id : Nat) (h : ctx.detachedBefore ≤ id) :
+    ctx.isDetached id = false := by
+  cases hd : ctx.isDetached id with
+  | false => rfl
+  | true => have := isDetached_lt ctx id hd; omega
+
+/-- **An activation that is no detached owner is never detached** (RETURNED CALLABLES ACROSS DETACHED
+    READS, November 2026): the level of a callable another computation returned stays usable below
+    the watermark. -/
+theorem not_detached_of_not_owner (ctx : EvalCtx) (id : Nat) (h : id ∉ ctx.detachedOwners) :
+    ctx.isDetached id = false := by
+  cases hd : ctx.isDetached id with
+  | false => rfl
+  | true => exact absurd ((isDetached_iff ctx id).mp hd).2 h
 
 /-- At the default watermark no activation is detached. -/
 theorem nothing_detached_by_default (ctx : EvalCtx) (h : ctx.detachedBefore = 0) (id : Nat) :
-    ctx.isDetached id = false := by
-  simp [EvalCtx.isDetached, h]
+    ctx.isDetached id = false :=
+  not_detached_of_le ctx id (by omega)
 
 /-- At the default watermark the usable-activation test is the former `Option.isSome`. -/
 theorem usableActivation_attached (ctx : EvalCtx) (h : ctx.detachedBefore = 0) (activation : Option Nat) :
     ctx.usableActivation activation = activation.isSome := by
-  cases activation <;> simp [EvalCtx.usableActivation, EvalCtx.isDetached, h]
+  cases activation with
+  | none => rfl
+  | some id => simp [EvalCtx.usableActivation, nothing_detached_by_default ctx h id]
 
 /-- A usable activation exists: the watermark only ever removes owners. -/
 theorem usableActivation_isSome (ctx : EvalCtx) (activation : Option Nat)
@@ -122,45 +153,100 @@ theorem usableActivation_isSome (ctx : EvalCtx) (activation : Option Nat)
   | none => simp [EvalCtx.usableActivation] at h
   | some _ => rfl
 
-theorem usableActivation_detached (ctx : EvalCtx) (id : Nat) (h : id < ctx.detachedBefore) :
+theorem usableActivation_detached (ctx : EvalCtx) (id : Nat) (h : ctx.isDetached id = true) :
     ctx.usableActivation (some id) = false := by
-  simp [EvalCtx.usableActivation, EvalCtx.isDetached, h]
+  simp [EvalCtx.usableActivation, h]
 
-/-- **Detachment detaches every activation recorded so far.** -/
-theorem detach_detaches_recorded (ctx : EvalCtx) (activations id : Nat) (h : id < activations) :
-    (ctx.detach activations).isDetached id = true := by
-  rw [isDetached_iff]
+/-- The detached owners of a detached context: the binding's chain activations and the outer owners. -/
+theorem mem_detach_owners (ctx : EvalCtx) (activations : Nat) (owners : List Nat) (id : Nat) :
+    id ∈ (ctx.detach activations owners).detachedOwners ↔ id ∈ owners ∨ id ∈ ctx.detachedOwners := by
+  show id ∈ owners.filter (fun id => !ctx.detachedOwners.contains id) ++ ctx.detachedOwners ↔ _
+  rw [List.mem_append, List.mem_filter]
+  by_cases hin : id ∈ ctx.detachedOwners <;> simp [hin]
+
+/-- **Detachment detaches every activation of the binding's declaring chain recorded so far** — the
+    binding's ENCLOSING CALLS. -/
+theorem detach_detaches_recorded (ctx : EvalCtx) (activations : Nat) (owners : List Nat) (id : Nat)
+    (h : id < activations) (hown : id ∈ owners) :
+    (ctx.detach activations owners).isDetached id = true := by
+  rw [isDetached_iff, mem_detach_owners]
+  refine ⟨?_, .inl hown⟩
   show id < max ctx.detachedBefore activations
   omega
 
-/-- An activation recorded later, and not already detached, stays usable. -/
-theorem detach_keeps_later (ctx : EvalCtx) (activations id : Nat)
+/-- A request made INSIDE the evaluation whose context it is — the context already detached at that
+    watermark and owners, with an empty need tier — detaches nothing new: the context itself. -/
+theorem detach_self (ctx : EvalCtx) (activations : Nat) (owners : List Nat)
+    (hneed : ctx.needEnv = []) (hw : activations ≤ ctx.detachedBefore)
+    (hown : ∀ id ∈ owners, id ∈ ctx.detachedOwners) :
+    ctx.detach activations owners = ctx := by
+  have hfilter : owners.filter (fun id => !ctx.detachedOwners.contains id) = [] := by
+    rw [List.filter_eq_nil_iff]
+    intro id hid
+    simp [hown id hid]
+  have hmax : max ctx.detachedBefore activations = ctx.detachedBefore := Nat.max_eq_left hw
+  have hnot : ¬ ctx.detachedBefore < activations := Nat.not_lt.mpr hw
+  show { ctx with
+      needEnv := [],
+      detachedBefore := max ctx.detachedBefore activations,
+      outerDetached :=
+        if ctx.detachedBefore < activations then ctx.detachedBefore :: ctx.outerDetached else ctx.outerDetached,
+      detachedOwners := owners.filter (fun id => !ctx.detachedOwners.contains id) ++ ctx.detachedOwners } = ctx
+  rw [hfilter, List.nil_append, hmax, ← hneed]
+  simp only [hnot, ↓reduceIte]
+
+/-- An activation recorded later, and not already below the watermark, stays usable. -/
+theorem detach_keeps_later (ctx : EvalCtx) (activations : Nat) (owners : List Nat) (id : Nat)
     (hctx : ctx.detachedBefore ≤ id) (h : activations ≤ id) :
-    (ctx.detach activations).isDetached id = false := by
-  have hnot : ¬ id < (ctx.detach activations).detachedBefore := by
-    show ¬ id < max ctx.detachedBefore activations
-    omega
-  simpa [EvalCtx.isDetached] using hnot
+    (ctx.detach activations owners).isDetached id = false :=
+  not_detached_of_le _ id (by show max ctx.detachedBefore activations ≤ id; omega)
+
+/-- **`detach_keeps_non_owner`** (RETURNED CALLABLES ACROSS DETACHED READS, November 2026): an activation
+    that is no activation of the binding's declaring chain, nor of a binding an outer detachment
+    evaluates, stays usable in the detached context however long before the evaluation it was
+    recorded — the activation behind a callable a retained cell or another exported evaluation
+    returned (`B = Build(5).Algorithm`: `Build`'s activation supplies `B(1)`'s captured `z` to every
+    reader). -/
+theorem detach_keeps_non_owner (ctx : EvalCtx) (activations : Nat) (owners : List Nat) (id : Nat)
+    (hnew : id ∉ owners) (houter : id ∉ ctx.detachedOwners) :
+    (ctx.detach activations owners).isDetached id = false :=
+  not_detached_of_not_owner _ id (by
+    rw [mem_detach_owners]
+    exact fun h => h.elim hnew houter)
 
 /-- A nested detachment never lowers the watermark: detached stays detached. -/
-theorem detach_never_lowers (ctx : EvalCtx) (activations : Nat) :
-    ctx.detachedBefore ≤ (ctx.detach activations).detachedBefore := by
+theorem detach_never_lowers (ctx : EvalCtx) (activations : Nat) (owners : List Nat) :
+    ctx.detachedBefore ≤ (ctx.detach activations owners).detachedBefore := by
   show ctx.detachedBefore ≤ max ctx.detachedBefore activations
   omega
 
+/-- A nested detachment keeps every detached activation detached: the owners only grow. -/
+theorem detach_keeps_detached (ctx : EvalCtx) (activations : Nat) (owners : List Nat) (id : Nat)
+    (h : ctx.isDetached id = true) :
+    (ctx.detach activations owners).isDetached id = true := by
+  obtain ⟨hlt, hown⟩ := (isDetached_iff ctx id).mp h
+  rw [isDetached_iff, mem_detach_owners]
+  refine ⟨?_, .inr hown⟩
+  show id < max ctx.detachedBefore activations
+  omega
+
 /-- Detachment keeps every IDENTITY of the context: its call stack, head scope and binding context. -/
-theorem detach_keeps_identity (ctx : EvalCtx) (activations : Nat) :
-    (ctx.detach activations).callStack = ctx.callStack
-      ∧ (ctx.detach activations).headScope = ctx.headScope
-      ∧ (ctx.detach activations).bindingContext = ctx.bindingContext :=
+theorem detach_keeps_identity (ctx : EvalCtx) (activations : Nat) (owners : List Nat) :
+    (ctx.detach activations owners).callStack = ctx.callStack
+      ∧ (ctx.detach activations owners).headScope = ctx.headScope
+      ∧ (ctx.detach activations owners).bindingContext = ctx.bindingContext :=
   ⟨rfl, rfl, rfl⟩
 
-theorem detach_empties_the_need_tier (ctx : EvalCtx) (activations : Nat) :
-    (ctx.detach activations).needEnv = [] := rfl
+theorem detach_empties_the_need_tier (ctx : EvalCtx) (activations : Nat) (owners : List Nat) :
+    (ctx.detach activations owners).needEnv = [] := rfl
 
 /-- A pushed head inherits the watermark. -/
 theorem push_inherits_watermark (ctx : EvalCtx) (a : Algorithm) :
     (ctx.push a).detachedBefore = ctx.detachedBefore := rfl
+
+/-- A pushed head inherits the detached owners. -/
+theorem push_inherits_owners (ctx : EvalCtx) (a : Algorithm) :
+    (ctx.push a).detachedOwners = ctx.detachedOwners := rfl
 
 /-- A bound callee inherits the watermark: every binding boundary keeps it. -/
 theorem bindParameters_inherits_watermark (names : List Ident) (ctx : EvalCtx) (s : EvalState) :
@@ -185,19 +271,41 @@ theorem captured_own_without_owner (name : Ident) (ctx : EvalCtx) (site : Algori
   simp only [capturedParameter, hhead, hscope, hnot, hnone]
   rfl
 
-/-- The lexical owner is activated and not detached: the read uses its activation. -/
+/-- The lexical owner is activated and its activation is not detached: the read uses it. -/
+theorem captured_activation_of_usable (name : Ident) (ctx : EvalCtx) (site : Algorithm) (scope owner : ScopeCtx)
+    (id : Nat)
+    (hhead : ctx.head? = some site) (hscope : siteScope? ctx = some scope)
+    (hnot : site.params.contains name = false)
+    (hown : (scope.parent >>= fun parent => requiredParameterOwner? parent name) = some owner)
+    (hid : owner.activation = some id) (hd : ctx.isDetached id = false) :
+    capturedParameter name ctx = .activation id := by
+  simp only [capturedParameter, hhead, hscope, hnot, hown, hid, hd]
+  rfl
+
+/-- The lexical owner is activated at or above the watermark: the read uses its activation. -/
 theorem captured_activation (name : Ident) (ctx : EvalCtx) (site : Algorithm) (scope owner : ScopeCtx)
     (id : Nat)
     (hhead : ctx.head? = some site) (hscope : siteScope? ctx = some scope)
     (hnot : site.params.contains name = false)
     (hown : (scope.parent >>= fun parent => requiredParameterOwner? parent name) = some owner)
     (hid : owner.activation = some id) (husable : ctx.detachedBefore ≤ id) :
-    capturedParameter name ctx = .activation id := by
-  have hd : ctx.isDetached id = false := by
-    have hnot' : ¬ id < ctx.detachedBefore := by omega
-    simpa [EvalCtx.isDetached] using hnot'
-  simp only [capturedParameter, hhead, hscope, hnot, hown, hid, hd]
-  rfl
+    capturedParameter name ctx = .activation id :=
+  captured_activation_of_usable name ctx site scope owner id hhead hscope hnot hown hid
+    (not_detached_of_le ctx id husable)
+
+/-- **`returned_callable_read_admitted`** (RETURNED CALLABLES ACROSS DETACHED READS, November 2026): a
+    captured read whose lexical owner's activation is NO detached owner — the level of a callable a
+    retained cell or another exported evaluation returned, which encloses no binding being evaluated
+    detached — uses that activation, below the watermark or not. -/
+theorem returned_callable_read_admitted (name : Ident) (ctx : EvalCtx) (site : Algorithm) (scope owner : ScopeCtx)
+    (id : Nat)
+    (hhead : ctx.head? = some site) (hscope : siteScope? ctx = some scope)
+    (hnot : site.params.contains name = false)
+    (hown : (scope.parent >>= fun parent => requiredParameterOwner? parent name) = some owner)
+    (hid : owner.activation = some id) (hforeign : id ∉ ctx.detachedOwners) :
+    capturedParameter name ctx = .activation id :=
+  captured_activation_of_usable name ctx site scope owner id hhead hscope hnot hown hid
+    (not_detached_of_not_owner ctx id hforeign)
 
 /-- The lexical owner is STATIC (no activation): the name is unbound at the site. -/
 theorem captured_unavailable_static (name : Ident) (ctx : EvalCtx) (site : Algorithm) (scope owner : ScopeCtx)
@@ -215,21 +323,34 @@ theorem captured_unavailable_detached (name : Ident) (ctx : EvalCtx) (site : Alg
     (hhead : ctx.head? = some site) (hscope : siteScope? ctx = some scope)
     (hnot : site.params.contains name = false)
     (hown : (scope.parent >>= fun parent => requiredParameterOwner? parent name) = some owner)
-    (hid : owner.activation = some id) (hdetached : id < ctx.detachedBefore) :
+    (hid : owner.activation = some id) (hd : ctx.isDetached id = true) :
     capturedParameter name ctx = .unavailable := by
-  have hd : ctx.isDetached id = true := (isDetached_iff ctx id).mpr hdetached
   simp only [capturedParameter, hhead, hscope, hnot, hown, hid, hd]
   rfl
 
-/-- THE INVERSE of `captured_activation`: a read that uses an activation has a lexical owner — the
-    nearest level of the site scope's parent chain binding the name — that carries exactly that
+/-- **`enclosing_call_read_refused`**: in the detached context of a binding whose declaring chain holds
+    the activation `id`, recorded before the evaluation started, a captured read through `id` — an
+    input of the binding's enclosing call — is unavailable. -/
+theorem enclosing_call_read_refused (name : Ident) (ctx : EvalCtx) (activations : Nat) (owners : List Nat)
+    (site : Algorithm) (scope owner : ScopeCtx) (id : Nat)
+    (hhead : (ctx.detach activations owners).head? = some site)
+    (hscope : siteScope? (ctx.detach activations owners) = some scope)
+    (hnot : site.params.contains name = false)
+    (hown : (scope.parent >>= fun parent => requiredParameterOwner? parent name) = some owner)
+    (hid : owner.activation = some id) (hrecorded : id < activations) (hchain : id ∈ owners) :
+    capturedParameter name (ctx.detach activations owners) = .unavailable :=
+  captured_unavailable_detached name _ site scope owner id hhead hscope hnot hown hid
+    (detach_detaches_recorded ctx activations owners id hrecorded hchain)
+
+/-- THE INVERSE of `captured_activation_of_usable`: a read that uses an activation has a lexical owner —
+    the nearest level of the site scope's parent chain binding the name — that carries exactly that
     activation, usable in the context; and the head does not bind the name itself. -/
 theorem captured_activation_inv (name : Ident) (ctx : EvalCtx) (id : Nat)
     (h : capturedParameter name ctx = .activation id) :
     ∃ site scope parent owner, ctx.head? = some site ∧ siteScope? ctx = some scope
       ∧ site.params.contains name = false ∧ scope.parent = some parent
       ∧ requiredParameterOwner? parent name = some owner ∧ owner.activation = some id
-      ∧ ctx.detachedBefore ≤ id := by
+      ∧ ctx.isDetached id = false := by
   unfold capturedParameter at h
   cases hh : ctx.head? with
   | none => rw [hh] at h; cases h
@@ -266,12 +387,7 @@ theorem captured_activation_inv (name : Ident) (ctx : EvalCtx) (id : Nat)
                 rw [hd] at h
                 simp only [Bool.false_eq_true, ite_false, CapturedParameter.activation.injEq] at h
                 subst h
-                refine ⟨site, scope, parent, owner, rfl, rfl, hp, hpar, ho, ha, ?_⟩
-                have hnot : ¬ i < ctx.detachedBefore := by
-                  intro hlt
-                  rw [(isDetached_iff ctx i).mpr hlt] at hd
-                  cases hd
-                omega
+                exact ⟨site, scope, parent, owner, rfl, rfl, hp, hpar, ho, ha, hd⟩
 
 /-- **The lookup of an unavailable parameter is REFUSED**: `unknownName`, in the state the lookup
     started from. No state is read and none changes. -/
@@ -336,13 +452,14 @@ theorem detached_param_read_refused (rec : EvalRec) (name : Ident) (ctx : EvalCt
   simp only [bind_run, unavailable_context_refused name ctx env s h]
 
 /-- The detached case of `detached_param_read_refused`, stated on the chain: the nearest level
-    binding the name was activated BEFORE the exported evaluation the context is inside started. -/
+    binding the name was activated BEFORE the exported evaluation the context is inside started, and
+    it encloses a binding being evaluated detached. -/
 theorem detached_owner_read_refused (rec : EvalRec) (name : Ident) (ctx : EvalCtx) (env : ValEnv)
     (s : EvalState) (site : Algorithm) (scope owner : ScopeCtx) (id : Nat)
     (hhead : ctx.head? = some site) (hscope : siteScope? ctx = some scope)
     (hnot : site.params.contains name = false)
     (hown : (scope.parent >>= fun parent => requiredParameterOwner? parent name) = some owner)
-    (hid : owner.activation = some id) (hdetached : id < ctx.detachedBefore) :
+    (hid : owner.activation = some id) (hdetached : ctx.isDetached id = true) :
     (EvalBody.evalCounted rec (.param name) ctx env).runState s = (.error (Error.unknownName name), s) :=
   detached_param_read_refused rec name ctx env s
     (captured_unavailable_detached name ctx site scope owner id hhead hscope hnot hown hid hdetached)
@@ -470,11 +587,13 @@ theorem captured_read_is_lexical (name : Ident) (ctx : EvalCtx) (env env' : ValE
     refine .inl ⟨unavailable_context_refused name ctx env s hu, ?_⟩
     exact unavailable_context_refused name _ env' s (by rw [capturedParameter_ignores_tiers]; exact hu)
   | some id =>
-    by_cases hd : id < ctx.detachedBefore
-    · have hu := captured_unavailable_detached name ctx site scope owner id hhead hscope hnot hown hid hd
+    cases hd : ctx.isDetached id with
+    | true =>
+      have hu := captured_unavailable_detached name ctx site scope owner id hhead hscope hnot hown hid hd
       refine .inl ⟨unavailable_context_refused name ctx env s hu, ?_⟩
       exact unavailable_context_refused name _ env' s (by rw [capturedParameter_ignores_tiers]; exact hu)
-    · have ha := captured_activation name ctx site scope owner id hhead hscope hnot hown hid (by omega)
+    | false =>
+      have ha := captured_activation_of_usable name ctx site scope owner id hhead hscope hnot hown hid hd
       have ha' : capturedParameter name { ctx with needEnv := needs', bindingContext := binding' } = .activation id := by
         rw [capturedParameter_ignores_tiers]; exact ha
       have hq : s.lateRefusedFor { ctx with needEnv := needs', bindingContext := binding' } id =
@@ -514,7 +633,7 @@ theorem detached_access_refused (ctx : EvalCtx) (container : Algorithm) (p : Pro
     (hdepths : p.requiredOwnerDepths = none)
     (hname : name ∈ required)
     (hown : requiredParameterOwner? (scopeInContext container ctx) name = some owner)
-    (hid : owner.activation = some id) (hdetached : id < ctx.detachedBefore) :
+    (hid : owner.activation = some id) (hdetached : ctx.isDetached id = true) :
     memberAccessible? ctx container p = false := by
   simp only [memberAccessible?, hexposure, hsite, hdepths]
   rw [List.all_eq_false]
@@ -530,7 +649,7 @@ theorem detached_access_refused_at_depth (ctx : EvalCtx) (container : Algorithm)
     (hdepths : p.requiredOwnerDepths = some requirements)
     (hname : (name, depth) ∈ requirements)
     (hown : (depth >>= (scopeInContext container ctx).ancestor?) = some owner)
-    (hid : owner.activation = some id) (hdetached : id < ctx.detachedBefore) :
+    (hid : owner.activation = some id) (hdetached : ctx.isDetached id = true) :
     memberAccessible? ctx container p = false := by
   simp only [memberAccessible?, hexposure, hsite, hdepths]
   rw [List.all_eq_false]
@@ -574,9 +693,9 @@ theorem exported_access_is_detached (rec : EvalRec) (accessKind : ZeroArgPropert
     (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (request : ZeroArgPropertyRequest) (s : EvalState) (h : binding.exposure.isExported = true) :
     (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s =
-      (servingDetached (ctx.detach s.lexicalActivations.size).detachedBefore
+      (servingDetached (ctx.detach s.lexicalActivations.size (chainActivations resolvedAlgorithm.parent)).servingOwners
         (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm
-          (ctx.detach s.lexicalActivations.size) [] request)).runState s := by
+          (ctx.detach s.lexicalActivations.size (chainActivations resolvedAlgorithm.parent)) [] request)).runState s := by
   simp only [EvalBody.evalZeroArgPropertyAccessCounted, h, ite_true, bind_run, get_run]
 
 /-- When the input records already serve the request's watermark — a request made inside the
@@ -585,10 +704,10 @@ theorem exported_access_is_detached (rec : EvalRec) (accessKind : ZeroArgPropert
 theorem exported_access_is_detached_served (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (request : ZeroArgPropertyRequest) (s : EvalState) (h : binding.exposure.isExported = true)
-    (hs : (ctx.detach s.lexicalActivations.size).detachedBefore ≤ s.cellInputs.serving) :
+    (hs : (ctx.detach s.lexicalActivations.size (chainActivations resolvedAlgorithm.parent)).servingOwners.all s.cellInputs.serving.contains = true) :
     (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s =
       (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm
-        (ctx.detach s.lexicalActivations.size) [] request).runState s := by
+        (ctx.detach s.lexicalActivations.size (chainActivations resolvedAlgorithm.parent)) [] request).runState s := by
   rw [exported_access_is_detached rec accessKind owner binding resolvedAlgorithm ctx env request s h,
     servingDetached_runState]
   simp only [hs, ↓reduceIte]
@@ -602,12 +721,11 @@ theorem detached_local_only_read_refused (rec : EvalRec) (accessKind : ZeroArgPr
     (s : EvalState) (id : Nat)
     (hlocal : binding.exposure.isExported = false)
     (hnearest : nearestActivation? resolvedAlgorithm.parent = some id)
-    (hdetached : id < ctx.detachedBefore) :
+    (hdetached : ctx.isDetached id = true) :
     (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env .read).runState s =
       (.error (Error.localOnlyProperty detachedReadDescription binding.name binding.exposure), s) := by
   have hrefused : localOnlyReadRefused binding resolvedAlgorithm ctx = true := by
-    simp only [localOnlyReadRefused, hlocal, hnearest, (isDetached_iff ctx id).mpr hdetached, Bool.not_false,
-      Bool.and_self]
+    simp only [localOnlyReadRefused, hlocal, hnearest, hdetached, Bool.not_false, Bool.and_self]
   simp only [EvalBody.evalZeroArgPropertyAccessCounted, hlocal, hrefused, ZeroArgPropertyRequest.isRead,
     Bool.and_self, ite_true, Bool.false_eq_true, ite_false]
   rfl
@@ -730,8 +848,8 @@ theorem local_only_invocation_is_attached (rec : EvalRec) (accessKind : ZeroArgP
   rfl
 
 /-- The detached context does not depend on the reader's need tier. -/
-theorem detach_ignores_the_need_tier (ctx : EvalCtx) (needs : NeedEnv) (activations : Nat) :
-    ({ ctx with needEnv := needs } : EvalCtx).detach activations = ctx.detach activations := rfl
+theorem detach_ignores_the_need_tier (ctx : EvalCtx) (needs : NeedEnv) (activations : Nat) (owners : List Nat) :
+    ({ ctx with needEnv := needs } : EvalCtx).detach activations owners = ctx.detach activations owners := rfl
 
 /-- **`exported_request_ignores_reader_tiers`.** Two readers that differ only in their inherited
     need tier and value environment issue THE SAME request of an exported binding: the same
@@ -754,7 +872,7 @@ theorem exported_request_ignores_reader_tiers (rec : EvalRec) (accessKind : Zero
     an exported property is. -/
 theorem aliasCellContext_exported (wired : Algorithm) (ctx : EvalCtx) (state : EvalState)
     (h : aliasCellIsExported wired = true) :
-    aliasCellContext wired ctx state = ctx.detach state.lexicalActivations.size := by
+    aliasCellContext wired ctx state = ctx.detach state.lexicalActivations.size (chainActivations wired.parent) := by
   simp only [aliasCellContext, h, ite_true]
 
 /-- A local-only alias's binding cell is supplied AT THE WATERMARK OF ITS DECLARING LEVEL (ledger R-1):
@@ -786,17 +904,15 @@ theorem attachedLevel_le (activation : Nat) :
 /-- **The reattached context does not detach the activation**: the row of a local-only alias may use
     the inputs of its declaring level, whichever reader supplies it. -/
 theorem reattach_not_detached (ctx : EvalCtx) (activation : Nat) :
-    (ctx.reattach activation).isDetached activation = false := by
-  have h := attachedLevel_le activation ctx.outerDetached ctx.detachedBefore
-  simp only [EvalCtx.reattach, EvalCtx.isDetached]
-  exact decide_eq_false (by omega)
+    (ctx.reattach activation).isDetached activation = false :=
+  not_detached_of_le _ activation (attachedLevel_le activation ctx.outerDetached ctx.detachedBefore)
 
-/-- A context that does not detach the activation is unchanged by reattaching at it. -/
-theorem reattach_attached (ctx : EvalCtx) (activation : Nat) (h : ctx.isDetached activation = false) :
+/-- A context whose watermark does not reach the activation is unchanged by reattaching at it. (An
+    activation below the watermark that is no detached owner — the level of a returned callable — is
+    usable already, and reattaching at it still lowers the watermark: the row of a local-only alias
+    declared there is supplied at that level's watermark, whichever reader reaches it.) -/
+theorem reattach_attached (ctx : EvalCtx) (activation : Nat) (hle : ctx.detachedBefore ≤ activation) :
     ctx.reattach activation = ctx := by
-  have hle : ctx.detachedBefore ≤ activation := by
-    simp only [EvalCtx.isDetached, decide_eq_false_iff_not] at h
-    omega
   have hlevel : EvalCtx.attachedLevel activation ctx.detachedBefore ctx.outerDetached =
       (ctx.detachedBefore, ctx.outerDetached) := by
     cases ctx.outerDetached <;> simp [EvalCtx.attachedLevel, hle]
@@ -804,20 +920,21 @@ theorem reattach_attached (ctx : EvalCtx) (activation : Nat) (h : ctx.isDetached
   rw [hlevel]
 
 /-- Reattaching changes the watermark alone: the call stack, the need tier, the binding context, the
-    head scope and the input record are the using context's. -/
+    head scope, the input record and the detached owners are the using context's. -/
 theorem reattach_fields (ctx : EvalCtx) (activation : Nat) :
     (ctx.reattach activation).callStack = ctx.callStack ∧
     (ctx.reattach activation).needEnv = ctx.needEnv ∧
     (ctx.reattach activation).bindingContext = ctx.bindingContext ∧
     (ctx.reattach activation).headScope = ctx.headScope ∧
-    (ctx.reattach activation).inputRecord = ctx.inputRecord :=
-  ⟨rfl, rfl, rfl, rfl, rfl⟩
+    (ctx.reattach activation).inputRecord = ctx.inputRecord ∧
+    (ctx.reattach activation).detachedOwners = ctx.detachedOwners :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- A reader that does not detach the alias's declaring level — every reader of a correctly
-    classified program — supplies a local-only alias's row in the using context, as before. -/
+/-- A reader whose watermark does not reach the alias's declaring level supplies a local-only alias's
+    row in the using context, as before. -/
 theorem aliasCellContext_local_attached (wired : Algorithm) (ctx : EvalCtx) (state : EvalState)
     (h : aliasCellIsExported wired = false)
-    (ha : ∀ activation, nearestActivation? wired.parent = some activation → ctx.isDetached activation = false) :
+    (ha : ∀ activation, nearestActivation? wired.parent = some activation → ctx.detachedBefore ≤ activation) :
     aliasCellContext wired ctx state = ctx := by
   rw [aliasCellContext_local wired ctx state h]
   cases hn : nearestActivation? wired.parent with

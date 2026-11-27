@@ -73,9 +73,9 @@ public static partial class Evaluator
             // Only the observer that starts the computation serves its watermark. A second
             // observer can join the flight while the first is suspended.
             if (scope.PendingChannel == NeedCell.Channel.Value)
-                record.RecordValue(cell, await cell.DemandAsync(scope.PendingWatermark).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
+                record.RecordValue(cell, await cell.DemandAsync(scope.PendingOwners).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             else
-                record.RecordCallable(cell, await cell.ProjectCallableAsync(scope.PendingWatermark).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
+                record.RecordCallable(cell, await cell.ProjectCallableAsync(scope.PendingOwners).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         }
     }
 

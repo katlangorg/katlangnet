@@ -229,28 +229,18 @@ public static partial class Evaluator
     /// and the invoking context's own for a local-only binding. The invocation's KEY, its call frame
     /// and its charges are the invoking context's, unchanged
     /// (<see cref="ZeroSupplyInvocationExecution"/>); the supply is empty, so nothing the caller
-    /// supplied is lost. Lean: the <c>.invoke</c> request of
-    /// <c>EvalBody.evalZeroArgPropertyAccessCounted</c>.
+    /// supplied is lost. <paramref name="invoked"/> is the callee as dispatched: its wired parent is the
+    /// binding's declaring chain, whose activations the detached context detaches. Lean: the
+    /// <c>.invoke</c> request of <c>EvalBody.evalZeroArgPropertyAccessCounted</c>.
     /// </summary>
-    private static EvalCtx InvocationBodyContext(in PropertyCallBinding binding, EvalCtx ctx, ValEnv valEnv, out ValEnv values)
+    private static EvalCtx InvocationBodyContext(in PropertyCallBinding binding, Algorithm invoked, EvalCtx ctx, ValEnv valEnv, out ValEnv values)
     {
         if (IsExported(binding.Binding))
-            return DetachedEvaluation(ctx, valEnv, out values);
+            return DetachedEvaluation(ctx, valEnv, invoked.Parent, out values);
 
         values = valEnv;
         return ctx;
     }
-
-    /// <summary>
-    /// The watermark a qualifying zero-supply invocation of <paramref name="binding"/> is SERVED at (ledger
-    /// R-1): the watermark of its body's context (<see cref="InvocationBodyContext"/>) — the detached one
-    /// for an <see cref="PropertyExposure.Exported"/> binding, which is the reader's watermark raised to the
-    /// run's current one — and zero, which serves nothing, for a local-only binding.
-    /// </summary>
-    private static long InvocationServedWatermark(in PropertyCallBinding binding, in EvalCtx ctx)
-        => IsExported(binding.Binding) && ctx.Budget.DetachesExportedEvaluations
-            ? Math.Max(ctx.DetachedBefore, ctx.Budget.ActivationWatermark)
-            : 0;
 
     private static EvalResult<ZeroArgPropertyResult> ToPropertyResult(EvalResult<CountedResult> output)
         => output.IsError
@@ -265,11 +255,11 @@ public static partial class Evaluator
     /// at the call's value boundary.
     /// </summary>
     private static EvalResult<CountedResult> EvalPublishedZeroSupplyInvocation(
-        PropertyCallBinding binding, Algorithm property, EvalCtx ctx, ValEnv valEnv, Func<EvalResult<ZeroArgPropertyResult>> invocation)
+        PropertyCallBinding binding, Algorithm property, EvalCtx ctx, ValEnv valEnv, DetachedOwnerSet? owners, Func<EvalResult<ZeroArgPropertyResult>> invocation)
     {
         // An EXPORTED binding's invocation is served while it runs, like its read (ledger R-1; Lean
         // `servingDetached` in `EvalBody.evalZeroArgPropertyAccessCounted`).
-        ctx.Budget.EnterServing(InvocationServedWatermark(binding, ctx));
+        ctx.Budget.EnterServing(IsExported(binding.Binding) ? owners : null);
         EvalResult<ZeroArgPropertyResult> published;
         try
         {
@@ -284,7 +274,7 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="EvalPublishedZeroSupplyInvocation"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalPublishedZeroSupplyInvocationAsync(
-        PropertyCallBinding binding, Algorithm property, EvalCtx ctx, ValEnv valEnv, Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> invocation)
+        PropertyCallBinding binding, Algorithm property, EvalCtx ctx, ValEnv valEnv, DetachedOwnerSet? owners, Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> invocation)
     {
         // As on the async read seam: the async twin family runs only over an async-capable cache or the
         // twins' view of a synchronous run's cache, so any other cache here is an evaluator ownership bug —
@@ -297,7 +287,7 @@ public static partial class Evaluator
 
         // An EXPORTED binding's invocation is served while it runs, like its read (ledger R-1; Lean
         // `servingDetached` in `EvalBody.evalZeroArgPropertyAccessCounted`).
-        ctx.Budget.EnterServing(InvocationServedWatermark(binding, ctx));
+        ctx.Budget.EnterServing(IsExported(binding.Binding) ? owners : null);
         EvalResult<ZeroArgPropertyResult> published;
         try
         {
@@ -378,8 +368,8 @@ public static partial class Evaluator
                 var cells = supply.Value;
                 // A family's own result is already its value boundary, as its property read's is.
                 var familyBoundary = property is Algorithm.Conditional;
-                var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
-                return EvalPublishedZeroSupplyInvocation(binding, property, ctx, valEnv,
+                var bodyCtx = InvocationBodyContext(binding, property, ctx, valEnv, out var bodyValues);
+                return EvalPublishedZeroSupplyInvocation(binding, property, ctx, valEnv, bodyCtx.ServingOwners,
                     () => ToPropertyResult(EvalNeedUserSupplyCounted(callee, cells, bodyCtx, bodyValues, name, variadicArityStyle: true,
                         occurrences, valueBoundary: familyBoundary)));
             }
@@ -402,8 +392,8 @@ public static partial class Evaluator
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
             {
                 var cells = supply.Value;
-                var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
-                return EvalPublishedZeroSupplyInvocation(binding, callee, ctx, valEnv,
+                var bodyCtx = InvocationBodyContext(binding, callee, ctx, valEnv, out var bodyValues);
+                return EvalPublishedZeroSupplyInvocation(binding, callee, ctx, valEnv, bodyCtx.ServingOwners,
                     () => ToPropertyResult(EvalNeedFamilySupplyCounted(callee, cells, bodyCtx, bodyValues, name)));
             }
 
@@ -469,8 +459,8 @@ public static partial class Evaluator
             {
                 var cells = supply.Value;
                 var familyBoundary = property is Algorithm.Conditional;
-                var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
-                return await EvalPublishedZeroSupplyInvocationAsync(binding, property, ctx, valEnv,
+                var bodyCtx = InvocationBodyContext(binding, property, ctx, valEnv, out var bodyValues);
+                return await EvalPublishedZeroSupplyInvocationAsync(binding, property, ctx, valEnv, bodyCtx.ServingOwners,
                     async () => ToPropertyResult(await EvalNeedUserSupply(callee, cells, bodyCtx, bodyValues, name,
                         variadicArityStyle: true, occurrences, valueBoundary: familyBoundary).ConfigureAwait(FoldTrampoline.CaptureFoldContext))).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }
@@ -496,8 +486,8 @@ public static partial class Evaluator
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
             {
                 var cells = supply.Value;
-                var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
-                return await EvalPublishedZeroSupplyInvocationAsync(binding, callee, ctx, valEnv,
+                var bodyCtx = InvocationBodyContext(binding, callee, ctx, valEnv, out var bodyValues);
+                return await EvalPublishedZeroSupplyInvocationAsync(binding, callee, ctx, valEnv, bodyCtx.ServingOwners,
                     async () => ToPropertyResult(await EvalNeedFamilySupply(callee, cells, bodyCtx, bodyValues, name)
                         .ConfigureAwait(FoldTrampoline.CaptureFoldContext))).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }

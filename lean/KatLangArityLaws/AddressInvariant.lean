@@ -646,16 +646,16 @@ theorem OptActV.some {h : Array NeedCell} {act : ParameterActivation} (v : OptAc
 /-- A SERVED evaluation (ledger R-1, `servingDetached`) keeps the evaluation's contract: the two writes
     around it change the input records only, where no address is stored. -/
 theorem SoundI.servingDetached {α : Type} {P : Array NeedCell → Prop} {m : EvalM α}
-    {Q : α → Array NeedCell → Prop} (watermark : Nat) (hm : SoundI P m Q) :
-    SoundI P (servingDetached watermark m) Q := by
+    {Q : α → Array NeedCell → Prop} (owners : List Nat) (hm : SoundI P m Q) :
+    SoundI P (servingDetached owners m) Q := by
   intro hp s vs ps
   rw [servingDetached_runState]
   split
   · exact hm hp s vs ps
-  · have vs' : Inv { s with cellInputs := { s.cellInputs with serving := watermark } } :=
+  · have vs' : Inv { s with cellInputs := { s.cellInputs with serving := owners ++ s.cellInputs.serving } } :=
       Inv.of_inputsOnly vs rfl
     obtain ⟨vt, gt, rt⟩ := hm hp _ vs' ps
-    rcases hrun : m.runState { s with cellInputs := { s.cellInputs with serving := watermark } } with ⟨outcome, t⟩
+    rcases hrun : m.runState { s with cellInputs := { s.cellInputs with serving := owners ++ s.cellInputs.serving } } with ⟨outcome, t⟩
     rw [hrun] at vt gt rt
     simp only []
     split

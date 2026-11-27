@@ -418,10 +418,12 @@ public sealed class NeedCellAsyncResolutionTests
         async Task Suspend()
         {
             Interlocked.Increment(ref computations);
-            Assert.Equal(3, budget.ServingDetached);
+            Assert.Equal(3, budget.ServingDetached!.Serial);
+            Assert.Null(budget.ServingDetached.Next);
             started.SetResult();
             await release.Task.WaitAsync(WaitLimit);
-            Assert.Equal(3, budget.ServingDetached);
+            Assert.Equal(3, budget.ServingDetached!.Serial);
+            Assert.Null(budget.ServingDetached.Next);
         }
         var cell = NeedCell.WithRuntimeProjection(
             () => One, async () => { await Suspend(); return One; },
@@ -429,7 +431,7 @@ public sealed class NeedCellAsyncResolutionTests
 
         Task<EvalResult<Algorithm?>> Observe(long watermark) => ResolveAsync(budget, () =>
         {
-            budget.EnterServing(watermark);
+            budget.EnterServing(new(watermark));
             try { return callable ? cell.ProjectCallable() : ThenIdentity(cell.Demand(), Identity()); }
             finally { budget.ExitServing(); }
         }).AsTask();
@@ -440,7 +442,8 @@ public sealed class NeedCellAsyncResolutionTests
         try
         {
             Assert.True(callable ? cell.HasJoinedProjectionFlight : cell.HasJoinedValueFlight);
-            Assert.Equal(3, budget.ServingDetached);
+            Assert.Equal(3, budget.ServingDetached!.Serial);
+            Assert.Null(budget.ServingDetached.Next);
         }
         finally
         {
@@ -449,7 +452,7 @@ public sealed class NeedCellAsyncResolutionTests
             Assert.All(results, result => Assert.Same(IdentityAlgorithm, result.Value));
         }
         Assert.Equal(1, computations);
-        Assert.Equal(0, budget.ServingDetached);
+        Assert.Null(budget.ServingDetached);
     }
 
     [Fact]
@@ -461,10 +464,10 @@ public sealed class NeedCellAsyncResolutionTests
         using var release = new ManualResetEventSlim();
         var probe = Task.Run(async () => await ResolveAsync(budget, () =>
         {
-            budget.EnterServing(8);
+            budget.EnterServing(new(8));
             try
             {
-                Assert.Equal(8, budget.ServingDetached);
+                Assert.Equal(8, budget.ServingDetached!.Serial);
                 entered.SetResult();
                 Assert.True(release.Wait(WaitLimit));
                 return Identity();
@@ -474,7 +477,7 @@ public sealed class NeedCellAsyncResolutionTests
         try
         {
             await entered.Task.WaitAsync(WaitLimit);
-            Assert.Equal(0, budget.ServingDetached);
+            Assert.Null(budget.ServingDetached);
         }
         finally { release.Set(); }
         Assert.Same(IdentityAlgorithm, (await probe.WaitAsync(WaitLimit)).Value);

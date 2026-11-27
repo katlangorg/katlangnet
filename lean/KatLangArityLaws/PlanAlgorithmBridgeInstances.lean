@@ -758,8 +758,8 @@ theorem tail_keeps :
   intro s hs _
   subst hs
   rw [tail_t]
-  show Unrecorded 1 t₅
-  decide +kernel
+  change (t₅.needs[1]?).bind NeedCell.callee = none
+  kernel_rfl
 
 /-- Production's tail allocates PAST the insertion address, and the value is the number 7. -/
 theorem tail_allocates : t.needs.size < t₅.needs.size := by decide +kernel

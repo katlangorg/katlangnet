@@ -294,7 +294,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
             "no in parameter on an async member"),
         new("Evaluator.BindNeedFamilySupply", "Evaluator.BindNeedFamilySupplyCounted", "9c48563b1f2ad854", AL,
             "the flat-literal head is bound without in ctx, and the binder-or-literal-head conditional is restated as an if/else with one await site per arm"),
-        new("Evaluator.EvalPublishedZeroSupplyInvocationAsync", "Evaluator.EvalPublishedZeroSupplyInvocation", "25ad9be885474979", ACG | AL,
+        new("Evaluator.EvalPublishedZeroSupplyInvocationAsync", "Evaluator.EvalPublishedZeroSupplyInvocation", "cd3a7f0b6ff02199", ACG | AL,
             "the shared PropertyAccessCache must be an IAsyncZeroArgPropertyResultCache; the delegate returns ValueTask<...>"),
         new("Evaluator.EvalOriginUserCallCountedAsync", "Evaluator.EvalOriginUserCallCounted", "6dfac2030aaf9993", SH, HopReason),
         new("Evaluator.EvalOriginFamilyCallCountedAsync", "Evaluator.EvalOriginFamilyCallCounted", "bf2d3c3f7cdf2749", SH, HopReason),

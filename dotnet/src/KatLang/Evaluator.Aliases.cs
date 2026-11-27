@@ -418,7 +418,7 @@ public static partial class Evaluator
                         _taints++;
                         return Finish(frame, refusal);
                     }
-                    frame.Ctx.Budget.EnterServing(frame.Ctx.DetachedBefore);
+                    frame.Ctx.Budget.EnterServing(frame.Ctx.ServingOwners);
                     try { projection = cell.ProjectCallable(); }
                     finally { frame.Ctx.Budget.ExitServing(); }
                 }
@@ -1094,7 +1094,7 @@ public static partial class Evaluator
     private static EvalCtx AliasCellContext(Algorithm.Alias wired, EvalCtx ctx, out ValEnv values)
     {
         if (AliasOwnProperty(wired, ctx.Budget) is { Exposure: PropertyExposure.Exported })
-            return DetachedEvaluation(ctx, NoBindingCellValues, out values);
+            return DetachedEvaluation(ctx, NoBindingCellValues, wired.Parent, out values);
 
         values = NoBindingCellValues;
         return ctx.DetachedBefore != 0 && ctx.Budget.JudgesRetainedCellReuse && DeclaringActivation(wired.Parent) is { } declaring

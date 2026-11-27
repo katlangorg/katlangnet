@@ -1034,7 +1034,7 @@ theorem EvalBody.evalZeroArgPropertyAccessCounted_sound (rec : EvalRec) (hrec : 
     rw [EvalM.bind_runState, get_run]
     -- The request is served (ledger R-1): the served evaluation keeps the publication law's contract.
     exact SoundI.servingDetached _ (EvalBody.zeroArgPropertyPublication_sound rec hrec accessKind owner binding
-      resolvedAlgorithm (ctx.detach s.lexicalActivations.size) [] request
+      resolvedAlgorithm (ctx.detach s.lexicalActivations.size (chainActivations resolvedAlgorithm.parent)) [] request
       (P := CallPre (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request))
       (fun _ _ => ⟨fun _ hm => (by cases hm), fun _ hm => (by cases hm)⟩)) hp s vs ps
   · split

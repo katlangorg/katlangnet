@@ -844,17 +844,17 @@ theorem property_cache_hit_production (k : ZeroArgPropertyAccessKind) (owner : A
   show (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding resolved ctx env .read).runState s = _
   cases hexp : binding.exposure.isExported with
   | true =>
-    -- The request is served (ledger R-1): a hit leaves the state it found, so the served watermark the
-    -- request raised is restored to the entry state.
+    -- The request is served (ledger R-1): a hit leaves the state it found, so restoring the served owner set
+    -- returns the entry state.
     rw [KatLang.DetachedEvaluation.exported_access_is_detached rec k owner binding resolved ctx env .read s hexp,
       servingDetached_runState]
     split
     · refine publication_read_hit rec k owner binding resolved _ _ s v hcache ?_
       rw [cacheKey_exported_context_free k k owner binding hexp _ ctx _ env _ _ _]
       exact hhit
-    · have hpub := publication_read_hit rec k owner binding resolved (ctx.detach s.lexicalActivations.size) []
+    · have hpub := publication_read_hit rec k owner binding resolved (ctx.detach s.lexicalActivations.size (chainActivations resolved.parent)) []
         { s with cellInputs :=
-          { s.cellInputs with serving := (ctx.detach s.lexicalActivations.size).detachedBefore } } v hcache (by
+          { s.cellInputs with serving := (ctx.detach s.lexicalActivations.size (chainActivations resolved.parent)).servingOwners ++ s.cellInputs.serving } } v hcache (by
             rw [cacheKey_exported_context_free k k owner binding hexp _ ctx _ env _ _ _]
             exact hhit)
       rw [hpub]

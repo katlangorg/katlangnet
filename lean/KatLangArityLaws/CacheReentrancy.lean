@@ -287,7 +287,7 @@ theorem request_unfolds (hc : ProductionCompletes (evalUnbounded (requestCall k 
     * an EXPORTED request issued from a context that is already detached at the entry state, while
       the input records serve its watermark (`detached_exported_runs_in_own_context`: a request made
       inside the exported evaluation whose context it is). Any other exported request runs the same
-      law, served, over `ctx.detach s.lexicalActivations.size` and no values
+      law, served, over `ctx.detach s.lexicalActivations.size (chainActivations a.parent)` and no values
       (`DetachedEvaluation.exported_access_is_detached`), under the SAME key
       (`WhileRoundProduction.cacheKey_exported_context_free`): apply the laws at that context. -/
 def RunsInOwnContext (request : ZeroArgPropertyRequest) : Prop :=
@@ -303,8 +303,8 @@ theorem local_only_runs_in_own_context (hlocal : binding.exposure.isExported = f
     hlocal hadmitted hunmarked]
 
 theorem detached_exported_runs_in_own_context (hexported : binding.exposure.isExported = true)
-    (hctx : ctx.detach s.lexicalActivations.size = ctx) (henv : env = [])
-    (hserved : ctx.detachedBefore ≤ s.cellInputs.serving) :
+    (hctx : ctx.detach s.lexicalActivations.size (chainActivations a.parent) = ctx) (henv : env = [])
+    (hserved : ctx.servingOwners.all s.cellInputs.serving.contains = true) :
     RunsInOwnContext k owner binding a ctx env s request := by
   unfold RunsInOwnContext
   rw [KatLang.DetachedEvaluation.exported_access_is_detached_served evalUnbounded k owner binding a ctx env request s
