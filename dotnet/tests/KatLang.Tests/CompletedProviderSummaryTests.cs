@@ -32,7 +32,11 @@ namespace KatLang.Tests;
 ///   <item>ISOLATION: an attempt that publishes nothing (refused, cancelled; one that holds a completed module
 ///   included) leaves nothing in the share and its diagnostics are the same before and after other branches published;
 ///   a provider that holds a placeholder is never kept; concurrent selections publish what a sequential run publishes;
-///   one parse never reads another's.</item>
+///   one parse never reads another's;</item>
+///   <item>OWNER DECISION PENDING (<c>docs/design/completed-module-output-seed-owner-decision-brief-2026-11.md</c>): a
+///   wide member-read layouts with output rows or opens traverse both module views on each later selection, a
+///   unit keeps nothing it completed itself, and fourteen witnesses of that output seed are the same with and without
+///   the share.</item>
 /// </list>
 /// <para>Host conventions are those of <see cref="DeferredAttemptCacheRetentionTests"/>: an in-memory downloader that
 /// counts its calls, <c>AllowedHosts = ["modules.example"]</c>, a clean parse that downloads nothing, and regions
@@ -687,6 +691,310 @@ public class CompletedProviderSummaryTests
             Assert.False(flat.IsError, flat.IsError ? flat.Error.ToString() : "");
             Assert.Equal(Enumerable.Range(0, branches).Select(index => WideValue(Members.Helper, index)).ToArray(), flat.Value);
         }
+    }
+
+    // ── Output seeds of branch-held modules (owner decision pending) ────────
+
+    /// <summary>
+    /// The branch-held module shapes whose output seed every selection still computes. The options for them are in
+    /// <c>docs/design/completed-module-output-seed-owner-decision-brief-2026-11.md</c>; the tests below pin today's
+    /// behavior, which the publication policy keeps until the owner decides.
+    /// </summary>
+    public enum OutputSeedLayout
+    {
+        /// <summary>The branch-held module ends with the output row <c>F0(3)</c>.</summary>
+        OutputRow,
+
+        /// <summary>The branch-held module opens another module first.</summary>
+        Opens,
+
+        /// <summary>As <see cref="Opens"/>, and member <c>F0</c> reads <c>Z</c>, a name the opened module provides.</summary>
+        OpensReadByAMember,
+
+        /// <summary>As <see cref="OutputRow"/>, and a root property holds the module too: the parse completed it.</summary>
+        OutputRowCompletedByTheParse,
+
+        /// <summary>As <see cref="Opens"/>, and a root property holds the module too: the parse completed it.</summary>
+        OpensCompletedByTheParse,
+    }
+
+    /// <summary>
+    /// <see cref="Owned"/> (<see cref="OwnedLayout.BranchProperty"/>, or <see cref="OwnedLayout.RootAndBranchProperty"/>
+    /// for the layouts the parse completes) over a <paramref name="width"/>-member module of the shape
+    /// <paramref name="layout"/> names; every row still evaluates to <see cref="WideValue"/>.
+    /// </summary>
+    private static Program OutputSeedProgram(OutputSeedLayout layout, int width, int branches)
+    {
+        var completedByTheParse = layout is OutputSeedLayout.OutputRowCompletedByTheParse or OutputSeedLayout.OpensCompletedByTheParse;
+        var basis = Owned(completedByTheParse ? OwnedLayout.RootAndBranchProperty : OwnedLayout.BranchProperty, Members.Helper, width, branches);
+        var members = MemberLines(Members.Helper, width, "");
+        var module = layout switch
+        {
+            OutputSeedLayout.OutputRow or OutputSeedLayout.OutputRowCompletedByTheParse => members + "F0(3)\n",
+            OutputSeedLayout.OpensReadByAMember => $"open '{Url("tiny2")}'\n"
+                + members.Replace("public F0(x) = Helper(x) + 0\n", "public F0(x) = Helper(x) + Z - 4\n", StringComparison.Ordinal),
+            _ => $"open '{Url("tiny2")}'\n" + members,
+        };
+        var library = new Dictionary<string, string>(basis.Library, StringComparer.Ordinal) { ["tiny2"] = Tiny2, ["lib"] = module };
+        return basis with { Name = $"{layout}/{width}", Library = library };
+    }
+
+    /// <summary>
+    /// TODAY'S COST OF A BRANCH-HELD MODULE WITH OUTPUT ROWS OR OPENS (owner decision pending). The branch's property
+    /// needs the output seed of the module's RESOLVED view, which the sealed table of the completing operation marks as
+    /// superseded, while the member path charges the CLASSIFIED view that table names. Every selection over a module an
+    /// earlier operation completed therefore summarizes the whole module twice: the resolved root at its sealed
+    /// publication, which no exact request asks for and so is never kept, and the classified member path, whose keep
+    /// window reads the first walk's results at the same contexts and so is never kept either. Nothing is kept or
+    /// adopted at any width, and every such selection does the same work: there is no warm-up. With neither opens nor
+    /// rows the output seed is empty and is not computed, so the plain layout's later selections do no work in the width
+    /// (<see cref="BranchOwnedModules_LaterSelectionsDoNoWorkInTheModuleWidth"/>). Release harness at 1,000 / 4,000
+    /// members: about 16,298 / 61,760 KiB at every later selection, for output rows and opens alike.
+    /// </summary>
+    [Theory]
+    [InlineData(OutputSeedLayout.OutputRow)]
+    [InlineData(OutputSeedLayout.Opens)]
+    [InlineData(OutputSeedLayout.OpensReadByAMember)]
+    [InlineData(OutputSeedLayout.OutputRowCompletedByTheParse)]
+    [InlineData(OutputSeedLayout.OpensCompletedByTheParse)]
+    public async Task BranchOwnedModuleWithOutputOrOpens_SummarizesBothViewsAtEverySelection_AndKeepsNothing(OutputSeedLayout layout)
+    {
+        const int branches = 4;
+        const int narrowWidth = 24;
+        const int wideWidth = 240;
+        var narrow = await MaterializeAll(OutputSeedProgram(layout, narrowWidth, branches), branches, CompletedProviderSummaries.Mode.Shared);
+        var wide = await MaterializeAll(OutputSeedProgram(layout, wideWidth, branches), branches, CompletedProviderSummaries.Mode.Shared);
+        // The first selection over an earlier operation's module: the parse's, or the first selection's.
+        var first = layout is OutputSeedLayout.OutputRowCompletedByTheParse or OutputSeedLayout.OpensCompletedByTheParse ? 0 : 1;
+
+        for (var index = first; index < branches; index++)
+        {
+            var counters = wide.Work[index];
+            Assert.True(counters["SummaryMemberEvaluations"] >= 2 * wideWidth, $"selection {index}: {Render(counters)}");
+            Assert.True(counters["SummaryMemberEvaluations"] - narrow.Work[index]["SummaryMemberEvaluations"] >= 2 * (wideWidth - narrowWidth),
+                $"selection {index}:\n  {narrowWidth}: {Render(narrow.Work[index])}\n  {wideWidth}: {Render(counters)}");
+            Assert.Equal(0, counters["CompletedProviderSummariesKept"]);
+            Assert.Equal(0, counters["CompletedProviderSummaryAdoptions"]);
+        }
+
+        for (var index = first + 2; index < branches; index++)
+            Assert.True(wide.Work[first + 1].SequenceEqual(wide.Work[index]),
+                $"selection {first + 1}: {Render(wide.Work[first + 1])}\nselection {index}: {Render(wide.Work[index])}");
+        Assert.Equal(0, ShareOf(narrow.Regions[0]).Count);
+        Assert.Equal(0, ShareOf(wide.Regions[0]).Count);
+    }
+
+    /// <summary>
+    /// A UNIT KEEPS NOTHING IT COMPLETED ITSELF (today's publication policy; option B of the owner decision brief would
+    /// change it). The selection that completes the module summarizes it in its own unit, whose facts are not inherited
+    /// content, and keeps nothing; the next selection summarizes the module once more, now an earlier operation's
+    /// content, and keeps it; the selection after that adopts it. Release harness at 1,000 / 4,000 members: 20,218 /
+    /// 76,959 KiB for the keeping selection, then about 237 / 370 KiB.
+    /// </summary>
+    [Fact]
+    public async Task ABranchThatCompletesAModule_KeepsNothingOfItsOwn_AndTheNextSelectionKeeps()
+    {
+        const int width = 240;
+        const int branches = 3;
+        var shared = await MaterializeAll(Owned(OwnedLayout.BranchProperty, Members.Helper, width, branches), branches,
+            CompletedProviderSummaries.Mode.Shared);
+
+        var completing = shared.Work[0];
+        Assert.True(completing["SummaryMemberEvaluations"] >= width, Render(completing));
+        Assert.Equal(0, completing["CompletedProviderSummariesKept"]);
+        Assert.Equal(0, completing["CompletedProviderSummaryAdoptions"]);
+
+        var keeping = shared.Work[1];
+        Assert.True(keeping["SummaryMemberEvaluations"] >= width, Render(keeping));
+        Assert.True(keeping["CompletedProviderSummariesKept"] > 0, Render(keeping));
+        Assert.Equal(0, keeping["CompletedProviderSummaryAdoptions"]);
+
+        var adopting = shared.Work[2];
+        Assert.True(adopting["SummaryMemberEvaluations"] < 24, Render(adopting));
+        Assert.True(adopting["CompletedProviderSummaryAdoptions"] > 0, Render(adopting));
+        Assert.True(ShareOf(shared.Regions[0]).Count > 0, "nothing was published");
+    }
+
+    private static readonly string WitnessMembers = MemberLines(Members.Helper, 6, "");
+
+    /// <summary>
+    /// A witness program whose load-bearing branches each hold the module <paramref name="module"/>
+    /// in their own property <c>L</c> and evaluate <paramref name="body"/> (by default <c>W(n) + L.F&lt;i&gt;(n)</c>).
+    /// </summary>
+    private static Program Witness(string name, string module, Func<int, string>? body = null, string root = "",
+        IReadOnlyDictionary<string, string>? more = null, int branches = 4)
+    {
+        var library = new Dictionary<string, string>(StringComparer.Ordinal) { ["tiny"] = Tiny, ["tiny2"] = Tiny2, ["lib"] = module };
+        foreach (var (url, text) in more ?? new Dictionary<string, string>())
+            library[url] = text;
+        body ??= index => $"L = load('{Url("lib")}')\n    W(n) + L.F{index % 3}(n)";
+        return new Program(name, root + Families(branches, body), library);
+    }
+
+    /// <summary>
+    /// SHARING-DISABLED DIFFERENTIAL WITNESSES for the output seed of a branch-held module: the shapes any reuse of that
+    /// seed must keep exact — output rows that read a helper member, an opened name, a nested block, a lifted parameter
+    /// or a clause family; opens read by a member; a member whose escaping path into a nested module is bound by that
+    /// member (its owner is a different node in the resolved and in the classified view); a module root elaborated to a
+    /// callable alias; two views of one text; a module the parse completed; a module held through an inline open block
+    /// or twice; and a module holding a load-bearing branch of its own.
+    /// </summary>
+    public static TheoryData<Program> OutputSeedWitnesses()
+    {
+        var row = WitnessMembers + "F0(3)\n";
+        var opens = $"open '{Url("tiny2")}'\n";
+        var witnesses = new TheoryData<Program>
+        {
+            Witness("output row reading a helper member", row),
+            Witness("same member name from different open providers",
+                opens + "public F0(x) = Z + x\n",
+                index => $"L = load('{Url(index % 2 == 0 ? "lib" : "copy")}')\n    L.F0(n)",
+                more: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["copy"] = $"open '{Url("otherProvider")}'\npublic F0(x) = Z + x\n",
+                    ["otherProvider"] = "public Z = 40\n",
+                }, branches: 8),
+            Witness("opens read by a member", opens
+                + WitnessMembers.Replace("public F0(x) = Helper(x) + 0\n", "public F0(x) = Helper(x) + Z - 4\n", StringComparison.Ordinal)),
+            Witness("output row reading an opened name", opens + WitnessMembers + "Z + F0(1)\n"),
+            Witness("member path into a nested module, bound by the member",
+                $"T2 = load('{Url("tiny2")}')\n" + WitnessMembers + "public FB(x) = T2.Q(x) + Helper(x)\nFB(3)\n",
+                index => $"L = load('{Url("lib")}')\n    L.FB(n) + L.F{index % 3}(n)"),
+            Witness("output row reading a nested block", WitnessMembers + "Inner = {\n    public Deep(x) = x + 7\n}\nInner.Deep(2)\n"),
+            Witness("output row with a lifted parameter", WitnessMembers + "q + 1\n"),
+            Witness("module root elaborated to an alias", WitnessMembers + "public K = q + 1\nK\n"),
+            Witness("output row calling a clause family", WitnessMembers + "public P(0) = 0\npublic P(m) = m + 1\nP(2)\n"),
+            Witness("two views of one text", row,
+                index => $"L = load('{Url(index % 2 == 0 ? "lib" : "copy")}')\n    W(n) + L.F{index % 3}(n)",
+                more: new Dictionary<string, string>(StringComparer.Ordinal) { ["copy"] = row }, branches: 8),
+            Witness("completed by the parse", row,
+                index => $"L = load('{Url("lib")}')\n    L.F{index % 3}(n) + Lib.F{(index + 1) % 3}(n)", root: $"Lib = load('{Url("lib")}')\n"),
+            Witness("held twice", row,
+                index => $"L = load('{Url("lib")}')\n    M = load('{Url("lib")}')\n    L.F{index % 3}(n) + M.F{(index + 1) % 3}(n)"),
+            Witness("load-bearing branch inside the module", PlaceholderMembers + "F0(2)\n",
+                index => $"L = load('{Url("lib")}')\n    W(n) + L.{new[] { "F0", "F1", "P" }[index % 3]}(n)"),
+        };
+        witnesses.Add(new Program("held through an inline open block",
+            string.Concat(Enumerable.Range(0, 4).Select(index =>
+                $"G{index}(0) = 0\nG{index}(n) = {{\n    open '{Url("tiny")}', {{ public L = load('{Url("lib")}') }}\n    V + L.F{index % 3}(n)\n}}\n"))
+            + string.Concat(Enumerable.Range(0, 4).Select(static index => $"G{index}(1)\n")),
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["tiny"] = Tiny, ["tiny2"] = Tiny2, ["lib"] = row }));
+        return witnesses;
+    }
+
+    /// <summary>
+    /// The witnesses give the same values, materialize bodies with the same exposure metadata and download the same
+    /// modules with the share, in the verifying mode and without the share (the reference). Each alternating-URL case selects each module four times,
+    /// covering an adoption opportunity for both candidate policies.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(OutputSeedWitnesses))]
+    public async Task OutputSeedWitnesses_AreTheSameWithAndWithoutTheShare(Program program)
+    {
+        var unshared = await Observe(program, CompletedProviderSummaries.Mode.Unshared);
+        var shared = await Observe(program, CompletedProviderSummaries.Mode.Shared);
+        var verified = await Observe(program, CompletedProviderSummaries.Mode.Verified);
+
+        Assert.StartsWith("values ", unshared.Outcome, StringComparison.Ordinal);
+        Assert.Equal(unshared.Outcome, shared.Outcome);
+        Assert.Equal(unshared.Outcome, verified.Outcome);
+        Assert.Equal(unshared.Exposure, shared.Exposure);
+        Assert.Equal(unshared.Exposure, verified.Exposure);
+        Assert.DoesNotContain("<not materialized>", unshared.Exposure, StringComparison.Ordinal);
+        Assert.Equal(unshared.Downloads, shared.Downloads);
+        Assert.Equal(unshared.Downloads, verified.Downloads);
+        Assert.Equal((0L, 0L, 0), (unshared.Adoptions, unshared.Kept, unshared.Published));
+    }
+
+    /// <summary>
+    /// A refused branch and two publishing ones hold a module with an output row (see <see cref="RefusedOwnerAndPublished"/>,
+    /// declared later: a property, so that it is read after that field is initialized).
+    /// </summary>
+    private static Program RefusedRowOwnerAndPublished => RefusedOwnerAndPublished with
+    {
+        Name = "refused holder of a module with an output row, and published",
+        Library = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["m"] = "public X = y * 10\n",
+            ["lib"] = MemberLines(Members.Helper, 30, "") + "F0(3)\n",
+        },
+    };
+
+    /// <summary>
+    /// ISOLATION FOR A MODULE WITH AN OUTPUT ROW. A refused attempt that holds the module, before and after a branch
+    /// completed it, publishes nothing and reports the diagnostics of the reference (code, message, span), and an attempt
+    /// cancelled at its unit's seal publishes nothing either; the share holds what the publishing selections leave, and
+    /// the values are the reference's. Today that is nothing at all; any reuse of the output seed must keep these.
+    /// </summary>
+    [Fact]
+    public async Task AttemptsHoldingAModuleWithAnOutputRow_PublishNothingWhenRefusedOrCancelled()
+    {
+        var program = RefusedRowOwnerAndPublished;
+        var root = await ParseDeferred(program, new RunHost(program.Library));
+        var refusedRegion = RegionAt(root, "G", "F");
+        var share = ShareOf(refusedRegion);
+        var referenceRoot = await ParseDeferred(program, new RunHost(program.Library));
+        var reference = await In(CompletedProviderSummaries.Mode.Unshared,
+            async () => Diagnostics(await RegionAt(referenceRoot, "G", "F").MaterializeAsync(CancellationToken.None)));
+        Assert.Equal(DiagnosticCode.DeferredBranchForwardsEnclosingParameter, Assert.Single(reference).Code);
+
+        Assert.Equal(reference, Diagnostics(await refusedRegion.MaterializeAsync(CancellationToken.None)));
+        Assert.Equal(0, share.Count);
+        var good = await RegionAt(root, "Good").MaterializeAsync(CancellationToken.None);
+        Assert.True(good.IsOk, good.IsOk ? "" : good.Error.ToString());
+        var afterGood = share.Count;
+        for (var selection = 0; selection < 2; selection++)
+        {
+            Assert.Equal(reference, Diagnostics(await refusedRegion.MaterializeAsync(CancellationToken.None)));
+            Assert.Equal(afterGood, share.Count);
+            Assert.False(refusedRegion.IsMaterialized);
+        }
+
+        var other = await RegionAt(root, "Other").MaterializeAsync(CancellationToken.None);
+        Assert.True(other.IsOk, other.IsOk ? "" : other.Error.ToString());
+        var afterOther = share.Count;
+        Assert.Equal(reference, Diagnostics(await refusedRegion.MaterializeAsync(CancellationToken.None)));
+        Assert.Equal(afterOther, share.Count);
+        Assert.False(refusedRegion.IsMaterialized);
+        var flat = await RunFlat(root);
+        Assert.False(flat.IsError, flat.IsError ? flat.Error.ToString() : "");
+        Assert.Equal([(Decimal128)3, 4], flat.Value);
+
+        var cancelled = OutputSeedProgram(OutputSeedLayout.OutputRow, 12, branches: 3);
+        Action? atSeal = null;
+        var stage = new FrontEndTraversalObservations
+        {
+            StageObserver = (name, begin) =>
+            {
+                if (name == "retarget-and-seal" && begin)
+                    atSeal?.Invoke();
+            },
+        };
+        var cancelledRoot = await ParseDeferred(cancelled, new RunHost(cancelled.Library), stage);
+        var firstBody = await RegionAt(cancelledRoot, "G0").MaterializeAsync(CancellationToken.None);
+        Assert.True(firstBody.IsOk, firstBody.IsOk ? "" : firstBody.Error.ToString());
+        var region = RegionAt(cancelledRoot, "G1");
+        var published = ShareOf(region).Count;
+        for (var selection = 1; selection <= 2; selection++)
+        {
+            using var cancellation = new CancellationTokenSource();
+            var sealedAt = 0;
+            atSeal = () =>
+            {
+                sealedAt++;
+                cancellation.Cancel();
+            };
+            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await region.MaterializeAsync(cancellation.Token));
+            atSeal = null;
+            Assert.Equal(cancellation.Token, error.CancellationToken);
+            Assert.Equal(1, sealedAt);
+            Assert.Equal(published, ShareOf(region).Count);
+            Assert.False(region.IsMaterialized);
+        }
+
+        var cancelledFlat = await RunFlat(cancelledRoot);
+        Assert.False(cancelledFlat.IsError, cancelledFlat.IsError ? cancelledFlat.Error.ToString() : "");
+        Assert.Equal(Enumerable.Range(0, 3).Select(index => WideValue(Members.Helper, index)).ToArray(), cancelledFlat.Value);
     }
 
     // ── Equality over a corpus ──────────────────────────────────────────────
