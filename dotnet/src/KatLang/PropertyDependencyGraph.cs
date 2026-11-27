@@ -3363,7 +3363,8 @@ internal static class PropertyDependencyGraphBuilder
     /// Content-empty member seeds contribute nothing; when the rest are ONE seed, the member IS that
     /// seed (no own requirements: K members aliasing one W-wide member hold one seed) or holds it BY
     /// REFERENCE beneath its own qualified delta (a member adding a few inputs to a shared W-wide member
-    /// costs its delta). Base seeds of equal content expand to equal content while the member seeds
+    /// costs its delta), and folds it once the fold budget is spent (SHARE FOLDS,
+    /// <see cref="TryShareMemberSeed"/>). Base seeds of equal content expand to equal content while the member seeds
     /// they read stand, so any other expansion is reused, validated by those reads, for every member
     /// whose base seed has that content (K members reading one opened or navigated member expand it
     /// once). Equal content is decided on the seeds themselves — a hash computed once per member, then
@@ -3503,6 +3504,8 @@ internal static class PropertyDependencyGraphBuilder
         // reads a name or a reference outside a cycle.
         var holdsMembers = !MemberSeedsCopiedForTesting.Value;
         HeldMemberSeeds? held = null;
+        // SHARE FOLDS (TryShareMemberSeed): a share outside a cycle folds what it holds once the fold budget is spent.
+        var sharesFold = holdsMembers && !MemberSharesUnfoldedForTesting.Value;
         // PATH SHARES (TryPathShareMemberSeed): the fold budget of each path share this solve made.
         var pathShares = holdsMembers && !MemberPathSharesCopiedForTesting.Value;
         Dictionary<SummarySeed, int>? pathShareBudgets = null;
@@ -3573,7 +3576,7 @@ internal static class PropertyDependencyGraphBuilder
         SummarySeed EvaluateMemberSeed(int index)
         {
             var baseSeed = baseSeeds[index];
-            if (TryShareMemberSeed(baseSeed, recorded, level) is { } shared)
+            if (TryShareMemberSeed(baseSeed, recorded, level, sharesFold && inCycle?[index] != true, ref held) is { } shared)
                 return shared;
             if (pathShares && inCycle?[index] != true
                 && TryPathShareMemberSeed(baseSeed, recorded, level, pathShareBudgets ??= new(ReferenceEqualityComparer.Instance)) is { } pathShared)
@@ -3633,6 +3636,13 @@ internal static class PropertyDependencyGraphBuilder
     /// reference order. Never set by production code.
     /// </summary>
     internal static readonly AsyncLocal<bool> MemberPathSharesCopiedForTesting = new();
+
+    /// <summary>
+    /// TEST SEAM (<c>ShareFoldBudgetTests</c>): while set on the calling flow, a single-predecessor share
+    /// (<see cref="TryShareMemberSeed"/>) never folds what it holds, whatever its fold budget — the share chains the solver
+    /// built before November 27 2026, which the folded shares must equal in content. Never set by production code.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> MemberSharesUnfoldedForTesting = new();
 
     /// <summary>
     /// The member solver's worklist (<see cref="SolveMemberSeeds"/>). Each evaluation unit is RANKED by its position in the
@@ -3707,7 +3717,8 @@ internal static class PropertyDependencyGraphBuilder
     /// <summary>
     /// MEMBERS BY REFERENCE (<see cref="ExpandAtLevel"/>): the member seeds of ONE level solve that an expansion may hold
     /// — a seed that, with every seed it holds by reference, carries no visible name and no pending reference, so
-    /// holding it moves no reference — and the fold budget of each. Each seed is decided once per solve.
+    /// holding it moves no reference — and the fold budget of each. Each seed is decided once per solve. A
+    /// single-predecessor share outside a cycle takes the same budget (SHARE FOLDS, <see cref="FoldShareWhenSpent"/>).
     /// </summary>
     internal sealed class HeldMemberSeeds(FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
     {
@@ -3726,6 +3737,29 @@ internal static class PropertyDependencyGraphBuilder
         /// <summary>Whether <paramref name="member"/>, and every seed it holds, carries no visible name and no pending reference.</summary>
         public bool MayHold(SummarySeed member) => Budget(member) != NotHeld;
 
+        /// <summary>
+        /// SHARE FOLDS (<see cref="TryShareMemberSeed"/>): folds the parts a share just built holds, exactly as
+        /// <see cref="ExpandAtLevel"/> folds an expansion's, when <see cref="MustFold"/> says its budget is spent. A share that
+        /// carries a visible name or a pending reference, here or in a part, keeps its parts (a path-bearing chain is
+        /// PATH PARTS' to settle). Its content is unchanged either way. The share's cost is not recorded: a reader that
+        /// later asks <see cref="MayHold"/> measures the share as it stands, folded or not.
+        /// </summary>
+        public void FoldShareWhenSpent(SummarySeed share)
+        {
+            if (share.AbsorbedPartsWithoutFolding is not { } parts || !share.OwnSetsHoldNoNamesOrReferences)
+                return;
+            for (var i = 0; i < parts.Count; i++)
+            {
+                if (!MayHold(parts[i]))
+                    return;
+            }
+
+            if (!MustFold(share, parts))
+                return;
+            FoldHeldParts(share);
+            observations?.RecordSummaryMemberShareFold(share.OwnEntryCount);
+        }
+
         internal bool MustFold(SummarySeed seed, IReadOnlyList<SummarySeed> parts)
         {
             var cost = Combined(seed, parts);
@@ -3733,8 +3767,12 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         // A fold visits each distinct seed once. Sum the edges and own entries of every subtree,
-        // counting a sibling already held by the other predecessor only once. All other overlap
-        // overestimates work. Every own requirement set is contained in the eventual folded answer.
+        // counting a sibling already held by the other predecessor only once. A sibling with a short
+        // part list contained in the other's (as when a share copies its small predecessor's own
+        // entries and holds its parts, SHARE FOLDS) adds only its own entries and
+        // edges, its subtree lying inside the other's; when each holds every part of the other, the
+        // second is the one reduced. All other overlap overestimates work. Every own requirement set
+        // is contained in the eventual folded answer.
         private FoldCost Combined(SummarySeed seed, IReadOnlyList<SummarySeed> parts)
         {
             var least = int.MaxValue;
@@ -3748,11 +3786,39 @@ internal static class PropertyDependencyGraphBuilder
                     return NotHeld;
                 least = Math.Min(least, cost.Budget);
                 width = Math.Max(width, cost.WidthLowerBound);
-                if (parts.Count != 2 || !parts[1 - i].HasAbsorbed(part))
+                if (parts.Count != 2)
                     work = Math.Min(4L * int.MaxValue + 1, work + cost.Work);
+                else if (!parts[1 - i].HasAbsorbed(part))
+                {
+                    var other = parts[1 - i];
+                    var inside = HoldsCopiedParts(other, part, reduceEqualSets: i == 1);
+                    work = Math.Min(4L * int.MaxValue + 1,
+                        work + (inside ? (long)part.OwnEntryCount + part.AbsorbedPartsWithoutFolding!.Count : cost.Work));
+                }
             }
 
             return new((int)Math.Max(int.MinValue + 1L, (long)least - parts.Count), width, work);
+        }
+
+        // A share can copy at most CopiedCompletedEntries edges. Checking longer lists for overlap
+        // would rescan a wide predecessor for each of its readers. Held lists contain distinct parts,
+        // so equal counts and containment imply equal sets in either order.
+        private static bool HoldsCopiedParts(SummarySeed holder, SummarySeed seed, bool reduceEqualSets)
+        {
+            if (seed.AbsorbedPartsWithoutFolding is not { } parts || holder.AbsorbedPartsWithoutFolding is not { } held
+                || parts.Count > SummarySeed.CopiedCompletedEntries || held.Count < parts.Count
+                || (held.Count == parts.Count && !reduceEqualSets))
+            {
+                return false;
+            }
+
+            for (var i = 0; i < parts.Count; i++)
+            {
+                if (!holder.HasAbsorbed(parts[i]))
+                    return false;
+            }
+
+            return true;
         }
 
         private static FoldCost FlatCost(SummarySeed seed)
@@ -3764,9 +3830,10 @@ internal static class PropertyDependencyGraphBuilder
         /// THE FOLD BUDGET of a seed <see cref="MayHold"/> accepts: a seed that holds no part has its own entries (all of
         /// its width); a seed that holds parts has the smallest budget among them, less the number of parts it holds. A
         /// fold walks every part a seed holds, so an expansion whose result's budget would fall below zero folds its
-        /// held parts instead of holding them (<see cref="ExpandAtLevel"/>): along every chain of held parts, the parts
-        /// a fold walks never outnumber the entries of the folded seed the chain ends at, whose content the reader's
-        /// seed contains. Over a chain of members that each hold their two predecessors, a chain whose width keeps
+        /// held parts instead of holding them (<see cref="ExpandAtLevel"/>; a share too, <see cref="FoldShareWhenSpent"/>):
+        /// along every chain of held parts, the parts a fold walks never outnumber the entries of the folded seed the
+        /// chain ends at, whose content the reader's seed contains. Over a chain of members that each hold their two
+        /// predecessors, a chain whose width keeps
         /// growing folds pairs of members at widths that grow geometrically (20 folds over K = 1,000 members, about
         /// nine folded entries per member), and a chain of bounded width W folds two members every W / 2 + 2.
         /// </summary>
@@ -3849,10 +3916,29 @@ internal static class PropertyDependencyGraphBuilder
             && baseSeed.VisiblePropertyDependencyNames.Count != 0
             && baseSeed.VisiblePropertyDependencyNames.All(members.ContainsKey);
 
-    // The expansion of a share-shaped base seed, built by SHARING the members' seeds it reads (see
-    // SolveMemberSeeds): content-empty member seeds contribute nothing, and the rest must be ONE seed.
-    // Null when the base seed does not have that shape or reads several distinct non-empty seeds.
-    private static SummarySeed? TryShareMemberSeed(SummarySeed baseSeed, RecordingMemberSeeds seeds, LevelContext level)
+    /// <summary>
+    /// The expansion of a share-shaped base seed, built by SHARING the members' seeds it reads (see
+    /// <see cref="SolveMemberSeeds"/>): content-empty member seeds contribute nothing, and the rest must be ONE seed.
+    /// Null when the base seed does not have that shape or reads several distinct non-empty seeds.
+    /// <para>SHARE FOLDS (November 27 2026; implementation only, no requirement, classification, diagnostic or Lean rule).
+    /// A share starts with its own qualified requirements and adds the member through <see cref="SummarySeed.AbsorbCompleted"/>.
+    /// A small non-deferred member can contribute both own entries and direct parts within the copy threshold. Over a
+    /// narrow chain <c>P(i) = P(i-1) + p(i)</c> the shares hold one another, one level deeper every eight members, and
+    /// they never folded: every chain member's fold budget fell by one per level until no reader could hold it, so each
+    /// reader's expansion (a path-bearing reader's included, <see cref="TryPathShareMemberSeed"/>) copied its member's
+    /// whole width, K² / 2 entries over K readers. When <paramref name="foldsHeldParts"/> (a member outside a cycle), a
+    /// share that carries no visible name or pending reference, here or in what it holds, now takes MEMBERS BY
+    /// REFERENCE's budget (<see cref="HeldMemberSeeds.FoldShareWhenSpent"/>): it folds what it holds as soon as its depth
+    /// budget would fall below zero or the entries and edges a reader could visit exceed four times a lower bound on its
+    /// width. A fold writes the share's own sets, then the member's content depth first, the order a reader's fold
+    /// writes them. Published requirements, capture order and pending-reference order stay the same. The chain folds at widths that grow
+    /// geometrically, and its readers hold it. A cycle member keeps the shares as they were: its seed is evaluated again
+    /// while the cycle converges, and in a mixed cycle's first pass a chain is still reference-free before the member
+    /// that closes the cycle is evaluated, so a fold there would be work the next pass discards. A path-bearing chain
+    /// keeps its shares too (PATH PARTS settles its parts).</para>
+    /// </summary>
+    private static SummarySeed? TryShareMemberSeed(SummarySeed baseSeed, RecordingMemberSeeds seeds, LevelContext level,
+        bool foldsHeldParts, ref HeldMemberSeeds? held)
     {
         if (baseSeed.PendingReferences.Count != 0 || baseSeed.VisiblePropertyDependencyNames.Count == 0)
             return null;
@@ -3880,12 +3966,19 @@ internal static class PropertyDependencyGraphBuilder
             return shared ?? empty;
 
         // Own requirements, qualified here exactly as a full expansion qualifies them (the shared
-        // member is already qualified at this level, and qualification distributes over union).
+        // member is already qualified at this level, and qualification distributes over union). A name
+        // set the qualification empties is released, so neither a copy of the member nor a share fold
+        // unites into a set that HashSet.Remove emptied.
         var delta = new SummarySeed(
             baseSeed.RequiredAncestorOwnedParameterNames,
             ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
-        delta.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
-        return shared is null ? delta : delta.AbsorbCompleted(shared);
+        delta.QualifyOwnParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
+        if (shared is null)
+            return delta;
+        delta.AbsorbCompleted(shared);
+        if (foldsHeldParts && delta.AbsorbedPartsWithoutFolding is not null)
+            (held ??= new(level.Memos.Observations, level.Memos.SharedMemo.CancellationToken)).FoldShareWhenSpent(delta);
+        return delta;
     }
 
     /// <summary>

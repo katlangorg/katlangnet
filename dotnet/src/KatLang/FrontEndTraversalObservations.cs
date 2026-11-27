@@ -846,6 +846,22 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordSummaryMemberPathShare()
         => SummaryMemberPathShares = checked(SummaryMemberPathShares + 1);
 
+    /// <summary>
+    /// SHARE FOLDS (<c>PropertyDependencyGraphBuilder.TryShareMemberSeed</c>): single-predecessor shares that folded what
+    /// they held because their fold budget was spent. Over a narrow chain <c>P(i) = P(i-1) + p(i)</c> they fold at widths
+    /// that grow geometrically.
+    /// </summary>
+    public long SummaryMemberShareFolds { get; private set; }
+
+    /// <summary>The entries those folded shares keep in their own sets (the width each fold materialized), summed.</summary>
+    public long SummaryMemberShareFoldEntries { get; private set; }
+
+    internal void RecordSummaryMemberShareFold(int entries)
+    {
+        SummaryMemberShareFolds = checked(SummaryMemberShareFolds + 1);
+        SummaryMemberShareFoldEntries = checked(SummaryMemberShareFoldEntries + entries);
+    }
+
     /// <summary>Entries copied from small flat members by holding expansions, including duplicate inputs.</summary>
     public long MemberEntriesCopied { get; private set; }
     internal void RecordMemberEntriesCopied(int entries) => MemberEntriesCopied += entries;
