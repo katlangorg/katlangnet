@@ -545,17 +545,31 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         // Adds another seed's OWN sets (not its absorbed parts) to this seed's, creating a set
-        // only when the other one contributes an entry.
+        // only when the other one contributes an entry. Every union of a seed's own sets goes through here: a copy
+        // (UnionWith, AbsorbCompleted, HoldMember) and a fold (FoldParts) alike.
         private void UnionOwnSets(SummarySeed other)
         {
             if (other._requiredAncestorOwnedParameterNames is { Count: > 0 } required)
-                (_requiredAncestorOwnedParameterNames ??= CreateNameSet()).UnionWith(required);
+                UniteOwnSet(_requiredAncestorOwnedParameterNames ??= CreateNameSet(), required);
             if (other._visiblePropertyDependencyNames is { Count: > 0 } visible)
-                (_visiblePropertyDependencyNames ??= CreateNameSet()).UnionWith(visible);
+                UniteOwnSet(_visiblePropertyDependencyNames ??= CreateNameSet(), visible);
+            // A PendingReferenceSet adds its references one by one into a dictionary that only Clear empties.
             if (other._pendingReferences is { Count: > 0 } pending)
                 (_pendingReferences ??= new()).UnionWith(pending);
             if (other._ownerQualifiedParameters is { Count: > 0 } qualified)
-                (_ownerQualifiedParameters ??= []).UnionWith(qualified);
+                UniteOwnSet(_ownerQualifiedParameters ??= [], qualified);
+        }
+
+        /// <summary>
+        /// .NET 11.0.0's empty-set union can throw when removals left a free list and the source is sparse
+        /// (dotnet/runtime #137834). Clear resets the empty destination in place so the runtime can copy the source.
+        /// Callers keep their set, its comparer and the ordinary union order for nonempty destinations.
+        /// </summary>
+        private static void UniteOwnSet<T>(HashSet<T> destination, HashSet<T> source)
+        {
+            if (destination.Count == 0)
+                destination.Clear();
+            destination.UnionWith(source);
         }
 
         /// <summary><see cref="UnionWith"/> returning this seed, for expression-shaped folds.</summary>
