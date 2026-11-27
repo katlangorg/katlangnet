@@ -1594,15 +1594,15 @@ public static partial class Evaluator
     /// member of it that captures <c>p</c> is refused at the access by the accessibility law.
     /// Lean: resolveOpen → EvalM Algorithm.
     /// </summary>
-    private static EvalResult<Algorithm> ResolveOpen(Expr openExpr, EvalCtx ctx)
+    private static EvalResult<Algorithm> ResolveOpen(Expr openExpr, EvalCtx ctx, ref OpenStructureChase? chase)
     {
-        var resolved = ResolveAlgForOpen(openExpr, ctx);
+        var resolved = ResolveAlgForOpen(openExpr, ctx, ref chase);
         if (resolved.IsError)
             return resolved;
 
         // OD-C (M4★): a transparent reference opens its TARGET's namespace, under the target's own
         // provider identity (so `open A, Lib` with `A = Lib` is ONE provider).
-        var provider = OpenStructure(resolved.Value, ctx);
+        var provider = OpenStructure(resolved.Value, ctx, ref chase);
         if (provider.IsError)
             return AtSpanIfMissing(provider.Error, openExpr.Span);
         if (provider.Value is Algorithm.Builtin)
@@ -1611,9 +1611,6 @@ public static partial class Evaluator
             ? OpenTargetRequiresArguments(OpenExprName(openExpr), provider.Value) with { Span = openExpr.Span }
             : provider;
     }
-
-    /// <summary>The bound of <see cref="OpenStructure"/>'s reference hops (Lean <c>openStructureFuel</c>).</summary>
-    private const int OpenStructureFuel = 4096;
 
     /// <summary>
     /// THE STRATIFIED STRUCTURE OF AN OPEN TARGET (OD-C, M4★; Lean <c>openStructure</c>): a TRANSPARENT
@@ -1625,24 +1622,62 @@ public static partial class Evaluator
     /// (<see cref="EvalError.UnknownName"/>). A structural CARRIER is its own namespace (its own public
     /// declarations; its output is never evaluated), and so is a RUNTIME reference — a parameter row, a
     /// parameter-rooted path, an <c>.Algorithm</c> link on a structural miss: its own namespace, so nothing
-    /// is opened dynamically. Every non-alias is itself. A chain longer than <see cref="OpenStructureFuel"/>
-    /// is the alias cycle it is (only a host-built tree can form one). Lean's tail recursion is a loop here
-    /// (each hop one unit of the same fuel); only a member step's receiver recurses, under the host-stack
-    /// backstop.
+    /// is opened dynamically. Every non-alias is itself. Lean's tail recursion is a loop here; only a member
+    /// step's receiver recurses, under the host-stack backstop.
+    /// <para>Each alias on the current path, including an enclosing receiver walk, is identified by
+    /// its host view and callable identity (<see cref="OpenStructureKey"/>). Revisiting it reports
+    /// <see cref="AliasCycleMessage"/>. A receiver leaves the active path when it returns.</para>
+    /// <para>Direct name lookups depend only on the reference and its declaring chain. Their ends live
+    /// on the nearest declaring activation or the run. Member paths also read the opening site's
+    /// activation and access watermark. Their successful ends live only for this resolution of one open
+    /// list. Reference hops and publication of name-run ends observe the run's cancellation.</para>
     /// </summary>
-    private static EvalResult<Algorithm> OpenStructure(Algorithm algorithm, EvalCtx ctx, int fuel = OpenStructureFuel)
+    private static EvalResult<Algorithm> OpenStructure(Algorithm algorithm, EvalCtx ctx, ref OpenStructureChase? chase)
+    {
+        var mark = chase?.Mark ?? 0;
+        var result = OpenStructureOnChain(algorithm, ctx, ref chase);
+        // The first failure aborts the whole open list and drops its chase.
+        if (result.IsError || chase is null)
+            return result;
+        return chase.Finish(mark, result.Value, ctx.Budget) is { } terminal ? terminal : result;
+    }
+
+    /// <summary>
+    /// <see cref="OpenStructure"/> on the current chain <paramref name="chase"/> — null
+    /// until the walk takes its first step, and the enclosing walk's chain for a member step's receiver.
+    /// </summary>
+    private static EvalResult<Algorithm> OpenStructureOnChain(Algorithm algorithm, EvalCtx ctx, ref OpenStructureChase? chase)
     {
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
-        for (var current = algorithm; ; fuel--)
+        for (var current = algorithm; ;)
         {
             if (current is not Algorithm.Alias { IsReference: true } reference)
                 return EvalResult<Algorithm>.Ok(current);
-            if (fuel == 0)
-                return new EvalError.IllegalInEval(AliasCycleMessage);
             if (!StaticAliasTargets.IsStaticPath(reference.Target))
                 return EvalResult<Algorithm>.Ok(current);
+
+            if (reference.Target is Expr.Resolve)
+            {
+                var run = FollowOpenNameRun(reference, ctx, ref chase);
+                if (run.IsError)
+                    return run.Error;
+                current = run.Value;
+                continue;
+            }
+
+            if (ctx.Budget.CheckContinuation() is { } terminal)
+                return terminal;
+            chase ??= new OpenStructureChase();
+            if (chase.MemberEnd(reference) is { } end)
+            {
+                ctx.Observations?.RecordOpenStructureRememberedEnd();
+                return EvalResult<Algorithm>.Ok(end);
+            }
+            if (!chase.Visit(reference))
+                return new EvalError.IllegalInEval(AliasCycleMessage);
+            ctx.Observations?.RecordOpenStructureStep();
 
             var edges = new List<Expr.DotCall>();
             Expr head = reference.Target;
@@ -1670,7 +1705,7 @@ public static partial class Evaluator
 
             foreach (var edge in edges)
             {
-                var receiverR = OpenStructure(value, ctx, fuel - 1);
+                var receiverR = OpenStructure(value, ctx, ref chase);
                 if (receiverR.IsError)
                     return receiverR.Error;
                 var receiver = receiverR.Value;
@@ -1695,6 +1730,143 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// A NAME RUN of <see cref="OpenStructure"/> from <paramref name="start"/>: while the walk stands on a
+    /// transparent reference whose target is a bare name, the next algorithm is that name's direct lookup in the
+    /// reference's own scope chain (<see cref="LookupLexicalDirect"/>). The run ends at the first algorithm that
+    /// is not such a reference — a non-alias, a carrier, a runtime reference, or a reference whose target is a
+    /// member path or a block, which the walk navigates itself — and every reference it passed remembers that end
+    /// (<see cref="ReadOpenNameRunEnd"/>), so a later run reaching any of them jumps there. A run reaching a
+    /// reference already on the current chain is the alias cycle; a failed run remembers nothing. Never inlined,
+    /// so the walk's own recursive frame keeps its size.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<Algorithm> FollowOpenNameRun(Algorithm.Alias start, EvalCtx ctx, ref OpenStructureChase? chase)
+    {
+        List<(Dictionary<OpenStructureKey, Algorithm> Memo, OpenStructureKey Key)>? pending = null;
+        Algorithm current = start;
+        while (current is Algorithm.Alias { IsReference: true, Target: Expr.Resolve(var name) } reference)
+        {
+            if (ctx.Budget.CheckContinuation() is { } terminal)
+                return terminal;
+            if (ReadOpenNameRunEnd(reference, ctx.Budget, ref pending) is { } end)
+            {
+                ctx.Observations?.RecordOpenStructureRememberedEnd();
+                current = end;
+                break;
+            }
+
+            if (!(chase ??= new OpenStructureChase()).Visit(reference))
+                return new EvalError.IllegalInEval(AliasCycleMessage);
+            ctx.Observations?.RecordOpenStructureStep();
+            if (LookupLexicalDirect(reference, name, ctx.Budget) is not { } found)
+                return new EvalError.UnknownName(name) { Span = reference.Target.Span };
+            current = found;
+        }
+
+        if (pending is not null)
+        {
+            foreach (var (memo, key) in pending)
+            {
+                if (ctx.Budget.CheckContinuation() is { } terminal)
+                    return terminal;
+                lock (memo)
+                    memo.TryAdd(key, current);
+            }
+        }
+
+        return EvalResult<Algorithm>.Ok(current);
+    }
+
+    /// <summary>
+    /// The remembered end of the name run that starts at <paramref name="reference"/> (<see cref="FollowOpenNameRun"/>),
+    /// or null after queueing its <see cref="OpenStructureKey"/> for the run's end;
+    /// the entry lives on the nearest activation of that chain, or on the run when the chain has none
+    /// (<see cref="AliasMemoOwner"/>), like the alias chase's static ends. A reference with declarations of its own
+    /// (only a host-built one) is never remembered: its own declarations are part of its lookup. First wins under the
+    /// memo's own lock: every run from one key computes the same end.
+    /// </summary>
+    private static Algorithm? ReadOpenNameRunEnd(
+        Algorithm.Alias reference,
+        Evaluation.EvaluationBudget run,
+        ref List<(Dictionary<OpenStructureKey, Algorithm> Memo, OpenStructureKey Key)>? pending)
+    {
+        if (reference.Properties.Count != 0)
+            return null;
+
+        var memo = AliasMemoOwner(reference) is { } activation ? activation.OpenStructureEnds : run.OpenStructureEnds;
+        var key = new OpenStructureKey(reference);
+        lock (memo)
+        {
+            if (memo.TryGetValue(key, out var end))
+                return end;
+        }
+
+        (pending ??= []).Add((memo, key));
+        return null;
+    }
+
+    // The resolved algorithm carries its declaring scope. Two owners can share every property in a
+    // host-built tree and still give the same member distinct provider identities. A host can also
+    // make two views of one alias declaration with different targets or local declarations.
+    internal readonly struct OpenStructureKey(Algorithm.Alias reference) : IEquatable<OpenStructureKey>
+    {
+        private readonly Algorithm.Alias _reference = reference;
+        internal bool IsMemberPath => _reference.Target is Expr.DotCall;
+
+        public bool Equals(OpenStructureKey other)
+            => ReferenceEquals(_reference.Target, other._reference.Target)
+                && ReferenceEquals(_reference.Properties, other._reference.Properties)
+                && ReferenceEquals(_reference.Opens, other._reference.Opens)
+                && ReferenceEquals(_reference.Declaration, other._reference.Declaration)
+                && (ReferenceEquals(_reference.Parent, other._reference.Parent)
+                    || SameRepeatedCallableIdentity(_reference, other._reference));
+
+        public override bool Equals(object? obj) => obj is OpenStructureKey other && Equals(other);
+        public override int GetHashCode() => HashCode.Combine(_reference.Declaration, _reference.Parent?.Declaration,
+            System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_reference.Target));
+    }
+
+    // All targets of one open list are resolved from one reader. A completed member path can be
+    // reused here, including by a sibling receiver. The active path ends at each receiver return.
+    private sealed class OpenStructureChase
+    {
+        private readonly HashSet<OpenStructureKey> _onChain = [];
+        private readonly List<OpenStructureKey> _taken = [];
+        private Dictionary<OpenStructureKey, Algorithm>? _memberEnds;
+
+        /// <summary>The number of steps on the chain, where a receiver walk starts.</summary>
+        internal int Mark => _taken.Count;
+
+        /// <summary>Records a step on <paramref name="reference"/>; false when it is already on the chain (a cycle).</summary>
+        internal bool Visit(Algorithm.Alias reference)
+        {
+            var visit = new OpenStructureKey(reference);
+            if (!_onChain.Add(visit))
+                return false;
+            _taken.Add(visit);
+            return true;
+        }
+
+        internal Algorithm? MemberEnd(Algorithm.Alias reference)
+            => _memberEnds?.GetValueOrDefault(new OpenStructureKey(reference));
+
+        internal EvalError? Finish(int mark, Algorithm end, EvaluationBudget budget)
+        {
+            for (var index = _taken.Count - 1; index >= mark; index--)
+            {
+                if (budget.CheckContinuation() is { } terminal)
+                    return terminal;
+                var step = _taken[index];
+                _onChain.Remove(step);
+                if (step.IsMemberPath)
+                    (_memberEnds ??= []).TryAdd(step, end);
+            }
+            _taken.RemoveRange(mark, _taken.Count - mark);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// A resolved open: its bounded diagnostic name, original expression, and resolved algorithm.
     /// Deduplication has already used the complete key. Lean's ResolvedOpen uses its
     /// unbounded spelling for both purposes; C# display limits are presentation policy.
@@ -1712,7 +1884,8 @@ public static partial class Evaluator
     /// compares the chain's declarations and activations by identity), plus the run's prelude level
     /// (the call stack's bottom, where an unparented inline block is wired). It evaluates nothing, reads no
     /// parameter value, projects no runtime alias and opens nothing (<see cref="OpenStructure"/>), charges
-    /// no budget and polls no cancellation. Every one of those inputs is fixed for a level object: a scope
+    /// no budget. Reference walks can observe cancellation. Each successfully resolved provider is a pure
+    /// function of inputs fixed for a level object: a scope
     /// is immutable, its parent chain and activations are fixed at construction, host-owned lists may not
     /// change during a run (<see cref="Evaluation.PropertyBindingIndexCache"/>), and the prelude is the
     /// run's. So the providers are a PURE FUNCTION of the level object and the run, and the head's own level
@@ -2159,11 +2332,12 @@ public static partial class Evaluator
         // Then resolve every target in written order with its bounded diagnostic name; the
         // first failure is the level's error.
         var result = new List<ResolvedOpen>(deduped.Count);
+        OpenStructureChase? chase = null;
         foreach (var (displayName, openExpr) in deduped)
         {
             var libResult = WithCtx(
                 CtxOpen(displayName),
-                ResolveOpen(openExpr, ctx));
+                ResolveOpen(openExpr, ctx, ref chase));
             if (libResult.IsError) return libResult.Error;
             result.Add(new ResolvedOpen(displayName, openExpr, libResult.Value));
         }
@@ -3143,7 +3317,7 @@ public static partial class Evaluator
     /// properties to be public (normal dot-access visibility).
     /// Lean: resolveAlgForOpen → EvalM Algorithm.
     /// </summary>
-    private static EvalResult<Algorithm> ResolveAlgForOpen(Expr expr, EvalCtx ctx)
+    private static EvalResult<Algorithm> ResolveAlgForOpen(Expr expr, EvalCtx ctx, ref OpenStructureChase? chase)
     {
         switch (expr)
         {
@@ -3193,7 +3367,7 @@ public static partial class Evaluator
                 }
 
             case Expr.DotCall openDotCall when openDotCall.IsCoreOpenForm():
-                return WithSpan(expr.Span, ResolveOpenPropAccess(openDotCall.Target, openDotCall.Name, ctx));
+                return WithSpan(expr.Span, ResolveOpenPropAccess(openDotCall.Target, openDotCall.Name, ctx, ref chase));
 
             default:
                 // Not an open form — reject with informative error. The
@@ -3215,16 +3389,16 @@ public static partial class Evaluator
     /// (<see cref="ResolveDotReceiver"/>).</para>
     /// </summary>
     private static EvalResult<Algorithm> ResolveOpenPropAccess(
-        Expr target, string propName, EvalCtx ctx)
+        Expr target, string propName, EvalCtx ctx, ref OpenStructureChase? chase)
     {
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
-        var targetResult = ResolveAlgForOpen(target, ctx);
+        var targetResult = ResolveAlgForOpen(target, ctx, ref chase);
         if (targetResult.IsError) return targetResult.Error;
 
         // A transparent reference receiver is navigated as its target (OD-C), resolved without opens.
-        targetResult = OpenStructure(targetResult.Value, ctx);
+        targetResult = OpenStructure(targetResult.Value, ctx, ref chase);
         if (targetResult.IsError) return AtSpanIfMissing(targetResult.Error, target.Span);
 
         // First check if property exists at all so ownership still wins over opens.

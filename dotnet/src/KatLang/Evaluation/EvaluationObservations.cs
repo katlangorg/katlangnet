@@ -248,6 +248,27 @@ internal sealed class EvaluationObservations
     /// </summary>
     public long OpenProviderCrossDeclarationIdentityComparisonCount { get; private set; }
 
+    /// <summary>
+    /// Number of reference STEPS the run's <c>open</c>-target structure walks took (<c>Evaluator.OpenStructure</c>):
+    /// one per transparent reference whose next algorithm a walk computed — a bare-name target's direct lookup or a
+    /// member path's navigation — and none for a reference whose remembered end a walk jumped to
+    /// (<see cref="OpenStructureRememberedEndCount"/>). So an open of a chain of N bare names takes N steps the
+    /// first time and none in a later stable context.
+    /// </summary>
+    public long OpenStructureStepCount { get; private set; }
+
+    /// <summary>
+    /// Number of times a run's <c>open</c>-target structure walk jumped to a remembered name-run or member-path end
+    /// instead of following the same references again.
+    /// </summary>
+    public long OpenStructureRememberedEndCount { get; private set; }
+
+    internal void RecordOpenStructureStep()
+        => OpenStructureStepCount = checked(OpenStructureStepCount + 1);
+
+    internal void RecordOpenStructureRememberedEnd()
+        => OpenStructureRememberedEndCount = checked(OpenStructureRememberedEndCount + 1);
+
     internal void RecordOpenProviderIndexing(int entries, int keyComparisons, int identityComparisons, int crossDeclarationIdentityComparisons)
     {
         OpenProviderLevelCount = checked(OpenProviderLevelCount + 1);

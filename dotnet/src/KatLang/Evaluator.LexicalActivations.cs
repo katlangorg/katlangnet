@@ -114,6 +114,14 @@ internal sealed class ParameterActivation
     internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> AliasRouteDecisions => Memos.RouteDecisions;
 
     /// <summary>
+    /// The remembered NAME-RUN ENDS of an <c>open</c> target's stratified structure for references declared under
+    /// this activation (<c>Evaluator.FollowOpenNameRun</c>; the run-wide memo is
+    /// <see cref="Evaluation.EvaluationBudget.OpenStructureEnds"/>), keyed by the reference view and its callable identity, and forgotten with the activation. Runtime-only memoization,
+    /// like the activation.
+    /// </summary>
+    internal Dictionary<Evaluator.OpenStructureKey, Algorithm> OpenStructureEnds => Memos.OpenStructureEnds;
+
+    /// <summary>
     /// The resolved open providers of this activation's LEVEL — the one scope this activation is the
     /// <see cref="ScopeCtx.Activation"/> of (<see cref="Evaluator.ResolvedOpenLevel"/>) — memoized by the
     /// first lexical lookup that consulted its opens, or null: every later read of the level in this
@@ -201,11 +209,12 @@ internal sealed class ParameterActivation
     // Null, the level's key facts alone, or the ActivationMemo holder.
     private object? _memos;
 
-    // The alias-target memo itself, carrying the route-decision memo created on first use, the level's
-    // resolved open providers, the alias head level and the level's key facts.
+    // The alias-target memo itself, carrying the route-decision and open name-run memos created on first use,
+    // the level's resolved open providers, the alias head level and the level's key facts.
     private sealed class ActivationMemo : Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd>
     {
         private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision>? _routeDecisions;
+        private Dictionary<Evaluator.OpenStructureKey, Algorithm>? _openStructureEnds;
         private Evaluator.ResolvedOpenLevel? _openLevel;
         private ScopeCtx? _aliasHeadLevel;
         private Evaluation.Caching.ScopeKeyFacts? _keyFacts;
@@ -221,6 +230,11 @@ internal sealed class ParameterActivation
             => Volatile.Read(ref _routeDecisions)
                ?? Interlocked.CompareExchange(ref _routeDecisions, [], null)
                ?? _routeDecisions!;
+
+        public Dictionary<Evaluator.OpenStructureKey, Algorithm> OpenStructureEnds
+            => Volatile.Read(ref _openStructureEnds)
+               ?? Interlocked.CompareExchange(ref _openStructureEnds, [], null)
+               ?? _openStructureEnds!;
 
         // A pure function of the level and the run (Evaluator.ResolvedOpenLevel), so a racing publication
         // stores an equivalent memo and the last one wins.

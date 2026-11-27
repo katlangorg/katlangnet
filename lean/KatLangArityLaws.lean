@@ -1267,13 +1267,13 @@ plain total definition; this theorem is its composition with the provider rule.)
 theorem resolveOpen_opens_the_target_structure (e : Expr) (ctx : EvalCtx) (a provider : Algorithm)
     (state state' state'' : EvalState)
     (h : (resolveAlgForOpen e ctx).runState state = (.ok a, state'))
-    (hs : (openStructure openStructureFuel ctx a).runState state' = (.ok provider, state''))
+    (hs : (openStructure (openStructureFuel a) ctx a).runState state' = (.ok provider, state''))
     (hb : provider.isBuiltin = false) (hr : provider.requiresArguments = false) :
     (resolveOpen e ctx).runState state = (.ok provider, state'') := by
   show ((resolveAlgForOpen e ctx).runState >>= fun a => _) state = _
   simp only [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind]
   rw [h]
-  show ((openStructure openStructureFuel ctx a).runState >>= fun p => _) state' = _
+  show ((openStructure (openStructureFuel a) ctx a).runState >>= fun p => _) state' = _
   simp only [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind]
   rw [hs]
   simp [hb, hr]

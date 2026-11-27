@@ -507,6 +507,13 @@ public class MaintainedDocumentationConsistencyTests
             @"\bgrowth\b[^.;]{0,120}\babsorbed\b",
             "elaboration depth growth absorbed by the structural ceiling's margin instead of gated (superseded 2026-11-26)"
         },
+        // The stratified structure of an `open` target has no length limit (2026-11-27): an admitted acyclic chain of
+        // any length opens its target, and only a reference reached twice on the walk's current chain is the alias
+        // cycle, so no current text calls the walk fuel-bounded or a long chain the alias cycle.
+        {
+            @"(?:\bopen\b[^.;\r\n]{0,90}\bfuel-bounded\s+walk\b|\bchain\s+longer\s+than\s+.{0,30}\bOpenStructureFuel\b[^.;\r\n]{0,45}\balias\s+cycle\b)",
+            "an open target's structure walk with a fixed fuel that reports a long chain as an alias cycle (superseded 2026-11-27)"
+        },
     };
 
     [Theory]

@@ -7184,10 +7184,15 @@ def prepareLexicalDotCallArgs (receiver : Expr) (extraArgs : Option OutputBundle
 -- Open resolution
 --------------------------------------------------------------------------
 
-/-- The fuel of `openStructure`: the surface pass never forms a reference cycle (OD-D) and a
-    host-built static cycle is refused before evaluation (`staticAliasCycle`), so a chase still
-    landing on a reference after this many hops is reported as the alias cycle it is. -/
-def openStructureFuel : Nat := 4096
+/-- Only a transparent reference can take a step. Its direct name lookups, block heads and declared
+    member steps stay within its wired tree and declaring chain. Count their alias occurrences, as
+    for `staticAliasCycle`, with a final step to inspect the endpoint. Each receiver walk uses its
+    enclosing path's remaining depth. Sibling receiver walks start with the same remaining depth.
+    Ordinary providers and carriers terminate in the zero-fuel arm without counting the tree. -/
+def openStructureFuel (a : Algorithm) : Nat :=
+  match a with
+  | .alias _ _ _ _ _ true => a.aliasCount + 1
+  | _ => 0
 
 /-- The member steps of an open target reference's static path (`openStructure`): each receiver
     read through `structureOf`, each DECLARED member wired to it and checked for accessibility from the
@@ -7316,7 +7321,8 @@ def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
   -- targets are rejected by the C# front end before Lean encoding.
   | .dotMember o n _ none => do
     -- A transparent reference receiver is navigated as its target (OD-C), resolved without opens.
-    let a <- openStructure openStructureFuel ctx (<- resolveAlgForOpen o ctx)
+    let receiver <- resolveAlgForOpen o ctx
+    let a <- openStructure (openStructureFuel receiver) ctx receiver
     -- First check if property exists at all so ownership still wins over opens.
     match Algorithm.lookupPropDefAny? a n with
     | some p =>
@@ -7364,7 +7370,8 @@ def openTargetRequiresArgumentsMessage (target : String) : Algorithm -> String
 def resolveOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
   -- OD-C (M4★): a transparent reference opens its TARGET's namespace, under the target's own
   -- provider identity (so `open A, Lib` with `A = Lib` is ONE provider).
-  let provider <- openStructure openStructureFuel ctx (<- resolveAlgForOpen e ctx)
+  let target <- resolveAlgForOpen e ctx
+  let provider <- openStructure (openStructureFuel target) ctx target
   if provider.isBuiltin then
     .error (Error.illegalInOpen s!"builtin '{openExprName e}'")
   else if provider.requiresArguments then

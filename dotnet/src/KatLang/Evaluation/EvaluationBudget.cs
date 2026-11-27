@@ -764,6 +764,23 @@ internal sealed class EvaluationBudget
     private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision>? _aliasRouteDecisions;
 
     /// <summary>
+    /// The run's remembered NAME-RUN ENDS of an <c>open</c> target's stratified structure (C# implementation-only,
+    /// November 2026; <c>Evaluator.FollowOpenNameRun</c>) for references declared OUTSIDE every activation, keyed by
+    /// the reference view and its callable identity; one declared under an
+    /// activation keeps its end on that activation (<see cref="ParameterActivation.OpenStructureEnds"/>). A run of
+    /// bare-name references is a pure function of that key (direct lookups only: no open, no access check, no
+    /// in-context wiring), so each later open of the chain jumps to its end. Holds resolved ALGORITHMS only — never a
+    /// value or a failure — and is run-scoped like every other mutable state here. First-wins under the dictionary's
+    /// own lock.
+    /// </summary>
+    internal Dictionary<Evaluator.OpenStructureKey, Algorithm> OpenStructureEnds
+        => Volatile.Read(ref _openStructureEnds)
+           ?? Interlocked.CompareExchange(ref _openStructureEnds, [], null)
+           ?? _openStructureEnds!;
+
+    private Dictionary<Evaluator.OpenStructureKey, Algorithm>? _openStructureEnds;
+
+    /// <summary>
     /// The spare plain head level for an unwired alias with <c>open</c>s declared OUTSIDE every
     /// activation (<c>Evaluator.AliasHeadLevel</c>), or null: ONE slot, naming its alias by its
     /// <see cref="ScopeCtx.Owner"/>, so repeated chases of one alias object share the level state its

@@ -427,6 +427,44 @@ def afHostScopeRevisit : KatLang.Expr :=
   | .ok value => value == .atom 5
   | .error _ => false
 
+-- THE STRATIFIED OPEN STRUCTURE OF A LONG CHAIN (`openStructureFuel`, November 2026): the walk's fuel
+-- is a structured bound — one more than the aliases of its static world — so an admitted ACYCLIC chain
+-- of any length opens its target: here 4,100 references, past the former constant fuel of 4096, which
+-- reported this chain as a cycle. The long chain is resolved directly (`resolveOpen`), because the
+-- pre-evaluation gate's chase from every alias is quadratic in a chain's length; the whole run is
+-- guarded on a short chain. A host-built cycle through a reference RECEIVER (`A = B.C` / `B = A`),
+-- which the static gate (`staticAliasCycle`) does not see, is still the alias cycle, opened at either
+-- alias (C#: `OpenStructureChainTests`).
+def afOpenChainLib : Algorithm := Algorithm.mk none [] [] [KatLang.publicProp "X" (alg [] [] [] [num 7])] []
+
+def afOpenChainRoot (length : Nat) : Algorithm :=
+  algPrivate [] [resolve s!"A{length}"]
+    (("A0", afOpenChainLib) :: (List.range length).map fun i => (s!"A{i + 1}", afAlias s!"A{i}"))
+    [resolve "X"]
+
+def afOpenChainProvides (length : Nat) : Bool :=
+  let root := KatLang.wireToCaller { callStack := [KatLang.preludeAlg] } (afOpenChainRoot length)
+  match ((KatLang.resolveOpen (resolve s!"A{length}") { callStack := [root, KatLang.preludeAlg] }).runState
+      EvalState.empty).fst with
+  | .ok (.mk _ _ _ props _ _) => props.any (·.name == "X")
+  | _ => false
+
+#guard afOpenChainProvides 4100
+#guard KatLang.openStructureFuel afOpenChainLib == 0
+#guard match KatLang.runResult (.algorithmExpr (afOpenChainRoot 300)) with
+  | .ok value => value == .atom 7
+  | .error _ => false
+
+def afReceiverCycleRoot (opened : String) : KatLang.Expr :=
+  .algorithmExpr (algPrivate [] [resolve opened]
+    [("A", .alias none [] [] (.dotMember (resolve "B") "C" (resolve "C") none)), ("B", afAlias "A")]
+    [resolve "Y"])
+
+#guard ["A", "B"].all fun opened =>
+  match KatLang.runResult (afReceiverCycleRoot opened) with
+  | .error error => innermostIsIllegalInEval KatLang.aliasCycleMessage error
+  | .ok _ => false
+
 -- 10. THE BARE-FORWARDING DECISION: by name, never renamed, never positional, never added to the
 --    closed list, never reshaped from same-named leaves.
 -- (B) `F(p)` / `A(p) = F` forwards; (C) `F(q)` / `A(p) = F` is rejected, never `F(p)`.
