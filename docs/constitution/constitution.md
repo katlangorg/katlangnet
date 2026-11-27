@@ -7487,7 +7487,7 @@ Add((1, 2))
 - Scope limits on what a theorem establishes:
   - Theorems over the Lean SPECIFICATION functions of C#-only front-end passes, which the evaluator never calls, prove that specification, not the C# passes that decide the elaborated program.
   - A theorem of the isolated `CoreArityAlgebra` proves a law of that non-authoritative extraction. One refinement theorem connects its binder to production, and it covers ALLOCATION only: not the binder's result, no repeated names, no structural or literal patterns, no VALUE demand. A universal law proved in the algebra is not thereby a law of the production binder.
-  - Termination is not established: there is no kernel proof that a specific program diverges or terminates.
+  - E-24 (vii) proves divergence for the Lean core whole read of `F(1)` when `F(x) = [x].map(F)`. From the prelude context and empty heap, this call exhausts every fuel and its production evaluation never completes (`LazyCollectionBoundaries.recursiveMap_wholeRead_production`).
 - The Lean sources use no escape hatch: no `sorry`, `admit`, user `axiom` or `native_decide`. The theorem dependency audits report only `propext`, `Quot.sound` and `Classical.choice`. A successful `lake build` shows that the checked development builds, and nothing more about correspondence. `#eval` output and `-- EXPECTED:` comments are not verification.
 
 **Qualifications**

@@ -1,4 +1,5 @@
 import KatLangArityLaws.NeedControl
+import KatLangArityLaws.RecursiveMapWholeRead
 
 open KatLang KatLang.NeedControl.Schedule
 
@@ -25,13 +26,18 @@ definitions of `KatLang.lean`. `CoreTests/LazyCollections.lean` § "The C#-only 
   positions and their values.
 * READ GENERATIONS. The path check in `materializePosition` rejects positions already on its path
   (`materializePosition_on_path`: a self-containing value is `demandCycle`, as in C#) and reads
-  every other position, extending the path (`materializePosition_fresh`): it has no depth bound. A
-  whole read of `F(1)` for `F(x) = [x].map(F)` exhausts each tested fuel, while C# ends it with
-  `EvaluationDepthExceeded` after `MaxDepth` read generations, and refuses a finite structure built
-  during the read deeper than that (`atoms(Nest(200))`), which Lean completes.
+  every other position, extending the path (`materializePosition_fresh`): it has no depth bound. The
+  whole read of `F(1)` for `F(x) = [x].map(F)` is incomplete at EVERY fuel
+  (`recursiveMap_wholeRead_incomplete`, proved in `RecursiveMapWholeRead.lean`), and its production
+  run never completes (`recursiveMap_wholeRead_production`). C# ends that read with
+  `EvaluationDepthExceeded` after `MaxDepth` read generations. It also refuses a finite structure
+  built during the read deeper than that (`atoms(Nest(200))`), which Lean completes.
 
-Not claimed: anything about C# (each pairing is finite evidence), divergence of the `F(1)` run (the
-guards try finitely many fuels), and any law of the C# policies themselves.
+Not claimed: anything about C# (each pairing is finite evidence), any law of the C# policies
+themselves, and the divergence of any program but the `F(1)` witness. For that witness the claim is
+the incompleteness of the fuel approximation of the guards' core call (from `EvalState.empty`, under
+the prelude call stack) and the non-completion of production at that call. The positive control
+`F(1).count` stays a guard.
 -/
 
 namespace KatLang.LazyCollectionBoundaries
@@ -157,5 +163,19 @@ theorem materializePosition_fresh (demand : Nat → EvalM CountedResult) (visiti
       (do materializeVia demand (← forcePosition demand (.deferred cell)) (cell :: visiting)) := by
   have h' : cell ∉ visiting := by simpa using h
   simp [materializePosition, h']
+
+/-- For `F(x) = [x].map(F)`, the whole read of `F(1)` in the READ GENERATIONS guard exhausts
+    every fuel. Each generation demands a fresh position and materializes its value three
+    evaluator calls deeper. Every address already on the path is older than that position. -/
+theorem recursiveMap_wholeRead_incomplete (fuel : Nat) :
+    KatLangTests.LazyCollections.recursiveMapWholeReadAt fuel = .error .fuelExhausted :=
+  RecursiveMapWholeRead.fuelValue_F1_incomplete fuel
+
+/-- The production evaluator at that call never completes. -/
+theorem recursiveMap_wholeRead_production :
+    ¬ EvaluatorCore.ProductionCompletes
+      (evalUnbounded (.evalRunValue ((identifyPropertyExpr RecursiveMapWholeRead.witnessProgram).run' 0)
+        { callStack := [preludeAlg] } [])) EvalState.empty :=
+  RecursiveMapWholeRead.wholeRead_production_incomplete
 
 end KatLang.LazyCollectionBoundaries

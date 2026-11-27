@@ -451,7 +451,8 @@ private def mappedScan : KatLang.Expr :=
 #guard gives (value [dot mappedScan "count"]) (.atom 2)
 #guard gives (value [mappedScan]) (atoms [3, 4])
 
--- READ GENERATIONS (`materializePosition_on_path`, `materializePosition_fresh`). Lean has no depth bound:
+-- READ GENERATIONS (`materializePosition_on_path`, `materializePosition_fresh`,
+-- `recursiveMap_wholeRead_incomplete`). Lean has no depth bound:
 -- `Nest(n) = if(n == 0, [7], [Nest(n - 1)])` read whole is `[7]` at 100 AND at 200 nested calls, while C#
 -- ends `atoms(Nest(200))` with `EvaluationDepthExceeded` after 128 read generations.
 private def nestAlg : Algorithm :=
@@ -467,14 +468,20 @@ private def fuelValue (fuel : Nat) (rows : List KatLang.Expr) (props : List (Str
       KatLang.EvalState.empty with
   | (r, _) => r
 
--- `F(x) = [x].map(F)`: building and counting it reads nothing. Reading it whole creates a FRESH list at
--- each time the callback runs. The read is incomplete at every fuel tried, where C# ends it
--- with `EvaluationDepthExceeded`. The largest fuel completes
--- the count, and a self-containing list (`L = [L]`, above) is `demandCycle` in both.
+-- Building and counting F(1) leaves its one mapped position suspended. Reading that position
+-- invokes F and returns a list with a fresh position. C# ends the whole read with
+-- `EvaluationDepthExceeded`. A self-containing list (`L = [L]`, above) is `demandCycle` in both.
 private def fAlg : Algorithm := alg ["x"] [] [] [dot (lst [.param "x"]) "map" (some [.resolve "F"])]
+
+/-- The fixed-fuel whole read of `F(1)` for `F(x) = [x].map(F)`. The finite guard below and
+    `RecursiveMapWholeRead.fuelValue_F1_incomplete` both use this observation. -/
+def recursiveMapWholeReadAt (fuel : Nat) : Except Error Result :=
+  fuelValue fuel [call "F" [.num 1]] [("F", fAlg)]
+
+-- The count is the positive control, both through runResult and at fuel 1,000.
 #guard gives (value [dot (call "F" [.num 1]) "count"] [("F", fAlg)]) (.atom 1)
 #guard [50, 200, 1000].all fun fuel =>
-  match fuelValue fuel [call "F" [.num 1]] [("F", fAlg)] with
+  match recursiveMapWholeReadAt fuel with
   | .error .fuelExhausted => true
   | _ => false
 #guard gives (fuelValue 1000 [dot (call "F" [.num 1]) "count"] [("F", fAlg)]) (.atom 1)
