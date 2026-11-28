@@ -465,6 +465,66 @@ def afReceiverCycleRoot (opened : String) : KatLang.Expr :=
   | .error error => innermostIsIllegalInEval KatLang.aliasCycleMessage error
   | .ok _ => false
 
+-- NESTED RECEIVER WALKS (November 2026): a member path whose receiver is itself a member-path
+-- reference, n deep — `Z0 = Lib`, `Zk = Z(k-1).N` with `Lib.N = Lib` — and the MIXED form with a
+-- bare-name reference between each pair (`Dk = Z(k-1)`, `Zk = Dk.N`). Each receiver walk runs on its
+-- enclosing path's remaining fuel, which the wired target's alias count bounds. The C# walk keeps the
+-- receivers on an explicit stack (`Evaluator.OpenStructure`) and pins the same outcomes — the provider,
+-- a cycle met in the innermost receiver, a never-accessible member there (`OpenStructureChainTests`,
+-- `EvaluatorOpenChainStackProcessTests.NestedReceiverChain_CompletesOnSmallThreads`). As above, the long
+-- chain is resolved directly and the whole run is guarded on short chains.
+def afReceiverLib (more : List KatLang.PropDef := []) : Algorithm :=
+  Algorithm.mk none [] []
+    ([KatLang.publicProp "X" (alg [] [] [] [num 7]), KatLang.publicProp "N" (afAlias "Lib")] ++ more) []
+
+def afMemberRef (receiver member : String) : Algorithm :=
+  .alias none [] [] (.dotMember (resolve receiver) member (resolve member) none)
+
+/-- `Z0 = first`, then `Zk = Z(k-1).N`, or `Dk = Z(k-1)` and `Zk = Dk.N` when `mixed`. -/
+def afReceiverChain (length : Nat) (mixed : Bool) (first : Algorithm) : List (String × Algorithm) :=
+  ("Z0", first) :: (List.range length).flatMap fun i =>
+    if mixed then [(s!"D{i + 1}", afAlias s!"Z{i}"), (s!"Z{i + 1}", afMemberRef s!"D{i + 1}" "N")]
+    else [(s!"Z{i + 1}", afMemberRef s!"Z{i}" "N")]
+
+def afReceiverChainRoot (length : Nat) (mixed : Bool) (lib : Algorithm := afReceiverLib)
+    (first : Algorithm := afAlias "Lib") (more : List (String × Algorithm) := []) (read : String := "X") :
+    Algorithm :=
+  algPrivate [] [resolve s!"Z{length}"] (("Lib", lib) :: more ++ afReceiverChain length mixed first) [resolve read]
+
+def afReceiverChainProvides (length : Nat) (mixed : Bool) : Bool :=
+  let root := KatLang.wireToCaller { callStack := [KatLang.preludeAlg] } (afReceiverChainRoot length mixed)
+  match ((KatLang.resolveOpen (resolve s!"Z{length}") { callStack := [root, KatLang.preludeAlg] }).runState
+      EvalState.empty).fst with
+  | .ok (.mk _ _ _ props _ _) => props.any (·.name == "X")
+  | _ => false
+
+#guard afReceiverChainProvides 300 false
+#guard afReceiverChainProvides 300 true
+#guard [false, true].all fun mixed =>
+  match KatLang.runResult (.algorithmExpr (afReceiverChainRoot 24 mixed)) with
+  | .ok value => value == .atom 7
+  | .error _ => false
+
+-- A cycle met in the innermost receiver walk — `Z0 = A` with `A = B.C` / `B = A` — is the alias cycle at
+-- the bottom of the chain: every enclosing walk is still on the path.
+def afReceiverCycleAtDepth (length : Nat) : Bool :=
+  match KatLang.runResult (.algorithmExpr (afReceiverChainRoot length false (first := afAlias "A")
+      (more := [("A", afMemberRef "B" "C"), ("B", afAlias "A")]) (read := "Y"))) with
+  | .error error => innermostIsIllegalInEval KatLang.aliasCycleMessage error
+  | .ok _ => false
+
+#guard [1, 24].all afReceiverCycleAtDepth
+
+-- A member that is never accessible (a conditional branch's own declaration) as the innermost receiver's
+-- step (`Z0 = Lib.S`) is refused as that receiver's `localOnlyProperty`, named as written.
+def afReceiverInaccessibleAtDepth (length : Nat) : Bool :=
+  let lib := afReceiverLib [{ name := "S", alg := afAlias "Lib", isPublic := true, exposure := .localConditional }]
+  match KatLang.runResult (.algorithmExpr (afReceiverChainRoot length false lib (afMemberRef "Lib" "S"))) with
+  | .error error => innermostIsLocalOnlyProperty "Lib" "S" .localConditional error
+  | .ok _ => false
+
+#guard [1, 24].all afReceiverInaccessibleAtDepth
+
 -- 10. THE BARE-FORWARDING DECISION: by name, never renamed, never positional, never added to the
 --    closed list, never reshaped from same-named leaves.
 -- (B) `F(p)` / `A(p) = F` forwards; (C) `F(q)` / `A(p) = F` is rejected, never `F(p)`.

@@ -31,6 +31,9 @@ namespace KatLang.Tests;
 /// count, one deferred route) across the stack sizes: since the 2026-11-14 stack hop the twin
 /// refuses only at helper probes, at depths that depend on where its hops land
 /// (<see cref="Tally.AssertCrossesTheFrontier"/>).</para>
+/// <para>The open STRUCTURE walk (<c>Evaluator.OpenStructure</c>) is the opposite case: it walks nested
+/// member-path receivers on an explicit stack, so <see cref="NestedReceiverChain_CompletesOnSmallThreads"/>
+/// requires every run to complete — a refusal there is a regression.</para>
 /// </summary>
 public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
 {
@@ -155,6 +158,20 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
     [Fact]
     public async Task OneNameOpenChain_Control_IsStructured()
         => await RunProbeChild(nameof(OneNameOpenChain_ProbeChild));
+
+    /// <summary>
+    /// NESTED RECEIVER WALKS (November 2026): opening <c>C{n}</c> over <c>C0 = A</c>, <c>C{k} = C{k-1}.N</c> walks n
+    /// member-path receivers inside one another (<c>Evaluator.OpenStructure</c>; the shapes are
+    /// <see cref="OpenStructureChainTests.ReceiverChain"/>). The walk keeps them on an explicit stack, so its native
+    /// stack does not grow with n: every run COMPLETES, on every swept thread size, on both routes — none is
+    /// refused. Before, each receiver was a host frame under the walk's probe: 800 source receivers were
+    /// <see cref="EvalError.EvaluationStackExhausted"/> on a 1 MiB Release thread, and with the probe removed 846
+    /// repetitions of the frame pair overflowed the process. The front end is not under test: the source chain is
+    /// parsed on a large thread, and the host-built chain is past the front end's static-query bound.
+    /// </summary>
+    [Fact]
+    public async Task NestedReceiverChain_CompletesOnSmallThreads()
+        => await RunProbeChild(nameof(NestedReceiverChain_ProbeChild));
 
     /// <summary>
     /// The stress variant: the window sweep and the <c>inner</c> deferred sweeps while every processor spins a busy loop (half of
@@ -282,6 +299,52 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
         // Diagnostic only, never asserted: where this process first completed.
         Console.WriteLine($"one-name open chain: first completion at {sweep.FirstCompletion?.ToString() ?? "none"} KiB, {sweep.RootLevelRefusals} root-level refusal(s)");
         sweep.AssertOutcomes();
+        WriteProbeMarker();
+    }
+
+    /// <summary>The thread sizes of the nested receiver sweep: from a quarter of the documented 1 MiB minimum up to it.</summary>
+    internal static readonly int[] ReceiverStackSizes = [256 * 1024, 384 * 1024, 768 * 1024, 1024 * 1024];
+
+    /// <summary>The mixed source chain's receivers (4,000 references) and the host-built chain's.</summary>
+    internal const int SourceReceivers = 2_000;
+    internal const int HostReceivers = 50_000;
+
+    /// <summary>The nested receiver chains on every <see cref="ReceiverStackSizes"/> thread, sync and twin: each must complete with 7.</summary>
+    [Fact]
+    public void NestedReceiverChain_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+        ReportEvaluatorAssembly();
+
+        var source = AstStructuralDepthProcessTests.RunOnThreadWithStack(LargeStack, () =>
+            (Expr)new Expr.AlgorithmExpr(SourceProvenance.ParseValid(OpenStructureChainTests.ReceiverChainProgram("mixed", SourceReceivers)).Root));
+        (string Label, Expr Ast)[] chains =
+        [
+            ($"source mixed {SourceReceivers}", source),
+            ($"host {HostReceivers}", OpenStructureChainTests.HostReceiverChain(HostReceivers)),
+        ];
+
+        foreach (var (label, ast) in chains)
+        {
+            foreach (var stack in ReceiverStackSizes)
+            {
+                AstStructuralDepthProcessTests.RunOnThreadWithStack(stack, () =>
+                {
+                    var sync = Evaluator.RunFlat(ast);
+                    Assert.True(sync.IsOk, $"{label} / {stack / 1024} KiB (sync): {(sync.IsOk ? null : sync.Error.Code)}");
+                    Assert.Equal([7m], sync.Value);
+
+                    // This cache completes every access inline, keeping the twin on the constrained thread.
+                    var twin = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache()).GetAwaiter().GetResult();
+                    Assert.True(twin.IsOk, $"{label} / {stack / 1024} KiB (twin): {(twin.IsOk ? null : twin.Error.Code)}");
+                    Assert.True(twin.Value.Value.TryToHostAtoms(int.MaxValue, out var atoms));
+                    Assert.Equal([7m], atoms);
+                });
+                Console.WriteLine($"{label} / {stack / 1024} KiB: completed on both routes");
+            }
+        }
+
         WriteProbeMarker();
     }
 

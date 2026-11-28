@@ -1618,112 +1618,146 @@ public static partial class Evaluator
     /// (<see cref="EvalError.UnknownName"/>). A structural CARRIER is its own namespace (its own public
     /// declarations; its output is never evaluated), and so is a RUNTIME reference — a parameter row, a
     /// parameter-rooted path, an <c>.Algorithm</c> link on a structural miss: its own namespace, so nothing
-    /// is opened dynamically. Every non-alias is itself. Lean's tail recursion is a loop here; only a member
-    /// step's receiver recurses, under the host-stack backstop.
+    /// is opened dynamically. Every non-alias is itself.
+    /// <para>Lean's recursion is a loop here, and so are its receiver walks: a member step's receiver is walked
+    /// by this same loop, with the steps waiting for their receivers on an explicit stack
+    /// (<see cref="OpenStructureReceiverWait"/>, innermost last), and the receiver's end resumes the step that
+    /// waits for it. So the host stack a walk uses does not grow with the depth of its receivers (an alias whose
+    /// target's receiver is an alias whose target's receiver is …); the one probe at entry refuses a walk that
+    /// starts at the stack's edge.</para>
     /// <para>Each alias on the current path, including an enclosing receiver walk, is identified by
     /// its host view and callable identity (<see cref="OpenStructureKey"/>). Revisiting it reports
     /// <see cref="AliasCycleMessage"/>. A receiver leaves the active path when it returns.</para>
     /// <para>Direct name lookups depend only on the reference and its declaring chain. Their ends live
     /// on the nearest declaring activation or the run. Member paths also read the opening site's
     /// activation and access watermark. Their successful ends live only for this resolution of one open
-    /// list. Reference hops and publication of name-run ends observe the run's cancellation.</para>
+    /// list. Reference hops and publication of name-run ends observe the run's cancellation. The first
+    /// failure aborts the whole open list and drops its chase, so a failed walk finishes no step.</para>
     /// </summary>
     private static EvalResult<Algorithm> OpenStructure(Algorithm algorithm, EvalCtx ctx, ref OpenStructureChase? chase)
-    {
-        var mark = chase?.Mark ?? 0;
-        var result = OpenStructureOnChain(algorithm, ctx, ref chase);
-        // The first failure aborts the whole open list and drops its chase.
-        if (result.IsError || chase is null)
-            return result;
-        return chase.Finish(mark, result.Value, ctx.Budget) is { } terminal ? terminal : result;
-    }
-
-    /// <summary>
-    /// <see cref="OpenStructure"/> on the current chain <paramref name="chase"/> — null
-    /// until the walk takes its first step, and the enclosing walk's chain for a member step's receiver.
-    /// </summary>
-    private static EvalResult<Algorithm> OpenStructureOnChain(Algorithm algorithm, EvalCtx ctx, ref OpenStructureChase? chase)
     {
         if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
-        for (var current = algorithm; ;)
+        // The walk in progress starts at `mark` on the chase's path; the chase stays null until a walk takes a step.
+        Stack<OpenStructureReceiverWait>? waiting = null;
+        var mark = chase?.Mark ?? 0;
+        var current = algorithm;
+        while (true)
         {
-            if (current is not Algorithm.Alias { IsReference: true } reference)
-                return EvalResult<Algorithm>.Ok(current);
-            if (!StaticAliasTargets.IsStaticPath(reference.Target))
-                return EvalResult<Algorithm>.Ok(current);
-
-            if (reference.Target is Expr.Resolve)
+            // Walk on until the walk ends at `current` or descends into a member step's receiver.
+            while (current is Algorithm.Alias { IsReference: true } reference && StaticAliasTargets.IsStaticPath(reference.Target))
             {
-                var run = FollowOpenNameRun(reference, ctx, ref chase);
-                if (run.IsError)
-                    return run.Error;
-                current = run.Value;
-                continue;
-            }
+                if (reference.Target is Expr.Resolve)
+                {
+                    var run = FollowOpenNameRun(reference, ctx, ref chase);
+                    if (run.IsError)
+                        return run.Error;
+                    current = run.Value;
+                    continue;
+                }
 
-            if (ctx.Budget.CheckContinuation() is { } terminal)
-                return terminal;
-            chase ??= new OpenStructureChase();
-            if (chase.MemberEnd(reference) is { } end)
-            {
-                ctx.Observations?.RecordOpenStructureRememberedEnd();
-                return EvalResult<Algorithm>.Ok(end);
-            }
-            if (!chase.Visit(reference))
-                return new EvalError.IllegalInEval(AliasCycleMessage);
-            ctx.Observations?.RecordOpenStructureStep();
-
-            var edges = new List<Expr.DotCall>();
-            Expr head = reference.Target;
-            while (head is Expr.DotCall { Args: null } edge)
-            {
-                edges.Add(edge);
-                head = edge.Target;
-            }
-            edges.Reverse();
-
-            Algorithm value;
-            switch (head)
-            {
-                case Expr.Resolve(var name):
-                    if (LookupLexicalDirect(reference, name, ctx.Budget) is not { } found)
-                        return new EvalError.UnknownName(name) { Span = head.Span };
-                    value = found;
+                if (ctx.Budget.CheckContinuation() is { } terminal)
+                    return terminal;
+                chase ??= new OpenStructureChase();
+                if (chase.MemberEnd(reference) is { } end)
+                {
+                    ctx.Observations?.RecordOpenStructureRememberedEnd();
+                    current = end;
                     break;
-                case Expr.AlgorithmExpr(var block):
-                    value = ChildOfInContext(reference, block, ctx);
-                    break;
-                default:
-                    return new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(reference.Target)) { Span = reference.Target.Span };
+                }
+                if (!chase.Visit(reference))
+                    return new EvalError.IllegalInEval(AliasCycleMessage);
+                ctx.Observations?.RecordOpenStructureStep();
+
+                var edges = new List<Expr.DotCall>();
+                Expr head = reference.Target;
+                while (head is Expr.DotCall { Args: null } edge)
+                {
+                    edges.Add(edge);
+                    head = edge.Target;
+                }
+                edges.Reverse();
+
+                Algorithm value;
+                switch (head)
+                {
+                    case Expr.Resolve(var name):
+                        if (LookupLexicalDirect(reference, name, ctx.Budget) is not { } found)
+                            return new EvalError.UnknownName(name) { Span = head.Span };
+                        value = found;
+                        break;
+                    case Expr.AlgorithmExpr(var block):
+                        value = ChildOfInContext(reference, block, ctx);
+                        break;
+                    default:
+                        return new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(reference.Target)) { Span = reference.Target.Span };
+                }
+
+                // The first member step waits for its receiver, the head, which a walk of its own reads first.
+                if (edges.Count != 0)
+                {
+                    (waiting ??= new Stack<OpenStructureReceiverWait>()).Push(new OpenStructureReceiverWait(mark, reference, edges, 0));
+                    mark = chase.Mark;
+                }
+                current = value;
             }
 
-            foreach (var edge in edges)
+            // `current` ends the walk that started at `mark`: its steps leave the path. Then the member step
+            // waiting for that receiver, if any, navigates it, and the walk the step belongs to goes on.
+            while (true)
             {
-                var receiverR = OpenStructure(value, ctx, ref chase);
-                if (receiverR.IsError)
-                    return receiverR.Error;
-                var receiver = receiverR.Value;
+                if (chase is not null && chase.Finish(mark, current, ctx.Budget) is { } terminal)
+                    return terminal;
+                if (waiting is not { Count: > 0 })
+                    return EvalResult<Algorithm>.Ok(current);
+
+                var step = waiting.Pop();
+                var receiver = current;
+                var edge = step.Edges[step.Edge];
                 var member = LookupPropBinding(receiver, edge.Name, ctx.Budget);
                 if (member is null)
                 {
-                    // `X.Algorithm` on a structural miss is the intrinsic: a runtime link, its own namespace.
+                    // `X.Algorithm` on a structural miss is the intrinsic: a runtime link, its own namespace, so the
+                    // waiting walk ends at its reference.
                     if (edge.Name == "Algorithm")
-                        return EvalResult<Algorithm>.Ok(current);
+                    {
+                        mark = step.Mark;
+                        current = step.Reference;
+                        continue;
+                    }
                     return receiver.DefinesConditionalBranchProperty(edge.Name)
                         ? new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, PropertyExposure.LocalOnlyConditionalAlgorithm) { Span = edge.Span }
-                        : new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(reference.Target)) { Span = reference.Target.Span };
+                        : new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(step.Reference.Target)) { Span = step.Reference.Target.Span };
                 }
 
                 if (!IsAccessibleFrom(member, receiver, ctx, noteAdmission: false))
                     return LocalOnlyPropertyError(OpenExprName(edge.Target), member) with { Span = edge.Span };
-                value = ChildOfInContext(receiver, member.Value, ctx);
-            }
+                current = ChildOfInContext(receiver, member.Value, ctx);
 
-            current = value;
+                // The next member step waits for this member as its receiver; after the last one, the waiting walk
+                // goes on from the member.
+                if (step.Edge + 1 < step.Edges.Count)
+                {
+                    waiting.Push(step with { Edge = step.Edge + 1 });
+                    mark = chase!.Mark;
+                }
+                else
+                {
+                    mark = step.Mark;
+                }
+                break;
+            }
         }
     }
+
+    /// <summary>
+    /// A member step of <see cref="OpenStructure"/> waiting for its receiver: the walk it belongs to starts at
+    /// <paramref name="Mark"/> on the chase's path, <paramref name="Reference"/> is the member-path reference that
+    /// walk navigates, and <paramref name="Edge"/> indexes the step in <paramref name="Edges"/>, the path's member
+    /// steps in written order.
+    /// </summary>
+    private readonly record struct OpenStructureReceiverWait(int Mark, Algorithm.Alias Reference, List<Expr.DotCall> Edges, int Edge);
 
     /// <summary>
     /// A NAME RUN of <see cref="OpenStructure"/> from <paramref name="start"/>: while the walk stands on a
@@ -1733,7 +1767,7 @@ public static partial class Evaluator
     /// member path or a block, which the walk navigates itself — and every reference it passed remembers that end
     /// (<see cref="ReadOpenNameRunEnd"/>), so a later run reaching any of them jumps there. A run reaching a
     /// reference already on the current chain is the alias cycle; a failed run remembers nothing. Never inlined,
-    /// so the walk's own recursive frame keeps its size.
+    /// so the walk's own frame keeps its size.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<Algorithm> FollowOpenNameRun(Algorithm.Alias start, EvalCtx ctx, ref OpenStructureChase? chase)
