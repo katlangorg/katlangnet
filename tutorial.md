@@ -2343,7 +2343,7 @@ F(0)
 
 [Open in Playground](https://katlang.org/#1/8qBXQKPp)
 
-This program is rejected: its second clause takes two parameters where the first takes one. Two clauses whose patterns have the same structure, such as `F(x)` and `F(y)`, are rejected as duplicates. KatLang does not check whether a clause can ever be chosen: after `F(n)`, a clause `F(0)` is accepted but never used, which is why the catch-all belongs last.
+This program is rejected: its second clause takes two parameters where the first takes one. Two clauses whose patterns have the same structure, such as `F(x)` and `F(y)`, are rejected as duplicates. A clause written after a catch-all can never be chosen: after `F(n)`, a clause `F(0)` is still accepted and the program runs, but KatLang warns that the clause is unreachable, which is why the catch-all belongs last. Only a pattern of plain, different names is a catch-all. A pattern that checks something is not one: after `F(x, x)`, `F([x])` or `F((a, b))`, a later clause can still be chosen, so there is no warning.
 
 A clause infers no parameters: every name in its body must come from its head, the part before `=`, or be defined around it, so `F(0) = z` is an error.
 

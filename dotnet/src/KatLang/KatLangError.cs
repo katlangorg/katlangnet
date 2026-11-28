@@ -265,6 +265,7 @@ public sealed class KatLangError
             DiagnosticCode.OutputSpreadMarkerOnDeconstructionTarget => KatLangErrorCode.OutputSpreadMarkerOnDeconstructionTarget,
             DiagnosticCode.OutputSpreadReferenceNeedsCall => KatLangErrorCode.OutputSpreadReferenceNeedsCall,
             DiagnosticCode.DeferredBranchForwardsEnclosingParameter => KatLangErrorCode.DeferredBranchForwardsEnclosingParameter,
+            DiagnosticCode.UnreachableClauseAfterCatchAll => KatLangErrorCode.UnreachableClauseAfterCatchAll,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

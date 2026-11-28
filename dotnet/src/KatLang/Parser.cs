@@ -1411,11 +1411,12 @@ public sealed class Parser
         => clauseHead ? $"{ExprNameRenderer.BoundName(name)}(…)*" : $"{ExprNameRenderer.BoundName(name)}*";
 
     /// <summary>
-    /// Records a clause spanning its name token through the last consumed token; false for a duplicate
-    /// pattern. Duplicate detection observes this parse's source-processing cancellation (SEC-03).
+    /// Records a clause spanning its name token through the last consumed token and returns the family's
+    /// verdict on its head (<see cref="ClauseHeadVerdict"/>). Duplicate detection observes this parse's
+    /// source-processing cancellation (SEC-03).
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
-    private bool AddClauseFrom(ClauseGroupBuilder group, Pattern pattern, Algorithm body, Token nameToken, bool headRecovered)
+    private ClauseHeadVerdict AddClauseFrom(ClauseGroupBuilder group, Pattern pattern, Algorithm body, Token nameToken, bool headRecovered)
         => group.AddClause(
             pattern,
             body,
@@ -1424,6 +1425,21 @@ public sealed class Parser
             headRecovered,
             _sourceProcessingCancellationToken,
             _activeCancellationToken);
+
+    /// <summary>
+    /// Reports the advisory <see cref="DiagnosticCode.UnreachableClauseAfterCatchAll"/> WARNING (Q-49) on a
+    /// clause the family's earlier catch-all shadows, over the clause's head: from the family name through the
+    /// head's closing parenthesis (<paramref name="headClose"/>, the <c>)</c> the dispatch lookahead found), so
+    /// neither <c>public</c>, an output-spreading marker nor the body is underlined. The span is this
+    /// document's, built from two of its tokens. The message is formatted only when the bounded list stores it.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ReportUnreachableClauseAfterCatchAll(ClauseGroupBuilder group, Token nameToken, Token headClose)
+        => _diagnostics.ReportWarning(
+            DiagnosticCode.UnreachableClauseAfterCatchAll,
+            nameToken.Span.Union(headClose.Span),
+            group,
+            static family => family.UnreachableAfterCatchAllMessage());
 
     // ── Algorithm parsing ───────────────────────────────────────────────────
     // Reads property definitions (Name = ...) and output expression lines.
@@ -1529,15 +1545,38 @@ public sealed class Parser
         public List<OutputSpreadMarker?> Markers { get; } = [];
 
         /// <summary>
-        /// Records one clause in written order. Returns <c>false</c> when an
-        /// EARLIER clause of this family carried a match-equivalent pattern; the
-        /// clause is recorded either way so error recovery keeps a truthful family.
-        /// A clause whose head needed recovery is neither compared with nor
-        /// recorded against the others: its recovered pattern says nothing reliable
-        /// about the family. Indexing observes the two cancellation tokens (the
-        /// configured source-processing token first).
+        /// Index in <see cref="Branches"/> of the family's REFERENCE clause, the first whose head needed
+        /// no recovery, or -1 while there is none. Its top-level arity is the family's one call arity
+        /// (PAT-03): the cross-clause arity checks compare every later clause with it, and the
+        /// catch-all judgment is made among the clauses that have it.
         /// </summary>
-        public bool AddClause(
+        public int ReferenceIndex { get; private set; } = -1;
+
+        // The reference clause's top-level arity, and the family's first unconditional catch-all (-1: none).
+        private int _referenceArity;
+        private int _catchAllIndex = -1;
+
+        /// <summary>
+        /// Records one clause in written order and returns the family's verdict on its head. The
+        /// clause is recorded whatever the verdict, so every branch, its order and its body are kept:
+        /// error recovery keeps a truthful family, and a warned clause stays in the program.
+        /// A clause whose head needed recovery is neither compared with nor recorded against the
+        /// others: its recovered pattern says nothing reliable about the family, so it is no
+        /// duplicate, establishes no catch-all and is never judged unreachable. Indexing observes
+        /// the two cancellation tokens (the configured source-processing token first).
+        ///
+        /// <para><b>The catch-all judgment (Q-49)</b> reuses the duplicate verdict and one remembered
+        /// index, with no rescan of earlier clauses. A head match-equivalent to an earlier one is a
+        /// <see cref="ClauseHeadVerdict.Duplicate"/>, never an unreachable clause, also after a catch-all
+        /// and whatever its arity (the cross-clause arity check judges it independently): every later
+        /// catch-all of the same arity is a binder renaming of the first, so it is exactly that
+        /// duplicate. A clause whose arity differs from the reference clause's is left to
+        /// <see cref="DiagnosticCode.BranchArityMismatch"/>: it neither establishes a catch-all nor is
+        /// judged against one. Among the other clauses the first unconditional catch-all head
+        /// (<see cref="Pattern.IsUnconditionalCatchAllHead"/>) is remembered, and every clause after
+        /// it is <see cref="ClauseHeadVerdict.UnreachableAfterCatchAll"/>.</para>
+        /// </summary>
+        public ClauseHeadVerdict AddClause(
             Pattern pattern,
             Algorithm body,
             SourceSpan clauseSpan,
@@ -1546,13 +1585,73 @@ public sealed class Parser
             CancellationToken sourceProcessingCancellationToken,
             CancellationToken activeCancellationToken)
         {
+            var index = Branches.Count;
             var isDistinct = headRecovered
                 || _seenPatterns.TryAdd(pattern, sourceProcessingCancellationToken, activeCancellationToken);
             Branches.Add(new CondBranch(pattern, body) { HasRecoveredHead = headRecovered });
             ClauseSpans.Add(clauseSpan);
             NameSpans.Add(nameSpan);
-            return isDistinct;
+            if (headRecovered)
+                return ClauseHeadVerdict.Distinct;
+
+            var arity = pattern.TopLevelArity();
+            if (ReferenceIndex < 0)
+            {
+                ReferenceIndex = index;
+                _referenceArity = arity;
+            }
+
+            if (!isDistinct)
+                return ClauseHeadVerdict.Duplicate;
+            if (arity != _referenceArity)
+                return ClauseHeadVerdict.Distinct;
+            if (_catchAllIndex >= 0)
+                return ClauseHeadVerdict.UnreachableAfterCatchAll;
+            if (pattern.IsUnconditionalCatchAllHead())
+                _catchAllIndex = index;
+            return ClauseHeadVerdict.Distinct;
         }
+
+        /// <summary>
+        /// The message of <see cref="DiagnosticCode.UnreachableClauseAfterCatchAll"/> for a clause this
+        /// family's catch-all shadows. It identifies the catch-all by its written head — the family name
+        /// and its binder names, both within the bound of a source-derived name a diagnostic echoes, so
+        /// a long name or a wide head costs the shown prefix — and by the line of its name, so the
+        /// author can find it. Called only for a stored diagnostic.
+        /// </summary>
+        public string UnreachableAfterCatchAllMessage()
+        {
+            var line = NameSpans[_catchAllIndex].Start.Line.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var binders = ExprNameRenderer.BoundedJoin(CatchAllBinderNames(Branches[_catchAllIndex].Pattern), ", ");
+            return $"This clause is unreachable because the earlier '{ExprNameRenderer.BoundName(Name)}({binders})' clause "
+                + $"on line {line} matches every argument.";
+        }
+
+        // The catch-all's binder names in written order, read lazily: the bounded join stops at the names it shows.
+        private static IEnumerable<string> CatchAllBinderNames(Pattern head)
+        {
+            if (head is not Pattern.SequenceValue(var items))
+            {
+                yield return ((Pattern.Bind)head).Name;
+                yield break;
+            }
+
+            foreach (var item in items)
+                yield return ((Pattern.Bind)item).Name;
+        }
+    }
+
+    /// <summary>What a clause family concludes about the head of a clause it records (<see cref="ClauseGroupBuilder.AddClause"/>).</summary>
+    private enum ClauseHeadVerdict
+    {
+        /// <summary>Nothing to report about the head: a new head, or one that needed recovery and is compared with nothing.</summary>
+        Distinct,
+
+        /// <summary>An earlier clause carries a match-equivalent head: <see cref="DiagnosticCode.DuplicateBranchPattern"/>.</summary>
+        Duplicate,
+
+        /// <summary>An earlier unconditional catch-all of the same arity shadows the clause: the advisory warning (Q-49).</summary>
+        UnreachableAfterCatchAll,
     }
 
     /// <summary>
@@ -1710,8 +1809,9 @@ public sealed class Parser
             }
 
             Advance(); // consume identifier
-            // Counted reports, never stored ones: recovery must not depend on the budget.
-            var headDiagnosticsStart = _diagnostics.ReportedCount;
+            // Counted reports, never stored ones: recovery must not depend on the budget. Counted
+            // ERRORS: a warning is advice about valid source and never marks a head as recovered.
+            var headDiagnosticsStart = _diagnostics.ReportedErrorCount;
             Expect(TokenKind.LParen);
             var pattern = ParsePattern();
             SynchronizeToClauseHeadClose(headCloseIndex, headDiagnosticsStart);
@@ -1727,7 +1827,7 @@ public sealed class Parser
             // the family, but its recovered pattern is not evidence about the family's
             // other clauses: it takes part in no cross-clause check (duplicate pattern,
             // pattern arity, output arity), so a malformed clause never poisons a valid one.
-            var headRecovered = _diagnostics.ReportedCount != headDiagnosticsStart
+            var headRecovered = _diagnostics.ReportedErrorCount != headDiagnosticsStart
                 || HasLexicalErrorInHead(nameToken, _tokens[headCloseIndex]);
             var body = ParseOutputLine();
 
@@ -1746,14 +1846,24 @@ public sealed class Parser
             }
 
             // The clause is always recorded (recovery keeps a truthful family); an earlier
-            // match-equivalent pattern in the same family additionally reports the duplicate.
+            // match-equivalent pattern in the same family additionally reports the duplicate, and
+            // an earlier unconditional catch-all the advisory reachability warning (Q-49). The
+            // two never meet on one clause: a duplicate gets its error and no warning, while the
+            // independent cross-clause checks (arity) still judge it. The
+            // warning is reported here, after the body, so it stands where the duplicate would and
+            // outside every counted head region, this clause's own and an enclosing one's alike.
             group.Markers.Add(marker);
-            if (!AddClauseFrom(group, pattern, body, nameToken, headRecovered))
+            var verdict = AddClauseFrom(group, pattern, body, nameToken, headRecovered);
+            if (verdict == ClauseHeadVerdict.Duplicate)
             {
                 ReportErrorFrom(
                     DiagnosticCode.DuplicateBranchPattern,
                     $"Duplicate branch pattern for conditional algorithm '{name}'.",
                     nameToken);
+            }
+            else if (verdict == ClauseHeadVerdict.UnreachableAfterCatchAll)
+            {
+                ReportUnreachableClauseAfterCatchAll(group, nameToken, _tokens[headCloseIndex]);
             }
         }
 
@@ -1999,7 +2109,7 @@ public sealed class Parser
             // A clause whose head needed recovery takes part in neither check, as the
             // reference or as a compared branch: its recovered pattern is not what was
             // meant, so comparing it would report the recovery, not the program.
-            var reference = group.Branches.FindIndex(static branch => !branch.HasRecoveredHead);
+            var reference = group.ReferenceIndex;
             if (condAlg.Branches.Count > 1 && reference >= 0)
             {
                 var referenceLabel = reference == 0 ? "first branch" : $"branch {reference + 1}";
@@ -3476,7 +3586,7 @@ public sealed class Parser
         if (NextSignificantIndex(_pos) >= closeIndex)
             return;
 
-        if (_diagnostics.ReportedCount == headDiagnosticsStart)
+        if (_diagnostics.ReportedErrorCount == headDiagnosticsStart)
         {
             ReportError(
                 DiagnosticCode.UnexpectedToken,
@@ -4003,7 +4113,7 @@ public sealed class Parser
             case TokenKind.LParen:
                 {
                     var open = Advance(); // consume '('
-                    var itemsDiagnosticsStart = _diagnostics.ReportedCount;
+                    var itemsDiagnosticsStart = _diagnostics.ReportedErrorCount;
                     // `()` is the empty SEQUENCE pattern: it matches only the empty sequence.
                     var items = Current.Kind == TokenKind.RParen ? [] : ParsePatternItems();
                     var close = Current;
@@ -4017,7 +4127,7 @@ public sealed class Parser
                     // collector-only `(*xs)` is valid. The recovered tree keeps the group as
                     // written (the program is never evaluated).
                     if (Pattern.IsSingletonSequenceItems(items)
-                        && _diagnostics.ReportedCount == itemsDiagnosticsStart
+                        && _diagnostics.ReportedErrorCount == itemsDiagnosticsStart
                         && close.Kind == TokenKind.RParen)
                     {
                         ReportErrorAcross(

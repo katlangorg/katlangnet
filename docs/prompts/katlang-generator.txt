@@ -957,6 +957,7 @@ Rules:
 - There is no special `Else = ...` default syntax.
 - A fallback is a final catch-all branch with the same outer interface.
 - More specific branches must come before broader catch-all branches.
+- A catch-all has plain, distinct binders in every argument position. A later nonduplicate branch of the family's arity gets an `UnreachableClauseAfterCatchAll` warning. A match-equivalent head gets `DuplicateBranchPattern` and any independent errors. Put the catch-all last.
 - The pattern is the complete input specification.
 - Do not infer extra implicit branch parameters from free names in branch bodies.
 - Branch bodies may use only names bound by that branch pattern or normally resolved names.

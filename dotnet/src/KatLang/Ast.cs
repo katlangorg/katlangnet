@@ -2758,6 +2758,64 @@ public closed record Pattern
         return false;
     }
 
+    /// <summary>Heads up to this arity compare their binder names pairwise; a wider head uses a set.</summary>
+    private const int CatchAllPairwiseNameArity = 8;
+
+    /// <summary>
+    /// AN UNCONDITIONAL CATCH-ALL HEAD (Q-49, owner decision recorded 2026-11-28): a plain binder in every top-level
+    /// argument position, each name written once — <c>F(x)</c>, <c>F(x, y)</c>. Such a head inspects
+    /// nothing (a plain binder whose name does not repeat demands nothing, PAT-07), so it matches every
+    /// supply of its arity, and no later clause of that arity is ever selected. Judged from the WRITTEN
+    /// head alone. A repeated name is a compatibility check (<c>F(x, x)</c>), and a literal, a list
+    /// pattern or a sequence pattern inspects its argument (<c>F([x])</c>, <c>F((a, b))</c>), so a head
+    /// with one is no catch-all, whatever that pattern contains — a collecting binder nested in it
+    /// included, which a family head may carry (Q-47: <c>F([head, *rest])</c>). Neither is a head with a
+    /// collecting or META binder in a top-level position, both of which a family refuses there, or
+    /// with a recovery placeholder. Its one
+    /// consumer is the parser's advisory <see cref="DiagnosticCode.UnreachableClauseAfterCatchAll"/>:
+    /// dispatch never reads it. C# front end only (Lean has no parser diagnostics).
+    /// </summary>
+    internal bool IsUnconditionalCatchAllHead()
+    {
+        if (this is not SequenceValue(var items))
+            return IsPlainBinder(this);
+        if (items.Count == 0)
+            return false;
+
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (!IsPlainBinder(items[index]))
+                return false;
+        }
+
+        if (items.Count <= CatchAllPairwiseNameArity)
+        {
+            for (var later = 1; later < items.Count; later++)
+            {
+                var name = ((Bind)items[later]).Name;
+                for (var earlier = 0; earlier < later; earlier++)
+                {
+                    if (string.Equals(((Bind)items[earlier]).Name, name, StringComparison.Ordinal))
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        var names = new HashSet<string>(items.Count, StringComparer.Ordinal);
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (!names.Add(((Bind)items[index]).Name))
+                return false;
+        }
+
+        return true;
+
+        static bool IsPlainBinder(Pattern pattern)
+            => pattern is Bind { ParameterKind: ParameterKind.Normal, IsRecoveryPlaceholder: false };
+    }
+
     /// <summary>
     /// AT MOST ONE COLLECTING BINDER PER PATTERN LEVEL (X-02; Lean:
     /// <c>Pattern.hasMultipleCollectingLevel</c>, the <see cref="Pattern"/> twin of

@@ -565,6 +565,56 @@ public sealed class CliApplicationTests
         Assert.Matches(@"^\[\d+:\d+\] ", result.TrimmedError);
     }
 
+    // Q-49: a clause written after a catch-all of its conditional algorithm is a WARNING. `check` writes
+    // it in the ordinary `[line:column] message` form and still succeeds; `run` and `eval` run the
+    // program as written — the catch-all is selected first — and report nothing.
+    private const string ClauseAfterACatchAllSource = "Describe(x) = 'any'\nDescribe(0) = 'zero'\nDescribe(0)\n";
+
+    [Fact]
+    public async Task Check_ClauseAfterACatchAll_WritesTheWarningAndSucceeds()
+    {
+        using var file = new TempSourceFile(ClauseAfterACatchAllSource);
+
+        var result = await Cli.InvokeAsync("check", file.Path);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(
+            "[2:1] This clause is unreachable because the earlier 'Describe(x)' clause on line 1 matches every argument.",
+            result.TrimmedError);
+    }
+
+    [Fact]
+    public async Task RunAndEval_ClauseAfterACatchAll_RunTheProgramAndReportNothing()
+    {
+        using var file = new TempSourceFile(ClauseAfterACatchAllSource);
+
+        var run = await Cli.InvokeAsync("run", file.Path);
+        Assert.Equal(Success, run.ExitCode);
+        Assert.Equal("any", run.TrimmedOutput);
+        Assert.Equal("", run.Error);
+
+        var eval = await Cli.InvokeAsync("eval", ClauseAfterACatchAllSource);
+        Assert.Equal(Success, eval.ExitCode);
+        Assert.Equal("any", eval.TrimmedOutput);
+        Assert.Equal("", eval.Error);
+    }
+
+    [Fact]
+    public async Task Check_WarningBesideAnError_WritesBothAndFails()
+    {
+        using var file = new TempSourceFile("F(x) = 1\nF(0) = 2\nA = 1\nA = 2\nF(0)\n");
+
+        var result = await Cli.InvokeAsync("check", file.Path);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(
+            "[2:1] This clause is unreachable because the earlier 'F(x)' clause on line 1 matches every argument.\n"
+                + "[4:1] Property 'A' is already defined.",
+            result.TrimmedError);
+    }
+
     [Theory]
     [InlineData("check")]
     [InlineData("run")]

@@ -1,5 +1,7 @@
 # KatLang Semantic Constitution: law summary
 
+> **Q-49, the reachability warning after a catch-all — 2026-11-28 (ONE owner decision, recorded from the brief of the task that records and implements it; no law title changed, no law added, retired or renumbered; ONE registry status change, Q-49 RESOLVED BY DECISION; uncommitted over `main` @ `aac4b59d`):** the law headings and markers follow `constitution.md`. PAT-02 loses its *(Open Q-49)* marker: in a written clause family, each later, nonduplicate clause of the same arity after an unconditional catch-all gets one non-blocking `UnreachableClauseAfterCatchAll` warning, while every clause is kept and dispatch still selects the first match. PAT-02 gains no *C#-only* marker: the law is first-match dispatch, which Lean models, and the warning is one of the front end's static diagnostics, which are C#-only under FORMAL-02.
+
 > **Q-47, collecting bindings inside clause-family patterns — 2026-11-28 (ONE owner decision, made on 2026-11-27 and recorded and implemented by the task whose brief states it; no law title changed, no law added, retired or renumbered; ONE registry status change, Q-47 RESOLVED BY DECISION; uncommitted over `main` @ `4fab2a56`):** the law headings and markers follow `constitution.md`. PAT-04 and VAR-02 lose their *(Open Q-47)* markers: a clause family has one fixed call arity, and within any argument a list or sequence pattern may contain collecting bindings under the ordinary structural-pattern rules, while a collector directly among a family's call arguments stays `InvalidCollectingBinding`. Lean and C# changed together, so neither law gains a *C#-only* marker.
 
 > **Q-57, the position of `xor` on the precedence ladder — 2026-11-28 (ONE owner decision, made on 2026-11-27 and recorded from the brief of the task that records it; no law title changed, no law added, retired or renumbered; ONE registry status change, Q-57 RESOLVED BY DECISION; uncommitted over `main` @ `a11ad7fa`):** the law headings and markers follow `constitution.md`. OP-01 loses its *(Open Q-57)* marker, because the owner confirmed the order `or` < `xor` < `and` and adopted its rationale: each side of an exclusive choice can express a conjunction, and the whole choice can serve as one alternative in a larger disjunction. OP-01 keeps *(C#-only)*: the ladder is a rule of the C# parser, and Lean has no parser.
@@ -229,7 +231,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 ## PAT — Clause families and parameter patterns
 
 - **PAT-01** A same-name clause group is classified as a whole: one literal-free binder/group clause is an ordinary algorithm, anything else is a clause family *(Open Q-46)*
-- **PAT-02** A family call selects the first matching clause in written order; no match is NoMatchingBranch *(Open Q-49)*
+- **PAT-02** A family call selects the first matching clause in written order; no match is NoMatchingBranch
 - **PAT-03** A family has one outer call interface: every clause takes the same number of argument slots and writes the same number of output rows *(Open Q-48)*
 - **PAT-04** A clause head is the complete input specification of its branch
 - **PAT-05** A literal pattern matches only an equal value of its own kind

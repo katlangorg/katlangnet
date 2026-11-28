@@ -207,8 +207,8 @@ public sealed record SourceProcessingLimits
     ///
     /// <para><b>Truncation.</b> Past the limit, a list keeps exactly the first diagnostics an
     /// unbounded list would hold, in the same order, followed by ONE
-    /// <see cref="DiagnosticCode.DiagnosticCountExceeded"/> error diagnostic with no position,
-    /// which the limit does not count. Later diagnostics are neither stored nor formatted.
+    /// unpositioned <see cref="DiagnosticCode.DiagnosticCountExceeded"/> marker carrying the most
+    /// severe omitted severity. The marker itself takes no place in the limit.
     /// Processing continues unchanged — the recovery tree, module loading, and every decision
     /// are the same whether or not the limit was reached — so for a list that stays within the
     /// limit it is unobservable, and a list that holds the marker is known to be incomplete.

@@ -381,4 +381,11 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.DeferredBranchForwardsEnclosingParameter"/>, reported when the branch is selected.</summary>
     DeferredBranchForwardsEnclosingParameter = 92,
+
+    /// <summary>
+    /// Front-end <see cref="DiagnosticCode.UnreachableClauseAfterCatchAll"/>: a warning, so it never
+    /// appears among the errors of a <see cref="RunResult.ParseFailure"/>. A host meets it by projecting
+    /// a warning of <see cref="ParseResult.Diagnostics"/> with <see cref="KatLangError.FromDiagnostic"/>.
+    /// </summary>
+    UnreachableClauseAfterCatchAll = 93,
 }

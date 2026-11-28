@@ -362,9 +362,10 @@ public enum DiagnosticCode
     /// The diagnostic list is INCOMPLETE: the operation reported more diagnostics than
     /// <see cref="SourceProcessingLimits.MaxDiagnosticCount"/> allows one list to keep. The list
     /// holds exactly the first diagnostics an unbounded list would hold, in order, and this one
-    /// diagnostic (error severity, no position) is always its last entry; later diagnostics were
-    /// neither stored nor formatted. It is the host's structured signal that a list was
-    /// truncated — never a fact about any one place in the source.
+    /// diagnostic (no position; the severity of the most severe diagnostic it stands for, so an
+    /// error whenever an error was omitted and a warning when only warnings were) is always its
+    /// last entry; later diagnostics were neither stored nor formatted. It is the host's structured
+    /// signal that a list was truncated — never a fact about any one place in the source.
     /// </summary>
     DiagnosticCountExceeded = 46,
 
@@ -559,4 +560,22 @@ public enum DiagnosticCode
     /// a branch that is never selected is never judged.
     /// </summary>
     DeferredBranchForwardsEnclosingParameter = 70,
+
+    /// <summary>
+    /// A WARNING, never an error (Q-49): a clause of a clause family is written after an unconditional
+    /// catch-all clause of the same family, so no call ever selects it. A family call selects the first
+    /// matching clause in written order, and a catch-all — a plain binder in every top-level argument
+    /// position, each name written once (<c>F(x)</c>, <c>F(x, y)</c>) — matches every argument without
+    /// inspecting one. Reported once on each later clause of the same top-level arity, over its head from
+    /// the family name through the closing parenthesis, and naming the catch-all by its head and line.
+    /// A head with a repeated name (<c>F(x, x)</c>), a literal, a list pattern or a sequence pattern
+    /// checks its arguments and is no catch-all. A later clause whose head is match-equivalent to an
+    /// earlier one reports <see cref="DuplicateBranchPattern"/>, and one of another arity
+    /// <see cref="BranchArityMismatch"/>. Neither gets this warning, and independent errors still apply:
+    /// a duplicate of the wrong arity reports both errors. The diagnostic is advisory: every clause, its order and
+    /// its body are kept, the program runs, and reordering stays the author's decision, because moving
+    /// a clause before the catch-all changes which arguments a call inspects. Reported for written
+    /// source only; a host-built tree gets no such diagnostic.
+    /// </summary>
+    UnreachableClauseAfterCatchAll = 71,
 }

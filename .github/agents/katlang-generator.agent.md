@@ -1264,7 +1264,7 @@ First-match semantics mean that an early overly broad branch can make later more
     F(x) = 1
     F(1) = 2
 
-`F(1)` matches the first branch (`x` binds `1`) and never reaches the second branch.
+`F(1)` matches the first branch (`x` binds `1`) and never reaches the second branch. The front end reports `UnreachableClauseAfterCatchAll` on the second head and the program still runs. If the second head were `F(y)`, it would instead get the `DuplicateBranchPattern` error because it matches the same pattern as `F(x)`. A catch-all has plain, distinct binders in every argument position. A repeated name (`F(x, x)`), a literal, a list pattern or a sequence pattern constrains which arguments match. Put the catch-all last.
 
     # GOOD — specific literal branch first
     F(1) = 2

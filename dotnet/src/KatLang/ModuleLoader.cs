@@ -2371,13 +2371,12 @@ internal sealed partial class ModuleLoader
             // document stays in this document's coordinate space.
             foreach (var diag in syntaxResult.Diagnostics)
             {
-                _sink.Add(new Diagnostic(
-                    $"[while loading {moduleUrl}] {diag.Message}",
+                _sink.Report(
+                    diag.Code,
                     diag.Severity,
-                    site)
-                {
-                    Code = diag.Code,
-                });
+                    site,
+                    (moduleUrl, diag.Message),
+                    static report => $"[while loading {ModuleLoadTarget.EchoWrittenText(report.moduleUrl)}] {report.Message}");
             }
 
             // The nested walk's errors decide whether the module may be cached, by COUNT: the

@@ -467,10 +467,9 @@ public closed record RunResult
         internal ParseFailure(IReadOnlyList<KatLangError> Errors) => this.Errors = Errors;
 
         /// <summary>
-        /// The front-end errors in reporting order: at most
-        /// <see cref="SourceProcessingLimits.MaxDiagnosticCount"/>, followed — only when the source
-        /// reported more — by one unpositioned <see cref="KatLangErrorCode.DiagnosticCountExceeded"/>
-        /// error marking the list incomplete.
+        /// The error-severity entries of the bounded front-end diagnostic list, in reporting order.
+        /// An omitted error adds one unpositioned <see cref="KatLangErrorCode.DiagnosticCountExceeded"/>
+        /// entry after the retained errors.
         /// </summary>
         public IReadOnlyList<KatLangError> Errors { get; }
 

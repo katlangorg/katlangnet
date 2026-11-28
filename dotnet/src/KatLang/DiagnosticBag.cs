@@ -36,7 +36,11 @@ namespace KatLang;
 /// module parse is classified — read <see cref="ReportedCount"/>,
 /// <see cref="ReportedErrorCount"/>, and <see cref="HasReported"/>, which count dropped reports
 /// too. The budget therefore changes which diagnostics are STORED and nothing else: the tree,
-/// module loading, and every decision are identical at any capacity.</para>
+/// module loading, and every decision are identical at any capacity. A decision that asks whether
+/// something is MALFORMED or FAILED reads the error counters: a warning
+/// (<see cref="ReportWarning{TState}"/>) is advice about valid source and never makes a construct
+/// look recovered, a module uncacheable or a materialization failed. Only a memo that must repeat
+/// EVERY report of a region reads <see cref="ReportedCount"/>.</para>
 ///
 /// <para><b>Stages.</b> A list that is WITHHELD — every pass of a provisional elaboration, whose
 /// diagnostics may depend on a missing module (see <see cref="FrontEndPipeline"/>) — goes to a
@@ -187,10 +191,7 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
     /// form for high-volume report sites, so a report past the capacity allocates nothing.
     /// </summary>
     internal void Report<TState>(DiagnosticCode code, SourceSpan? span, TState state, Func<TState, string> formatMessage)
-    {
-        if (CountReport(code, DiagnosticSeverity.Error) is { } place)
-            Store(place, new Diagnostic(BoundMessage(formatMessage(state)), DiagnosticSeverity.Error, span) { Code = code });
-    }
+        => Report(code, DiagnosticSeverity.Error, span, state, formatMessage);
 
     /// <summary>The same lazy report, retaining the formatter's structural separators.</summary>
     internal void Report<TState>(DiagnosticCode code, SourceSpan? span, TState state, Func<TState, DiagnosticMessage> formatMessage)
@@ -199,6 +200,24 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
             return;
         var diagnostic = new Diagnostic(formatMessage(state), DiagnosticSeverity.Error, span) { Code = code };
         Store(place, diagnostic.WithBoundedMessage(MaxRetainedMessageLength));
+    }
+
+    /// <summary>
+    /// Reports a WARNING whose message is formatted only when the diagnostic is stored: an advisory
+    /// that never blocks evaluation. It is a report like any other — it takes its place in the list,
+    /// counts against the capacity and in <see cref="ReportedCount"/> — and it is never counted in
+    /// <see cref="ReportedErrorCount"/>, so a decision that asks whether something FAILED reads the
+    /// error counters and is unchanged by it. A dropped warning raises the marker only to warning
+    /// severity, so a list of warnings alone never blocks, at any capacity.
+    /// </summary>
+    internal void ReportWarning<TState>(DiagnosticCode code, SourceSpan? span, TState state, Func<TState, string> formatMessage)
+        => Report(code, DiagnosticSeverity.Warning, span, state, formatMessage);
+
+    /// <summary>Counts the original severity and formats the message only if the bag retains the report.</summary>
+    internal void Report<TState>(DiagnosticCode code, DiagnosticSeverity severity, SourceSpan? span, TState state, Func<TState, string> formatMessage)
+    {
+        if (CountReport(code, severity) is { } place)
+            Store(place, new Diagnostic(BoundMessage(formatMessage(state)), severity, span) { Code = code });
     }
 
     /// <summary>Counts consecutive errors of one code when their first place is already past capacity.</summary>

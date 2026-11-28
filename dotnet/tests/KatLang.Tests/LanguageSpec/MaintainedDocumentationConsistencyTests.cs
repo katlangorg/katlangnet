@@ -529,6 +529,14 @@ public class MaintainedDocumentationConsistencyTests
             @"\bcollecting\s+bindings\s+are\s+only\s+supported\s+in\s+ordinary\s+explicit\s+parameter\s+lists\b|\bclause\s+binders?\s+(?:never|cannot)\s+collects?\b|\bclauses\s+cannot\s+collect\b|\bvalid\s+only\s+in\s+(?:an\s+)?ordinary\s+definitions?\b[^.;\r\n]{0,80}\b(?:clause\s+famil|conditional\s+algorithm)",
             "collecting bindings refused everywhere in a clause family (superseded 2026-11-27 by Q-47: only a collector directly among a family's call arguments is invalid)"
         },
+        // The reachability warning after a catch-all (Q-49): a clause written after an unconditional catch-all of its
+        // family is accepted, kept and reported with the `UnreachableClauseAfterCatchAll` warning. So no current text
+        // says that no reachability check exists, that only duplicates are diagnosed, or that such a clause is simply
+        // accepted and never used.
+        {
+            @"\bdoes\s+not\s+check\s+whether\s+a\s+clause\s+can\s+ever\s+be\s+chosen\b|\bno\s+(?:other\s+)?reachability\s+(?:check|analysis|diagnostic)\s+exists\b|\bclause\s+after\s+a\s+catch-all\s+is\s+accepted\s+and\s+never\s+used\b|\bonly\s+structural\s+duplicates\s+are\s+diagnosed\b",
+            "a clause after a catch-all receiving no diagnostic (superseded by Q-49: it gets the `UnreachableClauseAfterCatchAll` warning)"
+        },
     };
 
     [Theory]

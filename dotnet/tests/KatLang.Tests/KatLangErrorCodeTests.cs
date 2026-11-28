@@ -437,6 +437,7 @@ public class KatLangErrorCodeTests
             ["OutputSpreadMarkerOnDeconstructionTarget"] = 68,
             ["OutputSpreadReferenceNeedsCall"] = 69,
             ["DeferredBranchForwardsEnclosingParameter"] = 70,
+            ["UnreachableClauseAfterCatchAll"] = 71,
         };
 
         // The retired STR-02 values are no member's value.
@@ -539,6 +540,7 @@ public class KatLangErrorCodeTests
             ["OutputSpreadMarkerOnDeconstructionTarget"] = 90,
             ["OutputSpreadReferenceNeedsCall"] = 91,
             ["DeferredBranchForwardsEnclosingParameter"] = 92,
+            ["UnreachableClauseAfterCatchAll"] = 93,
         };
 
         // The retired STR-02 values (75-79) are no member's value.

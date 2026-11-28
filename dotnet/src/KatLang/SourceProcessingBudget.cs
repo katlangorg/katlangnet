@@ -256,7 +256,9 @@ internal static class SourceProcessingDiagnostics
     /// <summary>
     /// The marker that ends a truncated diagnostic list (see <see cref="DiagnosticBag"/>): a fact
     /// about the list, never about a place in the source, so it has no position. Its severity is
-    /// the most severe one the list dropped — an error for every diagnostic KatLang reports.
+    /// the most severe one the list dropped: an error once an error was dropped, and a warning while
+    /// only warnings were (<see cref="DiagnosticCode.UnreachableClauseAfterCatchAll"/>), so a
+    /// truncated list blocks evaluation exactly when the whole list would.
     /// </summary>
     internal static Diagnostic DiagnosticCountExceeded(int limit, DiagnosticSeverity severity)
         => new(
