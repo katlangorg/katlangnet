@@ -277,8 +277,9 @@ public sealed class MixedCycleCompleteSeedTests(ITestOutputHelper output)
     /// of sets: K + 1 entries where the copied seeds kept about K². The evaluations and notifications are MIXED-CYCLE
     /// SCHEDULE's (2K + 4 and 2K − 2), and the published metadata, checkpoint sequence, static work, frames and every
     /// member's content, reference order and shape are the copied seeds'. In source order the first pass holds its
-    /// reference-free predecessors and the entries the full expansions keep grow linearly; in reversed order the first
-    /// member evaluated carries the reference, so the first pass still copies growing widths (a residual).
+    /// reference-free predecessors; in reversed order the first member evaluated carries the reference, and the first pass
+    /// holds its reference-bearing predecessors as ordered holders (ORDERED HOLDING, <see cref="MixedCycleOrderedHoldingTests"/>):
+    /// in both orders the entries the full expansions keep grow linearly.
     /// </summary>
     [Theory]
     [InlineData(false)]
@@ -322,10 +323,7 @@ public sealed class MixedCycleCompleteSeedTests(ITestOutputHelper output)
         }
 
         Assert.InRange((double)copiedEntries[2] / copiedEntries[1], 3.0, 5.0);
-        if (reversed)
-            Assert.InRange(entries[2], 1, copiedEntries[2] / 2);
-        else
-            Assert.InRange((double)entries[2] / entries[1], 1.5, 2.5);
+        Assert.InRange((double)entries[2] / entries[1], 1.5, 2.5);
     }
 
     /// <summary>

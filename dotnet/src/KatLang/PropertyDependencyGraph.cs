@@ -482,6 +482,10 @@ internal static class PropertyDependencyGraphBuilder
         // under the existing completed-seed sharing rule, whose edges settlement charges individually.
         private bool _deferredMember;
         private bool _hasDeferredMember;
+        // ORDERED HOLDING (SolveMemberSeeds): an expansion of a mixed-cycle member that holds reference-bearing member seeds
+        // by reference where the copied expansion would be FLAT. It is never published: its member solve folds it in place
+        // before any decision that depends on its shape, and at the latest when its component has converged.
+        private bool _orderedHolder;
 
         public SummarySeed(
             IEnumerable<string>? requiredAncestorOwnedParameterNames = null,
@@ -549,17 +553,21 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         // Adds another seed's OWN sets (not its absorbed parts) to this seed's, creating a set
-        // only when the other one contributes an entry. Every union of a seed's own sets goes through here: a copy
-        // (UnionWith, AbsorbCompleted, HoldMember) and a fold (FoldParts) alike.
+        // only when the other one contributes an entry. A fold of an ordered holder needs only UnionOwnRequirements.
         private void UnionOwnSets(SummarySeed other)
         {
-            if (other._requiredAncestorOwnedParameterNames is { Count: > 0 } required)
-                UniteOwnSet(_requiredAncestorOwnedParameterNames ??= CreateNameSet(), required);
+            UnionOwnRequirements(other);
             if (other._visiblePropertyDependencyNames is { Count: > 0 } visible)
                 UniteOwnSet(_visiblePropertyDependencyNames ??= CreateNameSet(), visible);
             // A PendingReferenceSet adds its references one by one into a dictionary that only Clear empties.
             if (other._pendingReferences is { Count: > 0 } pending)
                 (_pendingReferences ??= new()).UnionWith(pending);
+        }
+
+        private void UnionOwnRequirements(SummarySeed other)
+        {
+            if (other._requiredAncestorOwnedParameterNames is { Count: > 0 } required)
+                UniteOwnSet(_requiredAncestorOwnedParameterNames ??= CreateNameSet(), required);
             if (other._ownerQualifiedParameters is { Count: > 0 } qualified)
                 UniteOwnSet(_ownerQualifiedParameters ??= [], qualified);
         }
@@ -605,6 +613,56 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         /// <summary>
+        /// ORDERED HOLDING (<see cref="ExpandAtLevel"/>): adds a member seed of the expanding level whose own pending
+        /// references are every reference of its content (<see cref="IsReferenceComplete"/>; a flat seed's are), where
+        /// <see cref="HoldMember"/> takes reference-free ones. Its references are added to this seed's own references now,
+        /// in their order, exactly as the union adds them; its requirements are held by reference. A flat seed of at most
+        /// <see cref="CopiedCompletedEntries"/> entries is copied whole, as <see cref="HoldMember"/> copies one. Every
+        /// reference of the held seed is then already in this seed's own set with at most the owners it binds there, so a
+        /// later fold of the part adds none and narrows none: the references keep the union's order and owners.
+        /// </summary>
+        internal void HoldOrdered(SummarySeed member, FrontEndTraversalObservations? observations)
+        {
+            if (member._absorbed is null && member.EntryCount <= CopiedCompletedEntries)
+            {
+                observations?.RecordMemberEntriesCopied(member.OwnEntryCount);
+                UnionWith(member);
+                return;
+            }
+
+            if (member._pendingReferences is { Count: > 0 } references)
+            {
+                observations?.RecordSummaryMemberOrderedReferencesCopied(references.Count);
+                (_pendingReferences ??= new()).UnionWith(references);
+            }
+            AbsorbReference(member);
+        }
+
+        /// <summary>
+        /// Whether this seed's own pending references are every reference of its content: a flat seed, a full expansion
+        /// that holds reference-free member seeds (MEMBERS BY REFERENCE, <see cref="MarkDeferredMember"/>) or an ordered
+        /// holder (<see cref="MarkOrderedHolder"/>).
+        /// </summary>
+        internal bool IsReferenceComplete => _absorbed is null || _deferredMember || _orderedHolder;
+
+        /// <summary>
+        /// ORDERED HOLDING (<see cref="SolveMemberSeeds"/>): whether this is an expansion that holds reference-bearing member
+        /// seeds by reference where the copied expansion is a flat seed of the same content and reference order. Every
+        /// decision that depends on its shape is taken as for that flat seed, or after folding it in place.
+        /// </summary>
+        internal bool IsOrderedHolder => _orderedHolder;
+
+        /// <summary>
+        /// Marks an expansion whose own references already cover its held parts. Its fold needs only their requirements.
+        /// If kept, it stands for a flat seed and needs no navigation view.
+        /// </summary>
+        internal void MarkOrderedHolder()
+        {
+            _orderedHolder = true;
+            _hasDeferredMember = false;
+        }
+
+        /// <summary>
         /// Folds every part this seed holds into its own sets now, exactly as a read would, with the solve's scratch
         /// collections (MEMBERS BY REFERENCE: an expansion whose fold budget is spent,
         /// <see cref="HeldMemberSeeds.MustFold"/>); its content is unchanged.
@@ -620,8 +678,8 @@ internal static class PropertyDependencyGraphBuilder
         /// <summary>
         /// Adds <paramref name="reference"/> to this seed's pending references: exactly <c>PendingReferences.Add</c>,
         /// which folds every part the seed holds first, unless <paramref name="keepHeldParts"/>. Then the parts stay held
-        /// and the reference goes into the seed's own set; the caller holds only parts that carry no pending reference
-        /// (MEMBERS BY REFERENCE, <see cref="ExpandAtLevel"/>), so the reference takes the position a fold would give it.
+        /// and the reference goes into the seed's own set. Held parts carry no pending reference or have already
+        /// contributed all of their references in order, so the reference takes the position a fold would give it.
         /// </summary>
         internal void AddPendingReference(SummaryReference reference, bool keepHeldParts)
         {
@@ -636,7 +694,9 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         public SummarySeed AbsorbCompleted(SummarySeed completed)
         {
-            if (!completed._deferredMember && completed.EntryCount <= CopiedCompletedEntries)
+            // An ordered holder stands for a flat seed of more than CopiedCompletedEntries entries
+            // (SolveMemberSeeds keeps none narrower), which this rule holds by reference too.
+            if (!completed._deferredMember && !completed._orderedHolder && completed.EntryCount <= CopiedCompletedEntries)
                 UnionWith(completed);
             else
                 AbsorbReference(completed);
@@ -905,10 +965,14 @@ internal static class PropertyDependencyGraphBuilder
             if (_absorbed is not { } absorbed)
                 return;
 
+            // HoldOrdered already inserted these parts' references and intersected their bound owners in union order.
+            // Every held part is free of visible names. Replaying its references can double a path-dominated fold.
+            var requirementsOnly = _orderedHolder;
             _absorbed = null;
             _absorbedSet = null;
             _deferredMember = false;
             _hasDeferredMember = false;
+            _orderedHolder = false;
             for (var i = absorbed.Count - 1; i >= 0; i--)
                 pending.Push(absorbed[i]);
             while (pending.TryPop(out var part))
@@ -918,8 +982,16 @@ internal static class PropertyDependencyGraphBuilder
 
                 if ((folded.Count & 255) == 0)
                     cancellationToken.ThrowIfCancellationRequested();
-                budgetFold?.RecordMemberFoldEntries(part.OwnEntryCount);
-                UnionOwnSets(part);
+                if (requirementsOnly)
+                {
+                    budgetFold?.RecordMemberFoldEntries(part.OwnRequirementCount);
+                    UnionOwnRequirements(part);
+                }
+                else
+                {
+                    budgetFold?.RecordMemberFoldEntries(part.OwnEntryCount);
+                    UnionOwnSets(part);
+                }
                 if (part._absorbed is { } nested)
                 {
                     for (var i = nested.Count - 1; i >= 0; i--)
@@ -929,6 +1001,12 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         internal void MarkDeferredMember() => _deferredMember = true;
+
+        /// <summary>
+        /// Folds every part this seed holds into its own sets, exactly as the first read of a set folds it (the change test's
+        /// <see cref="SetEquals"/> does, ORDERED HOLDING's change test where it stands in for that one).
+        /// </summary>
+        internal void FoldInPlace() => Fold();
 
         // Navigation observes the same flat expansion and the same completed-seed edges as the eager solve.
         // Materialize only the requested member, once per resolution, and preserve sharing between its readers.
@@ -1054,6 +1132,13 @@ internal static class PropertyDependencyGraphBuilder
         {
             // Reads the folded sets directly, so a seed with nothing to qualify materializes none.
             Fold();
+            QualifyOwnRequirements(owner, ownerParameterNames, observations);
+        }
+
+        // Members held by an expansion of this level are already qualified here. Only its own requirements need moving.
+        internal void QualifyOwnRequirements(Algorithm owner, IReadOnlySet<string> ownerParameterNames,
+            FrontEndTraversalObservations? observations)
+        {
             if (_requiredAncestorOwnedParameterNames is not { Count: > 0 } required)
                 return;
 
@@ -2827,8 +2912,23 @@ internal static class PropertyDependencyGraphBuilder
     /// expansion copies and folds exactly as without <paramref name="held"/>, and so does every other caller. An
     /// expansion folds when its depth budget is exhausted or the entries and edges a reader could visit exceed
     /// four times a lower bound on its width (<see cref="HeldMemberSeeds.MustFold"/>).</para>
+    /// <para>ORDERED HOLDING (November 28 2026; implementation only): with an <paramref name="ordering"/> other than
+    /// <see cref="OrderedHolding.None"/> (the first evaluation of a mixed-cycle member, <see cref="SolveMemberSeeds"/>), a
+    /// member seed that carries pending references, all of them in its own set (<see cref="HeldMemberSeeds.MayHoldOrdered"/>:
+    /// a flat seed, a MEMBERS BY REFERENCE expansion or another ordered holder), is held as well: its references are added to
+    /// the expansion's own set at once, in the order and with the owners the union adds them, and its requirements are held
+    /// by reference (<see cref="SummarySeed.HoldOrdered"/>). A directly read flat seed with more than eight pending references
+    /// and at least as many references as requirements takes the ordinary union. Where holding replaces the ordinary union,
+    /// qualification follows the reads so a fallback can copy into an empty qualified set. The union writes a read seed's own sets in place and folds what
+    /// it holds at the next escaping name, path or the end; for such a seed those parts add no reference and narrow none,
+    /// so every reference, escaping name and path keeps the union's position. Where the copied expansion is a union (any
+    /// held reference-bearing seed, or <see cref="OrderedHolding.InPlaceOfUnion"/>), a result that keeps its parts is an
+    /// ORDERED HOLDER (<see cref="SummarySeed.MarkOrderedHolder"/>): it stands for that flat seed, and it is kept only when
+    /// a held seed or its own entries prove the flat seed wider than <see cref="SummarySeed.CopiedCompletedEntries"/> and
+    /// the fold budget is not spent (<see cref="HeldMemberSeeds.MustFoldOrdered"/>); otherwise it folds here.</para>
     /// </summary>
-    internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level, HeldMemberSeeds? held = null)
+    internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level, HeldMemberSeeds? held = null,
+        OrderedHolding ordering = OrderedHolding.None)
     {
         // A seed with no requirement, name or reference has nothing to resolve, escape or qualify at any level: its
         // expansion is the empty seed, whatever the level.
@@ -2842,18 +2942,30 @@ internal static class PropertyDependencyGraphBuilder
             ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
         // Nothing is held yet, so this qualification folds nothing.
         var holdsMembers = held is not null;
-        if (holdsMembers)
+        if (holdsMembers && ordering != OrderedHolding.InPlaceOfUnion)
             expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
+        // ORDERED HOLDING: whether reference-bearing member seeds may be held, and whether the copied expansion of this
+        // member is a flat seed (a union) that a result holding parts stands for.
+        var holdsOrdered = holdsMembers && ordering != OrderedHolding.None;
+        var standsForFlat = holdsOrdered && ordering == OrderedHolding.InPlaceOfUnion;
 
         foreach (var dependencyName in baseSeed.VisiblePropertyDependencyNames)
         {
             if (level.LocalPropertySummaries.TryGetValue(dependencyName, out var localSummary))
             {
-                holdsMembers = holdsMembers && held!.MayHold(localSummary);
-                if (!holdsMembers)
-                    expanded.UnionWith(localSummary);
-                else
+                if (holdsMembers && held!.MayHold(localSummary))
                     expanded.HoldMember(localSummary, level.Memos.Observations);
+                else if (holdsOrdered && held!.MayHoldOrdered(localSummary))
+                {
+                    expanded.HoldOrdered(localSummary, level.Memos.Observations);
+                    standsForFlat = true;
+                }
+                else
+                {
+                    holdsMembers = holdsOrdered = false;
+                    expanded.UnionWith(localSummary);
+                }
+
                 continue;
             }
 
@@ -2871,26 +2983,95 @@ internal static class PropertyDependencyGraphBuilder
             if (memo.SelectsLocalMember(pending, context)
                 && level.LocalPropertySummaries.TryGetValue(pending.Head, out var local))
             {
-                holdsMembers = holdsMembers && held!.MayHold(local);
-                if (!holdsMembers)
-                    expanded.AbsorbCompleted(local);
-                else
+                if (holdsMembers && held!.MayHold(local))
                     expanded.HoldMember(local, level.Memos.Observations);
+                else if (holdsOrdered && held!.MayHoldOrdered(local))
+                {
+                    expanded.HoldOrdered(local, level.Memos.Observations);
+                    standsForFlat = true;
+                }
+                else
+                {
+                    holdsMembers = holdsOrdered = false;
+                    expanded.AbsorbCompleted(local);
+                }
+
                 continue;
             }
             expanded.AddPendingReference(pending.At(context), keepHeldParts: holdsMembers);
         }
 
+        // Keep the copied union's allocation behavior when a path-heavy member ends holding. Qualifying first would
+        // put the base's parameter in a new tiny set before copying a wide already-qualified predecessor into it.
+        if (holdsMembers && ordering == OrderedHolding.InPlaceOfUnion)
+            expanded.QualifyOwnRequirements(level.Algorithm, level.ParameterNames, level.Memos.Observations);
         if (!holdsMembers)
             expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
         else if (expanded.AbsorbedPartsWithoutFolding is { } heldParts)
         {
-            if (held!.MustFold(expanded, heldParts))
-                held.FoldHeldParts(expanded);
+            if (!standsForFlat)
+            {
+                if (held!.MustFold(expanded, heldParts))
+                    held.FoldHeldParts(expanded);
+                else
+                    expanded.MarkDeferredMember();
+            }
+            // An expansion that cannot stand for its flat seed makes the union's own fold (no budget is spent); one whose
+            // budget is spent folds as MEMBERS BY REFERENCE's expansions do.
             else
-                expanded.MarkDeferredMember();
+            {
+                expanded.MarkOrderedHolder();
+                if (!StandsForWideFlatSeed(expanded, heldParts))
+                    held!.Materialize(expanded);
+                else if (held!.MustFoldOrdered(expanded, heldParts))
+                    held.FoldHeldParts(expanded);
+            }
         }
         return expanded;
+    }
+
+    /// <summary>
+    /// ORDERED HOLDING (<see cref="ExpandAtLevel"/>): whether an expansion that holds <paramref name="parts"/> carries a
+    /// reference and provably stands for a flat seed wider than <see cref="SummarySeed.CopiedCompletedEntries"/> — its own
+    /// entries, or a held flat seed or ordered holder of that width, which the flat seed contains. Such a flat seed is
+    /// absorbed by reference wherever an ordered holder is (<see cref="SummarySeed.AbsorbCompleted"/>), and it carries a
+    /// reference as every ordered holder does, so the change test and the reference-free tests tell it from a held seed.
+    /// </summary>
+    private static bool StandsForWideFlatSeed(SummarySeed expanded, IReadOnlyList<SummarySeed> parts)
+    {
+        if (expanded.OwnSetsHoldNoReferences)
+            return false;
+        if (expanded.OwnEntryCount > SummarySeed.CopiedCompletedEntries)
+            return true;
+        foreach (var part in parts)
+        {
+            if (part.IsOrderedHolder || part.AbsorbedPartsWithoutFolding is null && part.OwnEntryCount > SummarySeed.CopiedCompletedEntries)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// ORDERED HOLDING (<see cref="ExpandAtLevel"/>): what an expansion of a mixed-cycle member may hold beyond the
+    /// reference-free member seeds of MEMBERS BY REFERENCE.
+    /// </summary>
+    internal enum OrderedHolding
+    {
+        /// <summary>Only what MEMBERS BY REFERENCE holds.</summary>
+        None,
+
+        /// <summary>
+        /// Reference-bearing member seeds too, where the copied expansion holds the reference-free ones (the first evaluation
+        /// of a member with the share shape): holding a reference-bearing one makes an ordered holder.
+        /// </summary>
+        AfterReferenceFree,
+
+        /// <summary>
+        /// Reference-bearing member seeds too, where the copied expansion holds nothing (the first evaluation of a member
+        /// without the share shape): every result that keeps a part is an ordered holder.
+        /// </summary>
+        InPlaceOfUnion,
     }
 
     /// <summary>
@@ -3468,6 +3649,18 @@ internal static class PropertyDependencyGraphBuilder
     /// from a reference-free held one without folding. Content, reference order, shape, schedule, checkpoints and
     /// settlement are those of the copied seeds (the seam <see cref="MixedCycleSeedsCopiedForTesting"/>); only the copying
     /// and the storage change.</para>
+    ///
+    /// <para>ORDERED HOLDING (November 28 2026; implementation only). The first evaluation of a mixed-cycle member, with or
+    /// without the share shape, also holds reference-bearing member seeds whose references all stand in their own sets, its
+    /// own set taking their references in the union's order (<see cref="ExpandAtLevel"/>, <see cref="OrderedHolding"/>).
+    /// Such an ORDERED HOLDER stands for the copied flat seed: completeness, the complete seed's order check, the complete
+    /// share's one-part exception and the change test decide as for that seed, from its own references and an upper bound of
+    /// its requirement counts or after folding it in place (<see cref="OrderedHolders"/>), and once a unit ranked after a
+    /// component's members is taken the component has converged and folds every ordered holder its seeds reach. The change
+    /// test also leaves a replaced reference-bearing holder unfolded where no other member's seed is that holder and its bound
+    /// proves the change, and the converged component folds it where a seed that stays still holds it. Content, reference
+    /// order, published part structure, schedule, checkpoints and settlement are those of the copied seeds (the seam
+    /// <see cref="ReferenceBearingSeedsCopiedForTesting"/>).</para>
     /// </summary>
     private static void SolveMemberSeeds(
         Algorithm algorithm,
@@ -3553,8 +3746,13 @@ internal static class PropertyDependencyGraphBuilder
         // A component's bound reads the seeds of the members outside it, which the ranked schedule has settled before any
         // member of the component is evaluated; the discovery order's first-in, first-out schedule has not.
         var completeSeeds = !discoveryOrder && !MixedCycleSeedsCopiedForTesting.Value;
+        // ORDERED HOLDING: the first evaluation of a mixed-cycle member holds reference-bearing member seeds too; it relies on
+        // the ranked schedule's convergence of a component before any later unit reads it, as complete seeds do.
+        var orderedHolding = completeSeeds && !MemberSeedsCopiedForTesting.Value && !ReferenceBearingSeedsCopiedForTesting.Value;
         int[]? mixedOf = null;
         ComponentBound?[]? bounds = null;
+        // ORDERED HOLDING: the last rank of each mixed component's members.
+        int[]? lastRankOf = null;
         // The members evaluated one by one in a cycle (several members, or one that reads itself): they are evaluated
         // again while the cycle converges, and each change detection compares their seeds whole, so a full expansion of
         // one copies and folds (MEMBERS BY REFERENCE holds members for the others), except where a member of a mixed
@@ -3591,6 +3789,9 @@ internal static class PropertyDependencyGraphBuilder
                 }
                 worklist.Add(member);
             }
+
+            if (component.Count > 1 && orderedHolding)
+                (lastRankOf ??= new int[components.Count])[c] = worklist.Ranked - 1;
         }
 
         var readers = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
@@ -3609,8 +3810,28 @@ internal static class PropertyDependencyGraphBuilder
         var evaluatedComponent = -1;
         SummarySeed? evaluatedPrevious = null;
         Func<SummarySeed, bool>? takesComplete = null;
+        // ORDERED HOLDING: the mixed components whose evaluations made ordered holders, in rank order, the number already
+        // folded after converging, and the solve's ordered holders.
+        List<int>? orderedComponents = null;
+        var foldedComponents = 0;
+        OrderedHolders? orderedHolders = null;
+        if (orderedHolding && mixedOf is not null)
+        {
+            held ??= new(memos.Observations, memos.SharedMemo.CancellationToken);
+            orderedHolders = new(held, memos.Observations, memos.SharedMemo.CancellationToken);
+        }
+
         while (worklist.TryDequeue(out var index))
         {
+            // ORDERED HOLDING: the worklist takes the least queued rank, and nothing outside a component writes a seed its
+            // members read, so once a unit ranked after a component's members is taken the component has converged. Its
+            // ordered holders are folded in place before any later unit reads them.
+            while (orderedComponents is not null && foldedComponents < orderedComponents.Count
+                && lastRankOf![orderedComponents[foldedComponents]] < worklist.RankOf(index))
+            {
+                FoldConverged(orderedComponents[foldedComponents++]);
+            }
+
             memos.Observations?.RecordSummaryMemberEvaluation();
             recorded.Reads.Clear();
             var component = componentOf[index];
@@ -3620,6 +3841,18 @@ internal static class PropertyDependencyGraphBuilder
                 if (!readers.TryGetValue(readName, out var nameReaders))
                     readers.Add(readName, nameReaders = []);
                 nameReaders.Add(index);
+            }
+
+            // The reads of a mixed member's first evaluation that made a flat seed, for the bounds of the ordered holders that
+            // hold it beside a seed it read (a holder's own parts are told by the holder itself).
+            if (orderedHolders is not null && component < 0 && mixedOf![index] >= 0 && recorded.Reads.Count != 0
+                && next.AbsorbedPartsWithoutFolding is null && seeds[properties[index].Name].IsEmptyWithoutFolding())
+            {
+                var read = new SummarySeed[recorded.Reads.Count];
+                var at = 0;
+                foreach (var readName in recorded.Reads)
+                    read[at++] = seeds[readName];
+                orderedHolders.NoteReads(next, read);
             }
 
             // The members of one unit share their previous seed after the unit's first evaluation,
@@ -3633,8 +3866,12 @@ internal static class PropertyDependencyGraphBuilder
                 if (!ReferenceEquals(previous, comparedPrevious))
                 {
                     comparedPrevious = previous;
-                    comparedSame = SameContent(next, previous,
-                        mixedOf?[member] >= 0 ? held ??= new(memos.Observations, memos.SharedMemo.CancellationToken) : null);
+                    comparedSame = mixedOf?[member] >= 0
+                        ? SameContent(next, previous, held ??= new(memos.Observations, memos.SharedMemo.CancellationToken), orderedHolders)
+                        : SameContent(next, previous);
+                    // A fold the change test left out is the component's to make at its convergence, where reached.
+                    if (orderedHolders?.TakeSkippedFold() == true && (orderedComponents is null || orderedComponents[^1] != mixedOf![member]))
+                        (orderedComponents ??= []).Add(mixedOf![member]);
                 }
 
                 if (comparedSame)
@@ -3650,6 +3887,19 @@ internal static class PropertyDependencyGraphBuilder
                 }
             }
         }
+
+        while (orderedComponents is not null && foldedComponents < orderedComponents.Count)
+            FoldConverged(orderedComponents[foldedComponents++]);
+
+        // ORDERED HOLDING: folds every ordered holder a converged component's members reach.
+        void FoldConverged(int component)
+            => orderedHolders!.FoldReachable(components[component].Select(member => seeds[properties[member].Name]));
+
+        // ORDERED HOLDING: folds an ordered holder in place, where a decision needs the flat seed it stands for.
+        void Materialize(SummarySeed seed) => orderedHolders!.Materialize(seed);
+
+        // ORDERED HOLDING: an upper bound of an ordered holder's requirement counts.
+        (int Required, int Qualified) UpperBound(SummarySeed seed) => orderedHolders!.UpperBound(seed);
 
         // One share-shaped component's seed: its members' own requirements qualified here, united with
         // the non-empty seeds it reads from outside itself (held by reference when large).
@@ -3686,7 +3936,22 @@ internal static class PropertyDependencyGraphBuilder
 
             if (TryShareMemberSeed(baseSeed, recorded, level, sharesFold && inCycle?[index] != true, ref held,
                     mixed >= 0 ? takesComplete ??= TakesCompleteShare : null) is { } shared)
+            {
+                // A share that is the one seed it read gives that seed object a second member.
+                if (orderedHolders is not null)
+                {
+                    foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+                    {
+                        if (seeds.TryGetValue(name, out var read) && ReferenceEquals(read, shared))
+                        {
+                            orderedHolders.NoteAlias(shared);
+                            break;
+                        }
+                    }
+                }
+
                 return shared;
+            }
             if (pathShares && inCycle?[index] != true
                 && TryPathShareMemberSeed(baseSeed, recorded, level, pathShareBudgets ??= new(ReferenceEqualityComparer.Instance)) is { } pathShared)
                 return pathShared;
@@ -3697,6 +3962,7 @@ internal static class PropertyDependencyGraphBuilder
             {
                 foreach (var (readName, _) in expansion.Reads)
                     recorded.Reads.Add(readName);
+                orderedHolders?.NoteAlias(expansion.Result);
                 return expansion.Result;
             }
 
@@ -3711,14 +3977,26 @@ internal static class PropertyDependencyGraphBuilder
                 memos.Observations?.RecordSummaryMemberExpansion();
                 // MIXED-CYCLE COMPLETE SEEDS: a member of a mixed cycle with the share shape holds, while its seed is still
                 // empty (its first evaluation), what MEMBERS BY REFERENCE holds outside a cycle: that seed is compared only with
-                // later seeds, which differ from it by carrying a reference or are folded once to compare. Every other cycle
-                // expansion copies and folds as before.
+                // later seeds, which differ from it by carrying a reference or are folded once to compare. ORDERED HOLDING: on
+                // that first evaluation, with or without the share shape, the member also holds reference-bearing member seeds
+                // whose references are all in their own sets, and a result that keeps such a part is an ordered holder, which
+                // stands for the copied flat seed. Every other cycle expansion copies and folds as before.
+                var firstOfMixed = mixed >= 0 && evaluatedPrevious!.IsEmptyWithoutFolding();
+                var shareShaped = firstOfMixed && HasShareShape(baseSeed, equationOf);
+                var ordering = !orderedHolding || !firstOfMixed ? OrderedHolding.None
+                    : shareShaped ? OrderedHolding.AfterReferenceFree : OrderedHolding.InPlaceOfUnion;
                 var holding = holdsMembers
-                    && (inCycle?[index] != true
-                        || mixed >= 0 && evaluatedPrevious!.IsEmptyWithoutFolding() && HasShareShape(baseSeed, equationOf))
+                    && (inCycle?[index] != true || shareShaped || ordering != OrderedHolding.None)
                     && (baseSeed.VisiblePropertyDependencyNames.Count != 0 || baseSeed.PendingReferences.Count != 0);
-                expanded = ExpandAtLevel(baseSeed, level, holding ? held ??= new(memos.Observations, memos.SharedMemo.CancellationToken) : null);
+                expanded = ExpandAtLevel(baseSeed, level, holding ? held ??= new(memos.Observations, memos.SharedMemo.CancellationToken) : null,
+                    holding ? ordering : OrderedHolding.None);
                 memos.Observations?.RecordSummaryMemberExpansionStorage(expanded.OwnEntryCount, expanded.AbsorbedPartsWithoutFolding?.Count ?? 0);
+                if (expanded.IsOrderedHolder)
+                {
+                    memos.Observations?.RecordSummaryMemberOrderedHolder(expanded.AbsorbedPartsWithoutFolding!.Count);
+                    if (orderedComponents is null || orderedComponents[^1] != mixed)
+                        (orderedComponents ??= []).Add(mixed);
+                }
             }
             var reads = new (string Name, SummarySeed Read)[recorded.Reads.Count];
             var at = 0;
@@ -3731,9 +4009,10 @@ internal static class PropertyDependencyGraphBuilder
         // MIXED-CYCLE COMPLETE SEEDS: a share of a complete flat member is a flat seed equal to that member wherever the
         // copied seeds' change test folds the share: unless the member's seed is empty (the share is kept as it is) or holds
         // that member as its one part (the share can equal it in structure and is kept as it is too).
+        // An ordered holder previous is the copied flat seed, which holds no part.
         bool TakesCompleteShare(SummarySeed shared)
             => evaluatedPrevious is { } previous && !previous.IsEmptyWithoutFolding()
-                && !(previous.AbsorbedPartsWithoutFolding is [var only] && ReferenceEquals(only, shared))
+                && !(!previous.IsOrderedHolder && previous.AbsorbedPartsWithoutFolding is [var only] && ReferenceEquals(only, shared))
                 && IsComplete(shared, evaluatedComponent);
 
         // Whether every member seed an expansion read is still the one it read.
@@ -3753,6 +4032,27 @@ internal static class PropertyDependencyGraphBuilder
                 seeds, equationOf, level);
             if (bound.Complete is { } known && (ReferenceEquals(seed, known) || seed.AbsorbedPartsWithoutFolding is null && seed.SharesOwnSetsWith(known)))
                 return true;
+            // ORDERED HOLDING: an ordered holder is complete exactly when the copied flat seed it stands for is. Its own
+            // references are all of its references, and its requirement counts have an upper bound; when neither decides,
+            // it is folded in place and the copied seed's test decides.
+            if (seed.IsOrderedHolder)
+            {
+                if ((seed.OwnPendingReferencesWithoutFolding?.Count ?? 0) != bound.References.Count)
+                    return false;
+                var (required, qualified) = UpperBound(seed);
+                if (required < bound.Required || qualified < bound.Qualified)
+                    return false;
+                var visited = 0;
+                foreach (var reference in bound.References)
+                {
+                    if ((visited++ & 255) == 0) memos.SharedMemo.CancellationToken.ThrowIfCancellationRequested();
+                    if (!seed.OwnPendingReferencesWithoutFolding!.ContainsEqual(reference))
+                        return false;
+                }
+
+                Materialize(seed);
+            }
+
             if (seed.AbsorbedPartsWithoutFolding is not null
                 || (seed.OwnRequiredNamesWithoutFolding?.Count ?? 0) != bound.Required
                 || seed.OwnVisibleNameCount != bound.Visible
@@ -3820,7 +4120,8 @@ internal static class PropertyDependencyGraphBuilder
                     break;
                 foreach (var reference in read.OwnPendingReferencesWithoutFolding ?? [])
                     Write(reference.ResolutionKey);
-                partsWait |= read.AbsorbedPartsWithoutFolding is not null;
+                // An ordered holder's own references are all of its references, as the copied flat seed's are.
+                partsWait |= read.AbsorbedPartsWithoutFolding is not null && !read.IsOrderedHolder;
             }
 
             if (before is not null)
@@ -3922,6 +4223,303 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
+    /// ORDERED HOLDING (<see cref="SolveMemberSeeds"/>): the ordered holders of one level solve (<see cref="SummarySeed.IsOrderedHolder"/>),
+    /// each of which stands for the flat seed the copied expansion makes. The solve asks for upper bounds of their requirement
+    /// counts, folds one in place where a decision needs that flat seed, takes the change test that meets one as the copied
+    /// seeds take it, and folds every ordered holder a converged component's members reach before a later unit reads them.
+    /// </summary>
+    private sealed class OrderedHolders(HeldMemberSeeds held, FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+    {
+        private readonly Dictionary<SummarySeed, (int Required, int Qualified)> _upperBounds = new(ReferenceEqualityComparer.Instance);
+        private readonly Stack<(SummarySeed Seed, bool PartsDone)> _pending = new();
+        // The member seeds the evaluation that first produced a seed read: an evaluation unites every member seed it reads
+        // (a complete seed holds them all), so a seed's content contains each one's.
+        private readonly Dictionary<SummarySeed, SummarySeed[]> _readsOf = new(ReferenceEqualityComparer.Instance);
+        // The seeds that became a second member's seed (a share that is a seed it read, a reused expansion), and which
+        // holders carry a pending reference somewhere.
+        private HashSet<SummarySeed>? _aliased;
+        private readonly Dictionary<SummarySeed, bool> _carriesReference = new(ReferenceEqualityComparer.Instance);
+        // The replaced seeds whose fold the change test left out (Differs), and whether one was left out since the solve last
+        // asked (TakeSkippedFold).
+        private HashSet<SummarySeed>? _foldSkipped;
+        private bool _skippedSinceAsked;
+        private HashSet<SummarySeed>? _clean;
+        private Stack<SummarySeed>? _walk;
+
+        /// <summary>Whether the change test left out a fold since the last call: the component's convergence folds it if reached.</summary>
+        public bool TakeSkippedFold()
+        {
+            var skipped = _skippedSinceAsked;
+            _skippedSinceAsked = false;
+            return skipped;
+        }
+
+        /// <summary>
+        /// Records that <paramref name="seed"/>, a seed some member already has, became another member's seed: a share that
+        /// is the one seed it read, or a reused expansion. No other evaluation hands one seed object to two members.
+        /// </summary>
+        public void NoteAlias(SummarySeed seed) => (_aliased ??= new(ReferenceEqualityComparer.Instance)).Add(seed);
+
+        /// <summary>
+        /// CHANGE TEST (the reversed single-predecessor cycle): whether <paramref name="previous"/>, a member's current seed
+        /// that holds parts and is no ordered holder, provably differs from <paramref name="next"/> without folding it. The
+        /// copied change test has found no structural equality and folds both seeds, <paramref name="next"/> first; that
+        /// fold of <paramref name="next"/> is made here too. <paramref name="previous"/> is left as it is only when no other
+        /// member's seed is it, it carries a pending reference (so every holder of it is held by no fold budget, folded or
+        /// not), and its requirement bound is below <paramref name="next"/>'s counts. It is then replaced: only seeds that
+        /// hold it as a part still reach it, whose decisions read their own direct parts, and a fold reads its content in the
+        /// same order whether or not it was folded first. A seed that stays after a second pass stopped early can hold it
+        /// (through the copy of a small share's own sets); the converged component folds it then (<see cref="FoldReachable"/>),
+        /// as the copied change test folded it.
+        /// </summary>
+        public bool Differs(SummarySeed next, SummarySeed previous)
+        {
+            if (previous.AbsorbedPartsWithoutFolding is null || previous.IsOrderedHolder || next.IsOrderedHolder
+                || _aliased?.Contains(previous) == true || held.KnownReferenceFree(previous) || !CarriesReference(previous))
+            {
+                return false;
+            }
+
+            next.FoldInPlace();
+            var (required, qualified) = UpperBound(previous);
+            if (required >= (next.OwnRequiredNamesWithoutFolding?.Count ?? 0)
+                && qualified >= (next.OwnQualifiedParametersWithoutFolding?.Count ?? 0))
+            {
+                return false;
+            }
+
+            (_foldSkipped ??= new(ReferenceEqualityComparer.Instance)).Add(previous);
+            _skippedSinceAsked = true;
+            observations?.RecordSummaryMemberChangeTestWithoutFold();
+            return true;
+        }
+
+        // Whether a seed carries a pending reference in its own sets or in any part it holds. Post-order on the heap, each
+        // holder decided once per solve; a fold changes no content.
+        private bool CarriesReference(SummarySeed seed)
+        {
+            if (!seed.OwnSetsHoldNoReferences)
+                return true;
+            if (seed.AbsorbedPartsWithoutFolding is null)
+                return false;
+            if (_carriesReference.TryGetValue(seed, out var known))
+                return known;
+            _pending.Clear();
+            _pending.Push((seed, false));
+            while (_pending.TryPop(out var entry))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (current, partsDone) = entry;
+                if (current.AbsorbedPartsWithoutFolding is not { } parts || _carriesReference.ContainsKey(current))
+                    continue;
+                if (!current.OwnSetsHoldNoReferences)
+                {
+                    _carriesReference.Add(current, true);
+                    continue;
+                }
+
+                if (!partsDone)
+                {
+                    _pending.Push((current, true));
+                    for (var i = parts.Count - 1; i >= 0; i--)
+                    {
+                        if (parts[i].AbsorbedPartsWithoutFolding is not null && !_carriesReference.ContainsKey(parts[i]))
+                            _pending.Push((parts[i], false));
+                    }
+
+                    continue;
+                }
+
+                var carries = false;
+                foreach (var part in parts)
+                {
+                    if (!part.OwnSetsHoldNoReferences || part.AbsorbedPartsWithoutFolding is not null && _carriesReference[part])
+                    {
+                        carries = true;
+                        break;
+                    }
+                }
+
+                _carriesReference.Add(current, carries);
+            }
+
+            return _carriesReference[seed];
+        }
+
+        /// <summary>Records the member seeds the evaluation that produced <paramref name="result"/> read (the first producer's only).</summary>
+        public void NoteReads(SummarySeed result, SummarySeed[] reads) => _readsOf.TryAdd(result, reads);
+
+        // Whether the content of `seed` provably contains `part`'s: `seed` holds it directly, or read it.
+        private bool Contains(SummarySeed seed, SummarySeed part)
+        {
+            if (seed.HasAbsorbed(part))
+                return true;
+            if (_readsOf.TryGetValue(seed, out var reads))
+            {
+                foreach (var read in reads)
+                {
+                    if (ReferenceEquals(read, part))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// An upper bound of the required names and owner-qualified parameters of <paramref name="seed"/>'s content: its own
+        /// counts for a flat seed; otherwise its own counts plus those of the parts it holds, a part whose content another
+        /// part provably contains (held directly or read by the evaluation that produced it) counted once. Post-order on the
+        /// heap, each seed bounded once per solve; a fold changes no content, so a bound stays valid.
+        /// </summary>
+        public (int Required, int Qualified) UpperBound(SummarySeed seed)
+        {
+            if (seed.AbsorbedPartsWithoutFolding is null)
+                return Own(seed);
+            if (_upperBounds.TryGetValue(seed, out var known))
+                return known;
+            _pending.Clear();
+            _pending.Push((seed, false));
+            while (_pending.TryPop(out var entry))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (current, partsDone) = entry;
+                if (current.AbsorbedPartsWithoutFolding is not { } parts || _upperBounds.ContainsKey(current))
+                    continue;
+                if (!partsDone)
+                {
+                    _pending.Push((current, true));
+                    for (var i = parts.Count - 1; i >= 0; i--)
+                    {
+                        if (parts[i].AbsorbedPartsWithoutFolding is not null && !_upperBounds.ContainsKey(parts[i]))
+                            _pending.Push((parts[i], false));
+                    }
+
+                    continue;
+                }
+
+                var (required, qualified) = Own(current);
+                long requiredSum = required, qualifiedSum = qualified;
+                for (var i = 0; i < parts.Count; i++)
+                {
+                    if (WithinSibling(parts, i))
+                        continue;
+                    var (r, q) = parts[i].AbsorbedPartsWithoutFolding is null ? Own(parts[i]) : _upperBounds[parts[i]];
+                    requiredSum += r;
+                    qualifiedSum += q;
+                }
+
+                _upperBounds.Add(current, ((int)Math.Min(requiredSum, int.MaxValue), (int)Math.Min(qualifiedSum, int.MaxValue)));
+            }
+
+            return _upperBounds[seed];
+
+            static (int, int) Own(SummarySeed seed)
+                => (seed.OwnRequiredNamesWithoutFolding?.Count ?? 0, seed.OwnQualifiedParametersWithoutFolding?.Count ?? 0);
+        }
+
+        // Whether another of a short part list provably contains the part at `at` (the test scans the list per part). A seed
+        // contains only seeds built before it, so of two parts at most one contains the other, and every skipped part lies
+        // within a counted one.
+        private bool WithinSibling(IReadOnlyList<SummarySeed> parts, int at)
+        {
+            if (parts.Count > SummarySeed.CopiedCompletedEntries)
+                return false;
+            for (var j = 0; j < parts.Count; j++)
+            {
+                if (j != at && Contains(parts[j], parts[at]))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Folds an ordered holder in place: it becomes the flat seed it stands for, in content and reference order.</summary>
+        public void Materialize(SummarySeed seed)
+        {
+            held.Materialize(seed);
+            observations?.RecordSummaryMemberOrderedFold(seed.OwnEntryCount);
+        }
+
+        /// <summary>
+        /// The change test of two nonempty seeds, one an ordered holder, past the reference-free tests
+        /// (<see cref="SameContent"/>), decided as the copied seeds decide it with the flat seed in its place. There a seed that
+        /// holds parts never equals a flat seed in structure, so their <see cref="SummarySeed.SetEquals"/> folds it in place;
+        /// it is folded here too. Then each side is flat or an ordered holder, whose own references are all of its references:
+        /// different references, or an ordered holder's requirement bound below a flat seed's counts, decide a change without
+        /// folding the ordered holder; otherwise it is folded and the flat seeds compare.
+        /// </summary>
+        public bool Same(SummarySeed next, SummarySeed previous)
+        {
+            if (next.AbsorbedPartsWithoutFolding is not null && !next.IsOrderedHolder)
+                next.FoldInPlace();
+            if (previous.AbsorbedPartsWithoutFolding is not null && !previous.IsOrderedHolder)
+                previous.FoldInPlace();
+            var nextReferences = next.OwnPendingReferencesWithoutFolding;
+            var previousReferences = previous.OwnPendingReferencesWithoutFolding;
+            if ((nextReferences?.Count ?? 0) != (previousReferences?.Count ?? 0)
+                || nextReferences is { Count: > 0 } && !nextReferences.SetEquals(previousReferences!))
+            {
+                return false;
+            }
+
+            if (next.IsOrderedHolder != previous.IsOrderedHolder)
+            {
+                var (holder, flat) = next.IsOrderedHolder ? (next, previous) : (previous, next);
+                var (required, qualified) = UpperBound(holder);
+                if (required < (flat.OwnRequiredNamesWithoutFolding?.Count ?? 0)
+                    || qualified < (flat.OwnQualifiedParametersWithoutFolding?.Count ?? 0))
+                {
+                    return false;
+                }
+            }
+
+            if (next.IsOrderedHolder)
+                Materialize(next);
+            if (previous.IsOrderedHolder)
+                Materialize(previous);
+            return next.StructurallyEquals(previous);
+        }
+
+        /// <summary>
+        /// Folds every ordered holder <paramref name="roots"/> reach — through the parts of other holders, not into an ordered
+        /// holder's own (folding it drops them) — so that a converged component publishes the copied seeds' shapes. Each
+        /// seed is walked once per solve: nothing gains a part after it is built.
+        /// </summary>
+        public void FoldReachable(IEnumerable<SummarySeed> roots)
+        {
+            var clean = _clean ??= new(ReferenceEqualityComparer.Instance);
+            var walk = _walk ??= new();
+            foreach (var root in roots)
+                walk.Push(root);
+            while (walk.TryPop(out var seed))
+            {
+                if (seed.AbsorbedPartsWithoutFolding is not { } parts || !clean.Add(seed))
+                    continue;
+                if ((clean.Count & 255) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+                if (seed.IsOrderedHolder)
+                {
+                    Materialize(seed);
+                    continue;
+                }
+
+                // A replaced seed whose change-test fold was left out, still held by a seed that stays: the copied change test
+                // folded it, so it is folded now, before a later unit reads the seed that holds it.
+                if (_foldSkipped?.Contains(seed) == true)
+                {
+                    seed.FoldInPlace();
+                    observations?.RecordSummaryMemberDeferredChangeTestFold(seed.OwnEntryCount);
+                    continue;
+                }
+
+                foreach (var part in parts)
+                    walk.Push(part);
+            }
+        }
+    }
+
+    /// <summary>
     /// TEST SEAM (<c>SharedPredecessorExpansionTests</c>): while set on the calling flow, the member solver holds no member
     /// seed (<see cref="HeldMemberSeeds"/>): every full expansion copies the member seeds it reads and folds them, the union
     /// the held representation must equal in content and reference order. Never set by production code.
@@ -3961,6 +4559,14 @@ internal static class PropertyDependencyGraphBuilder
     internal static readonly AsyncLocal<bool> MixedCycleSeedsCopiedForTesting = new();
 
     /// <summary>
+    /// TEST SEAM (<c>MixedCycleOrderedHoldingTests</c>): while set on the calling flow, the member solver makes no ordered
+    /// holder (ORDERED HOLDING): the first evaluation of a mixed-cycle member copies every reference-bearing member seed it
+    /// reads into a flat seed, as before November 28 2026 — the seeds the ordered holders must equal in content, reference
+    /// order and published shape. Never set by production code.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> ReferenceBearingSeedsCopiedForTesting = new();
+
+    /// <summary>
     /// The member solver's worklist (<see cref="SolveMemberSeeds"/>). Each evaluation unit is RANKED by its position in the
     /// first-evaluation order and is queued at most once at a time; the solver always takes the queued unit of least rank.
     /// A unit re-queued because a member seed it read changed is therefore evaluated before every unit ranked after it: a
@@ -3992,6 +4598,12 @@ internal static class PropertyDependencyGraphBuilder
             _units[_ranked++] = unit;
             Enqueue(unit);
         }
+
+        /// <summary>The rank of an added unit.</summary>
+        public int RankOf(int unit) => _ranks[unit];
+
+        /// <summary>The number of units ranked so far: the rank the next added unit takes.</summary>
+        public int Ranked => _ranked;
 
         /// <summary>Queues a ranked unit unless it is queued already.</summary>
         public void Enqueue(int unit)
@@ -4042,6 +4654,9 @@ internal static class PropertyDependencyGraphBuilder
         private static readonly FoldCost NotHeld = new(int.MinValue, 0, 0);
         private Dictionary<SummarySeed, FoldCost>? _known;
         private Stack<(SummarySeed Seed, bool PartsDone)>? _pending;
+        // ORDERED HOLDING: the costs of the seeds MayHoldOrdered decided, and its walk's stack.
+        private Dictionary<SummarySeed, FoldCost>? _orderedKnown;
+        private Stack<(SummarySeed Seed, bool PartsDone)>? _orderedPending;
         // The scratch collections of the folds an exhausted budget makes, kept for the solve.
         private HashSet<SummarySeed>? _folded;
         private Stack<SummarySeed>? _foldPending;
@@ -4050,8 +4665,19 @@ internal static class PropertyDependencyGraphBuilder
         public void FoldHeldParts(SummarySeed expanded)
             => expanded.FoldHeldParts(_folded ??= new(ReferenceEqualityComparer.Instance), _foldPending ??= new(), observations, cancellationToken);
 
+        /// <summary>ORDERED HOLDING: folds an ordered holder in place with the solve's scratch collections and token.</summary>
+        public void Materialize(SummarySeed orderedHolder)
+            => orderedHolder.FoldHeldParts(_folded ??= new(ReferenceEqualityComparer.Instance), _foldPending ??= new(), null, cancellationToken);
+
         /// <summary>Whether <paramref name="member"/>, and every seed it holds, carries no visible name and no pending reference.</summary>
         public bool MayHold(SummarySeed member) => Budget(member) != NotHeld;
+
+        /// <summary>
+        /// Whether <see cref="MayHold"/> has already decided that <paramref name="member"/>, a seed that holds parts, carries no
+        /// visible name and no pending reference — decided without computing anything (or caching anything) new.
+        /// </summary>
+        public bool KnownReferenceFree(SummarySeed member)
+            => _known is { } known && known.TryGetValue(member, out var cost) && cost != NotHeld;
 
         /// <summary>
         /// SHARE FOLDS (<see cref="TryShareMemberSeed"/>): folds the parts a share just built holds, exactly as
@@ -4078,7 +4704,26 @@ internal static class PropertyDependencyGraphBuilder
 
         internal bool MustFold(SummarySeed seed, IReadOnlyList<SummarySeed> parts)
         {
-            var cost = Combined(seed, parts);
+            var cost = Combined(seed, parts, ordered: false);
+            return cost.Budget < 0 || cost.Work > 4L * cost.WidthLowerBound;
+        }
+
+        /// <summary>
+        /// ORDERED HOLDING (<see cref="ExpandAtLevel"/>): whether <paramref name="member"/> may be held with its references
+        /// added to the holder's own set — a seed with no visible name whose own pending references are every reference of
+        /// its content (<see cref="SummarySeed.IsReferenceComplete"/>), every part it holds held under the same rule, or a
+        /// seed <see cref="MayHold"/> accepts. Each seed is decided once per solve.
+        /// </summary>
+        public bool MayHoldOrdered(SummarySeed member) => OrderedBudget(member) != NotHeld;
+
+        /// <summary>
+        /// <see cref="MustFold"/> for an expansion holding reference-bearing parts (<see cref="MayHoldOrdered"/>): the same
+        /// depth budget and work bound, a flat part's budget and width being its own requirements and its work its own
+        /// entries, references included (for a reference-free seed, exactly <see cref="MustFold"/>'s costs).
+        /// </summary>
+        internal bool MustFoldOrdered(SummarySeed seed, IReadOnlyList<SummarySeed> parts)
+        {
+            var cost = Combined(seed, parts, ordered: true);
             return cost.Budget < 0 || cost.Work > 4L * cost.WidthLowerBound;
         }
 
@@ -4089,7 +4734,7 @@ internal static class PropertyDependencyGraphBuilder
         // edges, its subtree lying inside the other's; when each holds every part of the other, the
         // second is the one reduced. All other overlap overestimates work. Every own requirement set
         // is contained in the eventual folded answer.
-        private FoldCost Combined(SummarySeed seed, IReadOnlyList<SummarySeed> parts)
+        private FoldCost Combined(SummarySeed seed, IReadOnlyList<SummarySeed> parts, bool ordered)
         {
             var least = int.MaxValue;
             var width = seed.OwnRequirementCount;
@@ -4097,7 +4742,8 @@ internal static class PropertyDependencyGraphBuilder
             for (var i = 0; i < parts.Count; i++)
             {
                 var part = parts[i];
-                var cost = part.AbsorbedPartsWithoutFolding is null ? FlatCost(part) : _known![part];
+                var cost = ordered ? OrderedCostOf(part)
+                    : part.AbsorbedPartsWithoutFolding is null ? FlatCost(part) : _known![part];
                 if (cost == NotHeld)
                     return NotHeld;
                 least = Math.Min(least, cost.Budget);
@@ -4196,7 +4842,91 @@ internal static class PropertyDependencyGraphBuilder
                     continue;
                 }
 
-                known.Add(seed, Combined(seed, parts));
+                known.Add(seed, Combined(seed, parts, ordered: false));
+            }
+
+            return known[member];
+        }
+
+        // ORDERED HOLDING: a flat seed's cost when it may carry references — its own requirements as budget and width,
+        // its own entries as work (FlatCost's for a reference-free seed).
+        private static FoldCost OrderedFlatCost(SummarySeed seed)
+            => seed.OwnVisibleNameCount == 0
+                ? new(seed.OwnRequirementCount, seed.OwnRequirementCount, seed.OwnEntryCount)
+                : NotHeld;
+
+        // ORDERED HOLDING: the cost Combined reads for a part of an ordered expansion, computed before it was held.
+        private FoldCost OrderedCostOf(SummarySeed part)
+        {
+            if (part.AbsorbedPartsWithoutFolding is null)
+                return OrderedFlatCost(part);
+            if (_known is { } known && known.TryGetValue(part, out var plain) && plain != NotHeld)
+                return plain;
+            return _orderedKnown![part];
+        }
+
+        /// <summary>
+        /// ORDERED HOLDING: the fold cost of a seed <see cref="MayHoldOrdered"/> accepts, or <see cref="NotHeld"/>: a seed
+        /// <see cref="MayHold"/> accepts has that cost; a direct flat input with more than eight references and at least
+        /// as many references as requirements uses the ordinary union. Other flat inputs have <see cref="OrderedFlatCost"/>;
+        /// a reference-complete holder combines the costs of its parts (each under the same rule) as <see cref="Budget"/>
+        /// does. Post-order on the heap, each seed decided once per solve.
+        /// </summary>
+        private FoldCost OrderedBudget(SummarySeed member)
+        {
+            if (Budget(member) is var plain && plain != NotHeld)
+                return plain;
+            if (member.AbsorbedPartsWithoutFolding is null)
+            {
+                // A path-dominated flat input would copy at least as many references immediately as requirements it
+                // could defer. Growing distinct paths exhaust the fold budget on every member. Use the ordinary union.
+                var references = member.OwnPendingReferencesWithoutFolding?.Count ?? 0;
+                if (references > SummarySeed.CopiedCompletedEntries && references >= member.OwnRequirementCount)
+                    return NotHeld;
+                return OrderedFlatCost(member);
+            }
+            if (member.OwnVisibleNameCount != 0 || !member.IsReferenceComplete)
+                return NotHeld;
+            var known = _orderedKnown ??= new(ReferenceEqualityComparer.Instance);
+            if (known.TryGetValue(member, out var cost))
+                return cost;
+            var pending = _orderedPending ??= new();
+            pending.Clear();
+            pending.Push((member, false));
+            while (pending.TryPop(out var entry))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (seed, partsDone) = entry;
+                if (known.ContainsKey(seed))
+                    continue;
+                if (seed.AbsorbedPartsWithoutFolding is not { } parts)
+                    continue;
+                if (!partsDone)
+                {
+                    if (seed.OwnVisibleNameCount != 0 || !seed.IsReferenceComplete)
+                    {
+                        known.Add(seed, NotHeld);
+                        continue;
+                    }
+
+                    if (Budget(seed) is var referenceFree && referenceFree != NotHeld)
+                    {
+                        known.Add(seed, referenceFree);
+                        continue;
+                    }
+
+                    pending.Push((seed, true));
+                    for (var i = parts.Count - 1; i >= 0; i--)
+                    {
+                        if (parts[i].AbsorbedPartsWithoutFolding is not null && !known.ContainsKey(parts[i]))
+                            pending.Push((parts[i], false));
+                    }
+
+                    continue;
+                }
+
+                // Combined is NotHeld as soon as one part is.
+                known.Add(seed, Combined(seed, parts, ordered: true));
             }
 
             return known[member];
@@ -4433,7 +5163,10 @@ internal static class PropertyDependencyGraphBuilder
     // Exact content equality of a member's new and previous seed, without folding when structure decides. With
     // referenceFree (a mixed-cycle member, MIXED-CYCLE COMPLETE SEEDS), a seed that carries a reference differs from one
     // that holds parts and carries none anywhere (HeldMemberSeeds.MayHold), decided without folding either.
-    private static bool SameContent(SummarySeed next, SummarySeed previous, HeldMemberSeeds? referenceFree = null)
+    // ORDERED HOLDING: an ordered holder on either side is taken as the flat seed it stands for (OrderedHolders.Same); it
+    // carries a reference in its own set and is no reference-free held seed, so the tests above answer for it as for that one.
+    private static bool SameContent(SummarySeed next, SummarySeed previous, HeldMemberSeeds? referenceFree = null,
+        OrderedHolders? orderedHolders = null)
     {
         if (ReferenceEquals(next, previous))
             return true;
@@ -4446,7 +5179,12 @@ internal static class PropertyDependencyGraphBuilder
             return false;
         }
 
-        return next.StructurallyEquals(previous) || next.SetEquals(previous);
+        if (orderedHolders is not null && (next.IsOrderedHolder || previous.IsOrderedHolder))
+            return orderedHolders.Same(next, previous);
+        if (next.StructurallyEquals(previous))
+            return true;
+        // A replaced holder whose requirement bound proves the change is left unfolded (OrderedHolders.Differs).
+        return orderedHolders?.Differs(next, previous) != true && next.SetEquals(previous);
 
         static bool CarriesReferenceAgainstReferenceFree(SummarySeed carrier, SummarySeed other, HeldMemberSeeds referenceFree)
             => !carrier.OwnSetsHoldNoReferences && other.AbsorbedPartsWithoutFolding is not null && referenceFree.MayHold(other);

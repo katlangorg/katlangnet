@@ -884,6 +884,65 @@ internal sealed class FrontEndTraversalObservations
         SummaryMemberComponentBoundEntries = checked(SummaryMemberComponentBoundEntries + entries);
     }
 
+    /// <summary>
+    /// ORDERED HOLDING (<c>PropertyDependencyGraphBuilder.SolveMemberSeeds</c>): first evaluations of mixed-cycle members whose
+    /// expansion held reference-bearing member seeds by reference and kept them, where the copied expansion copies their
+    /// width into a flat seed. Counted in <see cref="SummaryMemberExpansions"/> too.
+    /// </summary>
+    public long SummaryMemberOrderedHolders { get; private set; }
+
+    /// <summary>The parts those ordered holders hold by reference, summed.</summary>
+    public long SummaryMemberOrderedHolderParts { get; private set; }
+
+    /// <summary>Pending references inserted or narrowed from held members, including duplicate inputs.</summary>
+    public long SummaryMemberOrderedReferencesCopied { get; private set; }
+    internal void RecordSummaryMemberOrderedReferencesCopied(int entries) => SummaryMemberOrderedReferencesCopied += entries;
+
+    internal void RecordSummaryMemberOrderedHolder(int parts)
+    {
+        SummaryMemberOrderedHolders = checked(SummaryMemberOrderedHolders + 1);
+        SummaryMemberOrderedHolderParts = checked(SummaryMemberOrderedHolderParts + parts);
+    }
+
+    /// <summary>
+    /// Ordered holders folded in place — where the completeness test, the change test or a converged component needed the
+    /// flat seed they stand for — and the entries the folds kept, summed.
+    /// </summary>
+    public long SummaryMemberOrderedFolds { get; private set; }
+
+    /// <summary>The entries those folds kept in the holders' own sets, summed (the width each fold materialized).</summary>
+    public long SummaryMemberOrderedFoldEntries { get; private set; }
+
+    internal void RecordSummaryMemberOrderedFold(int entries)
+    {
+        SummaryMemberOrderedFolds = checked(SummaryMemberOrderedFolds + 1);
+        SummaryMemberOrderedFoldEntries = checked(SummaryMemberOrderedFoldEntries + entries);
+    }
+
+    /// <summary>
+    /// Change tests of mixed-cycle members that found a replaced seed holding parts different from its successor by an upper
+    /// bound of its requirement counts, without folding it where the copied change test folds it.
+    /// </summary>
+    public long SummaryMemberChangeTestsWithoutFold { get; private set; }
+
+    internal void RecordSummaryMemberChangeTestWithoutFold()
+        => SummaryMemberChangeTestsWithoutFold = checked(SummaryMemberChangeTestsWithoutFold + 1);
+
+    /// <summary>
+    /// Those replaced seeds that a seed staying after its component converged still holds, folded then as the copied change
+    /// test folded them, and the entries the folds kept, summed.
+    /// </summary>
+    public long SummaryMemberDeferredChangeTestFolds { get; private set; }
+
+    /// <summary>The entries the deferred change-test folds kept in the replaced seeds' own sets, summed.</summary>
+    public long SummaryMemberDeferredChangeTestFoldEntries { get; private set; }
+
+    internal void RecordSummaryMemberDeferredChangeTestFold(int entries)
+    {
+        SummaryMemberDeferredChangeTestFolds = checked(SummaryMemberDeferredChangeTestFolds + 1);
+        SummaryMemberDeferredChangeTestFoldEntries = checked(SummaryMemberDeferredChangeTestFoldEntries + entries);
+    }
+
     /// <summary>Entries copied from small flat members by holding expansions, including duplicate inputs.</summary>
     public long MemberEntriesCopied { get; private set; }
     internal void RecordMemberEntriesCopied(int entries) => MemberEntriesCopied += entries;
