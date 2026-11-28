@@ -385,7 +385,13 @@ internal readonly struct StaticQueryKey : IEquatable<StaticQueryKey>
 
     internal static StaticQueryKey Project(StaticQueryKind kind, StaticScopeKey scope, StaticQueryProjection projection,
         string? name = null, StaticCycleCheck stratum = StaticCycleCheck.Formation, Expr? node = null, int offset = 0, int length = 0)
-        => new(kind, scope, name, stratum, node, projection, offset, length);
+    {
+        // Open heads consult only direct lexical owners. Each level reads its own stratum-independent Q6 input
+        // and the same projection at its parent. Certificates and ordinary readers share this exact binding.
+        if (kind == StaticQueryKind.Binding && projection == StaticQueryProjection.OpenHeadBinding)
+            stratum = StaticCycleCheck.Formation;
+        return new(kind, scope, name, stratum, node, projection, offset, length);
+    }
 
     public static StaticQueryKey Binding(StaticScopeKey scope, string name, StaticCycleCheck stratum)
         => new(StaticQueryKind.Binding, scope, name ?? throw new ArgumentNullException(nameof(name)), stratum, null);

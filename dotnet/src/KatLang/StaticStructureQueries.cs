@@ -651,6 +651,9 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
     private bool HasPendingReceiverReturn(BodyContext context, StaticCycleCheck stratum,
         StaticQueryReader<StaticQueryKey, StaticFact> reader, bool direct = false)
     {
+        // A bare open row has no member to leave pending. A member-bearing predecessor still follows the
+        // expansion-cycle equation through this body with its own pending members.
+        if (direct && WrittenReferenceRow(context) is Expr.Resolve) return false;
         var cycle = reader.Read(Project(StaticQueryKind.TargetWalk, context.Key, direct ? StaticQueryProjection.OpenReceiverExpansionCycle : StaticQueryProjection.ReceiverExpansionCycle, stratum: stratum));
         if (cycle.Kind == StaticFactKind.Refused && reader.Read(Project(StaticQueryKind.TargetWalk, context.Key,
             direct ? StaticQueryProjection.OpenReceiverExpansionStep : StaticQueryProjection.ReceiverExpansionStep, stratum: stratum)).Kind == StaticFactKind.ExpansionPending)
@@ -943,8 +946,12 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
                 return StaticQueryStep.Complete(new StaticFact(StaticFactKind.Structure, context.Key));
             if (lower.IsUnknown || final.IsUnknown) return StaticQueryStep.Complete(StaticFact.Unknown);
         }
+        // For a bare open row the immediate target depends only on its own input gate and its direct head's
+        // owner walk. Both equations read the same Q6 inputs at every stratum. Share that one row fact;
+        // the structure's cycle gates above and its successor below still use the requesting stratum.
+        var rowStratum = open && WrittenReferenceRow(context) is Expr.Resolve ? StaticCycleCheck.Formation : stratum;
         var target = reader.Read(Project(StaticQueryKind.TargetWalk, context.Key,
-            open ? StaticQueryProjection.OpenRowTarget : StaticQueryProjection.RowTarget, stratum: stratum));
+            open ? StaticQueryProjection.OpenRowTarget : StaticQueryProjection.RowTarget, stratum: rowStratum));
         if (target.IsUnknown) return StaticQueryStep.Complete(target);
         if (target.Kind == StaticFactKind.Structure)
             return reader.Follow(open ? Project(StaticQueryKind.TargetWalk, target.Scope!, StaticQueryProjection.OpenStructure, stratum: stratum)

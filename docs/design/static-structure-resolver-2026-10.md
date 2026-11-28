@@ -132,7 +132,10 @@ work. R can be quadratic: a wide callback may rescan its inputs as a chain refin
 the simpler independent-input rescan pathology, but does not prove universal FE-1 linearity. Allocation churn is
 O(R), even with linear resident space. B3-2★ must use bounded fan-in/shared aggregates or demonstrate equivalent
 bounds on its actual equations; use the read limit as a terminal resource bound, not a substitute for that analysis.
-The engine uses no host recursion. Callbacks must cooperate with cancellation and remain bounded between reads.
+Recording which keys a computation read costs O(its distinct reads): it marks each entry it reads and unmarks the
+targets of its own dependency list when it returns, never a record sized by an earlier, wider computation
+(*Open-reference chains*, below). The engine uses no host recursion. Callbacks must cooperate with cancellation and
+remain bounded between reads.
 Statistics expose events, computations, reads, value changes, path edges/cycles, queue peak, entries and
 ordinary dependencies (the edges the latest subscriptions charged, still counted after final edges are unlinked) for
 regression and complexity checks.
@@ -244,6 +247,89 @@ Limits that remain:
 - A tree still splits towards each unsettled target, so a level whose targets all wait keeps 2K − 1 ranges per name.
 - A preserved-presence certificate still checks every earlier target per present name (O(K) cheap reads).
 
+**Open-reference chains (2026-11-28, baseline `19c4fcd8`).** The Release CLI's `katlang check` on
+`open AN` at the root with `A0 = Lib`, `Ai = Ai−1` and a read of `X` took 2.62 s at 5,000 links,
+6.80 s at 10,000 and 15.00 s to refuse 20,000. With the same limits it now accepts all three in
+1.81 s, 3.12 s and 5.56 s. The dot-route control reads `AN.X` from the same library.
+
+Two costs had different causes. A namespace certificate read every link, growing the engine's shared
+read set to O(N). Clearing its retained bucket array before later computations took 73% of CPU samples
+with KatLang on the stack at 10,000 links. The engine now marks a target at its first read and clears
+the marks through that computation's dependency list. Its storage ledger still reserves two slots per
+distinct read of the widest computation. This representation change alone preserved diagnostics,
+elaborated-tree digests, front-end counters and evaluated outputs on a 16,096-input differential.
+
+The per-link queries were already linear, but several answered the same question. A direct open head
+consults lexical declarations and Q6 inputs, then the same owner walk at its parent. Those dependencies
+are identical in all three cycle strata. `StaticQueryKey.Project` therefore gives this projection one
+key per contextual scope and name. For a bare open-reference row, the immediate target depends only on
+that binding and the body's input gate. No member is pending in the row itself. `Structure` reads one
+`OpenRowTarget` in formation for this case. It still checks the requesting stratum's target cycles and
+follows the successor's structure in that stratum. A member step's receiver-expansion cycle can still
+follow an arbitrarily long bare prefix with a member pending below it. A deferred binding or input
+remains an ordinary query dependency and can refine.
+
+| Further bare link | Q1 keys | Q2 | Q3 keys | Q4 | Q6 | Q7 | Total keys | Equation computations |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Root open | 31 → 27 | 0 | 25 → 17 | 1 | 5 | 1 | 63 → 51 | 121 → 93 |
+| Body open | 16 → 12 | 0 | 25 → 17 | 1 | 5 | 1 | 48 → 36 | 92 → 63 |
+| Dot route | 12 | 0 | 17 → 15 | 1 | 5 | 1 | 36 → 34 | 74 → 69 |
+
+On the bare root-open fixture Q2 contributes a constant 15 keys. Each stratum demands the target, provider
+range, ordered provider list, closed member index and empty-namespace certificate. At 10,000 links the
+root-open detection and resolution passes together use 510,173 engine entries (630,187 before), 970,255
+worklist events (1,260,283), 1,900,299 engine reads (2,560,357) and 1,250,384 units of certificate work
+(1,290,390). The 68 MiB allocation saving occurs in detection (402,452,192 → 331,000,128 bytes).
+For a body open, the two passes finish at 360,202 entries (480,218) and 1,430,404 reads (2,130,470).
+Detection saves 14 MiB and resolution 49 MiB. The dot route finishes at 340,144 entries (360,146) and
+1,280,203 reads (1,420,216).
+
+Matched Release `Parser.Parse` times in milliseconds on one Windows machine. Each pair uses the same
+source in fresh baseline and final processes. The three bare routes use the median of three rounds.
+The 20,000-link root-open baseline ends in a resource refusal.
+
+| Family | 5,000 | 10,000 | 20,000 | Allocated MiB at 10,000 |
+| --- | ---: | ---: | ---: | ---: |
+| Root open | 2,856 → 1,671 | 6,923 → 3,074 | 15,220 (refused) → 5,311 | 662.1 → 593.9 |
+| Body open | 2,375 → 1,443 | 5,407 → 2,834 | 15,902 → 4,473 | 606.4 → 543.8 |
+| Dot route | 1,496 → 1,323 | 2,093 → 2,038 | 3,366 → 3,318 | 457.6 → 445.9 |
+
+| Other families, one paired sample at 5,000 links | Time (ms) | Allocated MiB |
+| --- | ---: | ---: |
+| Dotted open target | 2,542 → 1,495 | 301.5 → 270.2 |
+| Open a member-path alias | 2,454 → 1,699 | 325.3 → 301.3 |
+| Member steps, opened | 2,808 → 2,154 | 495.1 → 482.8 |
+| Member steps, dot control | 1,938 → 1,973 | 369.8 → 369.8 |
+| Two opens with a shared suffix | 4,105 → 2,569 | 603.7 → 542.4 |
+| Ambiguous providers | 5,420 → 2,820 | 606.5 → 543.9 |
+| True cycle, opened | 2,124 → 1,344 | 281.6 → 256.3 |
+| Parameterized body open | 1,927 → 1,288 | 245.8 → 239.1 |
+| Verdict-deferred provider | 2,362 → 1,446 | 301.9 → 270.6 |
+| Self-dependent provider | 2,331 → 1,442 | 305.3 → 272.0 |
+| Every tenth link opened | 1,492 → 1,355 | 263.9 → 258.5 |
+
+`OpenReferenceChainStaticWorkTests` checks growth with chain length for twelve families and exact
+per-family key increments for the three bare routes. A baseline/final differential on 231 generated
+inputs matched ordered diagnostics, elaborated-tree digests and evaluated outcomes, including the
+`LocalOnlyProperty` error through 32 aliases with either one or two spellings of the provider.
+
+The entry and work formulas are unchanged. The last admitted link counts below are measured with the
+next link refused at each boundary. The body open can exhaust the entry envelope while its certificate
+holds auxiliary records alongside engine entries.
+
+| Route | Default envelope, baseline → final | 64 MiB, baseline → final |
+| --- | ---: | ---: |
+| Root open | 16,641 → 20,556 | 1,037 → 1,281 |
+| Body open | 21,840 → 26,883 | 1,360 → 1,676 |
+| Dot route | 29,123 → 30,836 | 1,816 → 1,923 |
+
+A root open still adds 15 Q1 entries per link over a body open. While lexical ownership is Unknown,
+the opened-name search at the alias body, root and prelude, plus the root's open matches and deferred
+presence, can establish the lower bound Bound. Removing these reads would require preserving that
+evidence in cyclic inference. The ordinary owner-only projection also retains its per-stratum keys.
+Admission measures actual charged queries and live auxiliary records, so the same byte limit can admit
+more source after exact work is shared.
+
 **Owner-by-name audit (2026-11-22, investigation baseline `8947d21e`).** Q1 carries a query per
 lexical level. Q6 tests a candidate's outer ownership through `InferenceBinding`. The detector and
 lookup adapters use `OwnedBinding` for parameter/property selection. Open heads use
@@ -254,8 +340,8 @@ Completed facts retain those identities when a deferred unit imports them. The e
 
 `StaticQueryEngine.EntryOf` already reuses an entry for an equal `StaticQueryKey`. Each intervening
 level in a binding walk changes the scope component of that key, even when its equation returns
-its parent's fact by reference. Distinct branch regions, binding projections and cycle-check strata
-also have distinct keys. Skipping these entries in a prototype made a previously refused
+its parent's fact by reference. Distinct branch regions, binding projections and stratum-dependent
+bindings also have distinct keys. Skipping these intervening scopes in a prototype made a previously refused
 64-level, 64-name program succeed under 4 MiB (4,096 entries). It also moved the first storage
 refusal for the explicit-parameter settlement chain from 441 to 445 links under 8 MiB and from
 3,604 to 3,642 under 64 MiB. Keeping the existing walk preserves those admissions and refusals.

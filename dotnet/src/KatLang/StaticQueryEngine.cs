@@ -176,7 +176,12 @@ internal sealed class StaticQueryEngine<TKey, TValue>
     private readonly Queue<Entry> _lateDecisionPending = [];
     private readonly Queue<Entry> _observerPending = [];
     private readonly List<Entry> _newEntries = [];
-    private readonly HashSet<Entry> _readsThisRun = [];
+    // The running computation's distinct reads are the entries it marked (Entry.ReadByRunning), which are exactly the
+    // targets of its own dependency list, so it unmarks them in O(its distinct reads) when it returns. A shared set
+    // cleared per computation kept the capacity of the widest computation so far (a namespace certificate over an
+    // N-link open chain reads every link), and clearing that capacity before each later computation made the solve
+    // quadratic.
+    private int _readsThisRun;
     private readonly StaticQueryReader<TKey, TValue> _reader;
     private Entry? _running;
     private Entry? _followThisRun;
@@ -339,15 +344,18 @@ internal sealed class StaticQueryEngine<TKey, TValue>
             var source = ReaderSource();
             CountRead();
             var target = EntryOf(key);
-            if (!_readsThisRun.Contains(target))
+            if (!target.ReadByRunning)
             {
-                if (_readsThisRun.Count >= _readBufferReservation)
+                // The read record keeps its logical charge: two persistent slots per slot of the widest computation's
+                // distinct reads, so admission boundaries do not depend on how the record is represented.
+                if (_readsThisRun >= _readBufferReservation)
                 {
                     Resources.Reserve(2, _cancellationToken);
                     _readBufferReservation++;
                 }
                 Resources.Reserve(2, _cancellationToken);
-                _readsThisRun.Add(target);
+                target.ReadByRunning = true;
+                _readsThisRun++;
                 var dependency = new Dependency(source, target, source.Dependencies, target.Readers);
                 if (target.Readers is { } first)
                     first.PreviousReader = dependency;
@@ -469,7 +477,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
     private void Compute(Entry entry)
     {
         Unsubscribe(entry);
-        _readsThisRun.Clear();
+        _readsThisRun = 0;
         _followThisRun = null;
         _running = entry;
         _computations++;
@@ -477,6 +485,13 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         try { step = _definition.Compute(entry.Key, _reader); }
         finally { _running = null; Resources.EndCallback(); }
         _readerFailure?.Throw();
+        // Each distinct read added one dependency and marked its target; no other computation runs in between. A
+        // failed or cancelled computation skips this, but it faults the engine, so no later read sees a stale mark.
+        for (var dependency = entry.Dependencies; dependency is not null; dependency = dependency.NextDependency)
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            dependency.Target.ReadByRunning = false;
+        }
         _cancellationToken.ThrowIfCancellationRequested();
         switch (step.Kind)
         {
@@ -634,6 +649,8 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         public Entry? NextMember;
         public int Size = 1;
         public bool Cyclic;
+        // Read by the running computation: set by its first read of this entry, cleared when it returns.
+        public bool ReadByRunning;
 
         public void InitializeComponent() => Parent = Head = Tail = this;
     }

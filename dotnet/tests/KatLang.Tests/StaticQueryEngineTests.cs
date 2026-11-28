@@ -406,6 +406,29 @@ public sealed class StaticQueryEngineTests
     }
 
     [Fact]
+    public void AReaderFailureCaughtBeforeCancellation_RemainsTheReportedFailure()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var rules = new Dictionary<string, Func<StaticQueryReader<string, Tri>, StaticQueryStep<Tri>>>
+        {
+            ["root"] = reader =>
+            {
+                reader.Read("leaf");
+                try { reader.Read("leaf"); }
+                catch (StaticQueryLimitExceededException) { cancellation.Cancel(); }
+                return StaticQueryStep.Complete(Tri.Yes);
+            },
+            ["leaf"] = Constant(Tri.Yes),
+        };
+        var engine = new StaticQueryEngine<string, Tri>(new Model(rules), limits: new(long.MaxValue, 4, MaxReads: 1),
+            cancellationToken: cancellation.Token);
+
+        var failure = Assert.Throws<StaticQueryLimitExceededException>(() => engine.Get("root"));
+        Assert.Equal(StaticQueryBoundKind.Reads, failure.Bound);
+        Assert.Throws<InvalidOperationException>(() => engine.TryGetFinal("leaf", out _));
+    }
+
+    [Fact]
     public void Cancellation_OnTheLastComputation_DoesNotPublishItsResult()
     {
         using var cancellation = new CancellationTokenSource();
@@ -665,6 +688,85 @@ public sealed class StaticQueryEngineTests
         public bool ValueEquals(Tri left, Tri right) => left == right;
 
         public bool IsRefinement(Tri before, Tri after) => before == Tri.Unknown || before == after;
+    }
+
+    // ── The running computation's read record ──
+
+    // Key 0 reads keys 1..width, each twice. Narrow key k reads the shared leaf S = width + 1 twice and its own leaf
+    // width + 1 + k once. Key Late = 2 * width + 2 (a later Get) reads narrow key 1 twice. Leaves are Yes.
+    private sealed class WideThenNarrow(int width) : IStaticQueryDefinition<int, Tri>
+    {
+        internal int Shared => width + 1;
+        internal int Late => 2 * width + 2;
+
+        public StaticQueryStep<Tri> Compute(int key, StaticQueryReader<int, Tri> reader)
+        {
+            if (key == 0)
+            {
+                var all = Tri.Yes;
+                for (var input = 1; input <= width; input++)
+                {
+                    all = Apply('&', all, reader.Read(input));
+                    all = Apply('&', all, reader.Read(input));
+                }
+                return StaticQueryStep.Complete(all);
+            }
+            if (key == Late)
+                return StaticQueryStep.Complete(Apply('&', reader.Read(1), reader.Read(1)));
+            if (key <= width)
+            {
+                var shared = Apply('&', reader.Read(Shared), reader.Read(Shared));
+                return StaticQueryStep.Complete(Apply('&', shared, reader.Read(width + 1 + key)));
+            }
+            return StaticQueryStep.Complete(Tri.Yes);
+        }
+
+        public Tri Initial(int key) => Tri.Unknown;
+
+        public Tri PathCycleValue => Tri.No;
+
+        public bool ValueEquals(Tri left, Tri right) => left == right;
+
+        public bool IsRefinement(Tri before, Tri after) => before == Tri.Unknown || before == after;
+    }
+
+    /// <summary>
+    /// A computation records each key it reads once, however often it reads it, and every computation records its own
+    /// reads afresh, including after one computation as wide as the solve. Every narrow key subscribes to the shared
+    /// leaf, so the leaf's refinement reaches all of them, and key 0 subscribes again when it is recomputed. The ledger
+    /// keeps the widest computation's read record (two slots per distinct read of key 0) and never grows it for the
+    /// narrower computations after it. Formerly the record was one set cleared before every computation; the set kept
+    /// key 0's capacity, so each later computation cleared that capacity and an N-link open chain took quadratic time.
+    /// The statistics are those of that former engine.
+    /// </summary>
+    [Fact]
+    public void EachComputationRecordsItsDistinctReads_AfterAComputationAsWideAsTheSolve()
+    {
+        const int width = 4096;
+        var definition = new WideThenNarrow(width);
+        var engine = new StaticQueryEngine<int, Tri>(definition);
+
+        Assert.Equal(Tri.Yes, engine.Get(0));
+        for (var key = 0; key <= 2 * width + 1; key++)
+            Assert.True(engine.TryGetFinal(key, out var value) && value == Tri.Yes, $"key {key}");
+        var first = engine.Statistics;
+        // Key 0 twice, every narrow key twice (first while the shared leaf is Unknown), every leaf once.
+        Assert.Equal(3L * width + 3, first.Computations);
+        Assert.Equal(2L * 2 * width + 2L * width * 3, first.Reads);
+        Assert.Equal(2 * width + 2, first.Entries);
+        // The latest subscriptions: key 0's width distinct reads and two per narrow key.
+        Assert.Equal(3L * width, first.Dependencies);
+        // Four slots per entry, two per dependency, two per slot of the widest read record (key 0's width reads).
+        Assert.Equal(4L * (2 * width + 2) + 2L * 3 * width + 2L * width, first.StorageUnits);
+        Assert.Equal(first.StorageUnits, first.PeakStorageUnits);
+
+        Assert.Equal(Tri.Yes, engine.Get(definition.Late));
+        var second = engine.Statistics;
+        Assert.Equal(first.Computations + 1, second.Computations);
+        Assert.Equal(first.Reads + 2, second.Reads);
+        Assert.Equal(first.Dependencies + 1, second.Dependencies);
+        Assert.Equal(first.StorageUnits + 4 + 2, second.StorageUnits);
+        Assert.Equal(0, engine.ReachableOrdinaryEdgeLinksForTesting());
     }
 
     [Fact]
