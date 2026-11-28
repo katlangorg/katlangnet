@@ -27,6 +27,14 @@ public sealed class MixedCycleMemberScheduleTests(ITestOutputHelper output)
         finally { MemberSolveInDiscoveryOrderForTesting.Value = previous; }
     }
 
+    private static T CopiedSeeds<T>(Func<T> work)
+    {
+        var previous = MixedCycleSeedsCopiedForTesting.Value;
+        MixedCycleSeedsCopiedForTesting.Value = true;
+        try { return work(); }
+        finally { MixedCycleSeedsCopiedForTesting.Value = previous; }
+    }
+
     private sealed record Observed(string Diagnostics, string Metadata, FrontEndTraversalObservations Observations, ulong Sequence);
 
     /// <summary>A parse with its ordered diagnostics, published metadata, counters and the sequence of every checkpoint kind.</summary>
@@ -190,8 +198,10 @@ public sealed class MixedCycleMemberScheduleTests(ITestOutputHelper output)
             Assert.Equal(2L * k - 2, ranked.Observations.SummaryMemberReaderNotifications);
             Assert.InRange(discovered.Observations.SummaryMemberEvaluations, (long)k * k / 2, (long)k * k);
             Assert.Equal(Discovery(() => Work(source)), Work(source));
-            entries[at] = ranked.Observations.SummaryMemberExpansionEntries;
-            discoveredEntries[at] = discovered.Observations.SummaryMemberExpansionEntries;
+            // Measured with copied seeds (MIXED-CYCLE COMPLETE SEEDS keeps the ranked schedule's storage linear,
+            // MixedCycleCompleteSeedTests): what each schedule copies when every cycle member keeps a folded seed.
+            entries[at] = CopiedSeeds(() => Parse(source)).Observations.SummaryMemberExpansionEntries;
+            discoveredEntries[at] = CopiedSeeds(() => Discovery(() => Parse(source))).Observations.SummaryMemberExpansionEntries;
             output.WriteLine($"K={k}: evaluations {discovered.Observations.SummaryMemberEvaluations} -> {ranked.Observations.SummaryMemberEvaluations}, "
                 + $"notifications {discovered.Observations.SummaryMemberReaderNotifications} -> {ranked.Observations.SummaryMemberReaderNotifications}, "
                 + $"expansion entries {discoveredEntries[at]} -> {entries[at]}");
@@ -202,7 +212,8 @@ public sealed class MixedCycleMemberScheduleTests(ITestOutputHelper output)
                 ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(owner, "F", member), expected);
         }
 
-        // Each evaluation of a cycle member copies its full width: two passes keep K² entries, the discovery order K³ / 2.
+        // With copied seeds each evaluation of a cycle member copies its full width: two passes keep K² entries, the
+        // discovery order K³ / 2.
         Assert.InRange((double)entries[2] / entries[1], 3.0, 5.0);
         Assert.InRange((double)discoveredEntries[2] / discoveredEntries[1], 6.0, 10.0);
     }
@@ -369,7 +380,7 @@ public sealed class MixedCycleMemberScheduleTests(ITestOutputHelper output)
     }
 
     /// <summary>Seeded random levels dense in mixed cycles (see <see cref="GeneratedCyclicLevels_KeepEveryOutcomeAndEveryMembersContent"/>).</summary>
-    private static IEnumerable<string> GeneratedCyclicLevels(int count, int seed)
+    internal static IEnumerable<string> GeneratedCyclicLevels(int count, int seed)
     {
         var random = new Random(seed);
         for (var n = 0; n < count; n++)

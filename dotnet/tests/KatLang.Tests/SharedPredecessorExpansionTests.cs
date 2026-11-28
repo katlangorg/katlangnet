@@ -22,6 +22,14 @@ public sealed class SharedPredecessorExpansionTests(ITestOutputHelper output)
 {
     // ── Harness ─────────────────────────────────────────────────────────────
 
+    private static T CopiedCycleSeeds<T>(Func<T> work)
+    {
+        var previous = MixedCycleSeedsCopiedForTesting.Value;
+        MixedCycleSeedsCopiedForTesting.Value = true;
+        try { return work(); }
+        finally { MixedCycleSeedsCopiedForTesting.Value = previous; }
+    }
+
     private static T Copied<T>(Func<T> work)
     {
         var previous = MemberSeedsCopiedForTesting.Value;
@@ -539,17 +547,33 @@ public sealed class SharedPredecessorExpansionTests(ITestOutputHelper output)
 
     /// <summary>
     /// CONVERGENCE: members of a cycle are evaluated again while it converges, and each change detection compares their
-    /// seeds whole, so they keep the union's folded seed: the same evaluations, the same entries kept, nothing held.
+    /// seeds whole. With the copied cycle seeds (<see cref="PropertyDependencyGraphBuilder.MixedCycleSeedsCopiedForTesting"/>)
+    /// they keep the union's folded seed: the same evaluations, the same entries kept, nothing held. Production holds only
+    /// in the first evaluation of a share-shaped member of a mixed cycle (MIXED-CYCLE COMPLETE SEEDS,
+    /// <c>MixedCycleCompleteSeedTests</c>), in the same evaluations, and publishes every cycle member's seed flat.
     /// </summary>
     [Theory]
     [InlineData(20)]
     [InlineData(40)]
-    public void CycleMembers_KeepTheFoldedSeed(int members)
+    public void CycleMembers_PublishTheFoldedSeedsShape(int members)
     {
-        var (production, union) = AssertSameAsCopied(CyclicChain(members));
+        var source = CyclicChain(members);
+        var (production, union) = AssertSameAsCopied(source);
         Assert.InRange(production.SummaryMemberEvaluations, members + 1, long.MaxValue);
-        Assert.Equal(0, production.SummaryMemberExpansionHeldParts);
-        Assert.Equal(union.SummaryMemberExpansionEntries, production.SummaryMemberExpansionEntries);
+        Assert.InRange(production.SummaryMemberExpansionHeldParts, 1, 2L * members);
+        Assert.InRange(production.SummaryMemberExpansionEntries, 1, union.SummaryMemberExpansionEntries - 1);
+        var (copiedCycle, copiedUnion) = CopiedCycleSeeds(() => AssertSameAsCopied(source));
+        Assert.Equal(production.SummaryMemberEvaluations, copiedCycle.SummaryMemberEvaluations);
+        Assert.Equal(0, copiedCycle.SummaryMemberExpansionHeldParts);
+        Assert.Equal(copiedUnion.SummaryMemberExpansionEntries, copiedCycle.SummaryMemberExpansionEntries);
+        var root = SourceProvenance.ParseValid(source).Root;
+        var memo = StandaloneSummaries.MemoFor(root);
+        BuildSummaries(root, AnalyzedStaticStructures.ForBoundAst(root), memo);
+        var summaries = (memo.IndependentAlgorithmSummaries?.Values ?? Enumerable.Empty<AlgorithmSummary>())
+            .Concat(memo.ContextualAlgorithmSummaries?.Values ?? Enumerable.Empty<AlgorithmSummary>());
+        var level = Assert.Single(summaries, summary => summary.MemberSeeds.ContainsKey("P1")).MemberSeeds;
+        for (var i = 1; i <= members; i++)
+            Assert.Null(level[$"P{i}"].AbsorbedPartsWithoutFolding);
 
         // A member that reads itself is a cycle of one: it holds neither the wide A nor B, which holds A. Without the
         // cycle, the same member holds both.

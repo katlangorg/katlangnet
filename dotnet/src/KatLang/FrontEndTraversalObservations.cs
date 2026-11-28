@@ -862,6 +862,28 @@ internal sealed class FrontEndTraversalObservations
         SummaryMemberShareFoldEntries = checked(SummaryMemberShareFoldEntries + entries);
     }
 
+    /// <summary>
+    /// MIXED-CYCLE COMPLETE SEEDS (<c>PropertyDependencyGraphBuilder.SolveMemberSeeds</c>): evaluations of a mixed-cycle
+    /// member that took a complete seed it reads — one that holds its whole component's bound — as its own, instead of a
+    /// full expansion or a share that copies or holds that seed's width. Not counted in <see cref="SummaryMemberExpansions"/>.
+    /// </summary>
+    public long SummaryMemberCompleteSeeds { get; private set; }
+
+    internal void RecordSummaryMemberCompleteSeed()
+        => SummaryMemberCompleteSeeds = checked(SummaryMemberCompleteSeeds + 1);
+
+    /// <summary>The mixed components whose bound the member solver built, one per component and solve.</summary>
+    public long SummaryMemberComponentBounds { get; private set; }
+
+    /// <summary>Sum of the widths of the bounds built. The solver retains their counts and references for the level solve.</summary>
+    public long SummaryMemberComponentBoundEntries { get; private set; }
+
+    internal void RecordSummaryMemberComponentBound(int entries)
+    {
+        SummaryMemberComponentBounds = checked(SummaryMemberComponentBounds + 1);
+        SummaryMemberComponentBoundEntries = checked(SummaryMemberComponentBoundEntries + entries);
+    }
+
     /// <summary>Entries copied from small flat members by holding expansions, including duplicate inputs.</summary>
     public long MemberEntriesCopied { get; private set; }
     internal void RecordMemberEntriesCopied(int entries) => MemberEntriesCopied += entries;

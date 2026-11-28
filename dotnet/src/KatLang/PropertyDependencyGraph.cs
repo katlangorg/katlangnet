@@ -252,6 +252,10 @@ internal sealed class PendingReferenceSet : IReadOnlyCollection<SummaryReference
     public bool SetEquals(PendingReferenceSet other)
         => Count == other.Count && _references.All(pair => other._references.TryGetValue(pair.Key, out var value) && pair.Value.Equals(value));
 
+    /// <summary>Whether the set holds an entry equal to <paramref name="reference"/>, bound owners included.</summary>
+    internal bool ContainsEqual(SummaryReference reference)
+        => _references.TryGetValue(reference.ResolutionKey, out var existing) && existing.Equals(reference);
+
     /// <summary>
     /// Whether no reference of the set binds an owner of its own (<see cref="SummaryReference.BoundOwners"/>): then a
     /// second write of a key never narrows it (<see cref="Add"/>), so any union of such sets holds the references written
@@ -1203,6 +1207,52 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         internal bool OwnSetsStayAtEveryExpansion
             => (_visiblePropertyDependencyNames?.Count ?? 0) == 0 && (_pendingReferences?.StaysAtEveryExpansion ?? true);
+
+        /// <summary>The visible names of this seed's OWN set (an expanded seed has none).</summary>
+        internal int OwnVisibleNameCount => _visiblePropertyDependencyNames?.Count ?? 0;
+
+        /// <summary>
+        /// MIXED-CYCLE COMPLETE SEEDS (<see cref="SolveMemberSeeds"/>): a NEW flat seed over this flat seed's own sets — the
+        /// same set objects, so the same content in the same order, written once for both, at the cost of one seed object.
+        /// It is a seed of its own wherever seeds are told apart by identity (settlement keys, one-seed tests). Neither seed
+        /// changes afterwards: both are member seeds, which nothing mutates, and a flat seed folds nothing.
+        /// </summary>
+        internal SummarySeed WithSharedOwnSets()
+        {
+            if (_absorbed is not null)
+                throw new InvalidOperationException("Only a flat seed shares its own sets.");
+            return new SummarySeed
+            {
+                _requiredAncestorOwnedParameterNames = _requiredAncestorOwnedParameterNames,
+                _visiblePropertyDependencyNames = _visiblePropertyDependencyNames,
+                _pendingReferences = _pendingReferences,
+                _ownerQualifiedParameters = _ownerQualifiedParameters,
+                _deferredMember = _deferredMember,
+            };
+        }
+
+        /// <summary>
+        /// Whether each own set of this seed is <paramref name="other"/>'s own set object, or both are empty (a getter may
+        /// have materialized an empty set on one of them, <see cref="WithSharedOwnSets"/>).
+        /// </summary>
+        internal bool SharesOwnSetsWith(SummarySeed other)
+            => SameSet(_requiredAncestorOwnedParameterNames, other._requiredAncestorOwnedParameterNames)
+                && SameSet(_visiblePropertyDependencyNames, other._visiblePropertyDependencyNames)
+                && (ReferenceEquals(_pendingReferences, other._pendingReferences)
+                    || (_pendingReferences?.Count ?? 0) == 0 && (other._pendingReferences?.Count ?? 0) == 0)
+                && SameSet(_ownerQualifiedParameters, other._ownerQualifiedParameters);
+
+        private static bool SameSet<T>(HashSet<T>? left, HashSet<T>? right)
+            => ReferenceEquals(left, right) || (left?.Count ?? 0) == 0 && (right?.Count ?? 0) == 0;
+
+        /// <summary>This seed's own set objects with their entry counts (absent sets omitted), for storage accounting in tests.</summary>
+        internal IEnumerable<(object Set, int Count)> OwnSetObjects()
+        {
+            if (_requiredAncestorOwnedParameterNames is { } required) yield return (required, required.Count);
+            if (_visiblePropertyDependencyNames is { } visible) yield return (visible, visible.Count);
+            if (_pendingReferences is { } references) yield return (references, references.Count);
+            if (_ownerQualifiedParameters is { } qualified) yield return (qualified, qualified.Count);
+        }
 
         /// <summary>The entries of this seed's OWN sets (its required names and owner-qualified parameters, here).</summary>
         internal int OwnRequirementCount
@@ -3405,6 +3455,19 @@ internal static class PropertyDependencyGraphBuilder
     /// content does not depend on the schedule; the order of the pending references in the seeds of a mixed component, and
     /// whether a later expansion holds a seed or copies it, do, and with them the settlement frames and part charges of
     /// some programs (evaluator-and-hosting.md, MIXED-CYCLE SCHEDULE).</para>
+    ///
+    /// <para>MIXED-CYCLE COMPLETE SEEDS (November 28 2026; implementation only). Every seed a member of a mixed component of
+    /// several members reads lies within the component's BOUND (<see cref="ComponentBound"/>), so a flat seed whose counts
+    /// and references equal the bound's holds it all. Once such a COMPLETE seed exists, a member whose copied expansion
+    /// reads it and writes no reference out of its order would be a new flat seed equal to it in content and reference
+    /// order; it takes a new seed over the complete seed's own sets instead (<see cref="SummarySeed.WithSharedOwnSets"/>),
+    /// with the expansion's checkpoints, context uses and reads, and so does a share where the copied change test folds the
+    /// share. Each such seed is a seed of its own, as the copied one was, so every test of seed identity — one-seed tests,
+    /// settlement keys, the share's exact keys — decides as before. A member with the share shape holds its reference-free
+    /// predecessors on its first evaluation (MEMBERS BY REFERENCE), and the change test tells a seed that carries a reference
+    /// from a reference-free held one without folding. Content, reference order, shape, schedule, checkpoints and
+    /// settlement are those of the copied seeds (the seam <see cref="MixedCycleSeedsCopiedForTesting"/>); only the copying
+    /// and the storage change.</para>
     /// </summary>
     private static void SolveMemberSeeds(
         Algorithm algorithm,
@@ -3486,10 +3549,17 @@ internal static class PropertyDependencyGraphBuilder
         Array.Fill(componentOf, -1);
         var discoveryOrder = MemberSolveInDiscoveryOrderForTesting.Value;
         var worklist = new MemberWorklist(properties.Count, firstInFirstOut: discoveryOrder);
+        // MIXED-CYCLE COMPLETE SEEDS: the mixed component of each member evaluated one by one in a cycle of several members.
+        // A component's bound reads the seeds of the members outside it, which the ranked schedule has settled before any
+        // member of the component is evaluated; the discovery order's first-in, first-out schedule has not.
+        var completeSeeds = !discoveryOrder && !MixedCycleSeedsCopiedForTesting.Value;
+        int[]? mixedOf = null;
+        ComponentBound?[]? bounds = null;
         // The members evaluated one by one in a cycle (several members, or one that reads itself): they are evaluated
-        // again while the cycle converges, and each change detection compares their seeds whole, so they keep the
-        // folded seed of a full expansion (MEMBERS BY REFERENCE holds members only for the others). A MIXED component's
-        // members are ranked dependency first too, in the walk's postorder (see the summary).
+        // again while the cycle converges, and each change detection compares their seeds whole, so a full expansion of
+        // one copies and folds (MEMBERS BY REFERENCE holds members for the others), except where a member of a mixed
+        // component of several members takes a complete seed or has the share shape (MIXED-CYCLE COMPLETE SEEDS). A MIXED
+        // component's members are ranked dependency first too, in the walk's postorder (see the summary).
         for (var c = 0; c < components.Count; c++)
         {
             var component = components[c];
@@ -3506,7 +3576,19 @@ internal static class PropertyDependencyGraphBuilder
             foreach (var member in component)
             {
                 if (component.Count > 1)
+                {
                     (inCycle ??= new bool[properties.Count])[member] = true;
+                    if (completeSeeds)
+                    {
+                        if (mixedOf is null)
+                        {
+                            mixedOf = new int[properties.Count];
+                            Array.Fill(mixedOf, -1);
+                            bounds = new ComponentBound?[components.Count];
+                        }
+                        mixedOf[member] = c;
+                    }
+                }
                 worklist.Add(member);
             }
         }
@@ -3523,6 +3605,10 @@ internal static class PropertyDependencyGraphBuilder
         // PATH SHARES (TryPathShareMemberSeed): the fold budget of each path share this solve made.
         var pathShares = holdsMembers && !MemberPathSharesCopiedForTesting.Value;
         Dictionary<SummarySeed, int>? pathShareBudgets = null;
+        // MIXED-CYCLE COMPLETE SEEDS: the member being evaluated — its component and current seed, for the share's test.
+        var evaluatedComponent = -1;
+        SummarySeed? evaluatedPrevious = null;
+        Func<SummarySeed, bool>? takesComplete = null;
         while (worklist.TryDequeue(out var index))
         {
             memos.Observations?.RecordSummaryMemberEvaluation();
@@ -3547,7 +3633,8 @@ internal static class PropertyDependencyGraphBuilder
                 if (!ReferenceEquals(previous, comparedPrevious))
                 {
                     comparedPrevious = previous;
-                    comparedSame = SameContent(next, previous);
+                    comparedSame = SameContent(next, previous,
+                        mixedOf?[member] >= 0 ? held ??= new(memos.Observations, memos.SharedMemo.CancellationToken) : null);
                 }
 
                 if (comparedSame)
@@ -3590,7 +3677,15 @@ internal static class PropertyDependencyGraphBuilder
         SummarySeed EvaluateMemberSeed(int index)
         {
             var baseSeed = baseSeeds[index];
-            if (TryShareMemberSeed(baseSeed, recorded, level, sharesFold && inCycle?[index] != true, ref held) is { } shared)
+            var mixed = mixedOf?[index] ?? -1;
+            if (mixed >= 0)
+            {
+                evaluatedComponent = mixed;
+                evaluatedPrevious = seeds[properties[index].Name];
+            }
+
+            if (TryShareMemberSeed(baseSeed, recorded, level, sharesFold && inCycle?[index] != true, ref held,
+                    mixed >= 0 ? takesComplete ??= TakesCompleteShare : null) is { } shared)
                 return shared;
             if (pathShares && inCycle?[index] != true
                 && TryPathShareMemberSeed(baseSeed, recorded, level, pathShareBudgets ??= new(ReferenceEqualityComparer.Instance)) is { } pathShared)
@@ -3605,11 +3700,26 @@ internal static class PropertyDependencyGraphBuilder
                 return expansion.Result;
             }
 
-            memos.Observations?.RecordSummaryMemberExpansion();
-            var holding = holdsMembers && inCycle?[index] != true
-                && (baseSeed.VisiblePropertyDependencyNames.Count != 0 || baseSeed.PendingReferences.Count != 0);
-            var expanded = ExpandAtLevel(baseSeed, level, holding ? held ??= new(memos.Observations, memos.SharedMemo.CancellationToken) : null);
-            memos.Observations?.RecordSummaryMemberExpansionStorage(expanded.OwnEntryCount, expanded.AbsorbedPartsWithoutFolding?.Count ?? 0);
+            SummarySeed expanded;
+            if (mixed >= 0 && TryCompleteSeed(baseSeed, mixed) is { } complete)
+            {
+                memos.Observations?.RecordSummaryMemberCompleteSeed();
+                expanded = complete.WithSharedOwnSets();
+            }
+            else
+            {
+                memos.Observations?.RecordSummaryMemberExpansion();
+                // MIXED-CYCLE COMPLETE SEEDS: a member of a mixed cycle with the share shape holds, while its seed is still
+                // empty (its first evaluation), what MEMBERS BY REFERENCE holds outside a cycle: that seed is compared only with
+                // later seeds, which differ from it by carrying a reference or are folded once to compare. Every other cycle
+                // expansion copies and folds as before.
+                var holding = holdsMembers
+                    && (inCycle?[index] != true
+                        || mixed >= 0 && evaluatedPrevious!.IsEmptyWithoutFolding() && HasShareShape(baseSeed, equationOf))
+                    && (baseSeed.VisiblePropertyDependencyNames.Count != 0 || baseSeed.PendingReferences.Count != 0);
+                expanded = ExpandAtLevel(baseSeed, level, holding ? held ??= new(memos.Observations, memos.SharedMemo.CancellationToken) : null);
+                memos.Observations?.RecordSummaryMemberExpansionStorage(expanded.OwnEntryCount, expanded.AbsorbedPartsWithoutFolding?.Count ?? 0);
+            }
             var reads = new (string Name, SummarySeed Read)[recorded.Reads.Count];
             var at = 0;
             foreach (var readName in recorded.Reads)
@@ -3618,6 +3728,14 @@ internal static class PropertyDependencyGraphBuilder
             return expanded;
         }
 
+        // MIXED-CYCLE COMPLETE SEEDS: a share of a complete flat member is a flat seed equal to that member wherever the
+        // copied seeds' change test folds the share: unless the member's seed is empty (the share is kept as it is) or holds
+        // that member as its one part (the share can equal it in structure and is kept as it is too).
+        bool TakesCompleteShare(SummarySeed shared)
+            => evaluatedPrevious is { } previous && !previous.IsEmptyWithoutFolding()
+                && !(previous.AbsorbedPartsWithoutFolding is [var only] && ReferenceEquals(only, shared))
+                && IsComplete(shared, evaluatedComponent);
+
         // Whether every member seed an expansion read is still the one it read.
         bool ReadsStand((string Name, SummarySeed Read)[] reads)
         {
@@ -3625,6 +3743,181 @@ internal static class PropertyDependencyGraphBuilder
                 if (!ReferenceEquals(seeds[name], read))
                     return false;
             return true;
+        }
+
+        // MIXED-CYCLE COMPLETE SEEDS: whether a flat seed holds its whole component's bound (ComponentBound). Every seed a
+        // member of the component reads lies within the bound, so equal counts and equal references are equal content.
+        bool IsComplete(SummarySeed seed, int component)
+        {
+            var bound = bounds![component] ??= ComponentBound.Of(components[component], component, mixedOf!, baseSeeds,
+                seeds, equationOf, level);
+            if (bound.Complete is { } known && (ReferenceEquals(seed, known) || seed.AbsorbedPartsWithoutFolding is null && seed.SharesOwnSetsWith(known)))
+                return true;
+            if (seed.AbsorbedPartsWithoutFolding is not null
+                || (seed.OwnRequiredNamesWithoutFolding?.Count ?? 0) != bound.Required
+                || seed.OwnVisibleNameCount != bound.Visible
+                || (seed.OwnQualifiedParametersWithoutFolding?.Count ?? 0) != bound.Qualified
+                || (seed.OwnPendingReferencesWithoutFolding?.Count ?? 0) != bound.References.Count)
+            {
+                return false;
+            }
+
+            var token = memos.SharedMemo.CancellationToken;
+            var checkedReferences = 0;
+            foreach (var reference in bound.References)
+            {
+                if ((checkedReferences++ & 255) == 0) token.ThrowIfCancellationRequested();
+                if (!seed.OwnPendingReferencesWithoutFolding!.ContainsEqual(reference))
+                    return false;
+            }
+
+            bound.Complete = seed;
+            return true;
+        }
+
+        // MIXED-CYCLE COMPLETE SEEDS: the seed a full expansion of a mixed-cycle member would equal in content, reference
+        // order and representation — a complete flat seed the base reads — or null. It decides without a side effect, then
+        // takes the expansion's checkpoints, context uses and read records in the expansion's order.
+        SummarySeed? TryCompleteSeed(SummarySeed baseSeed, int component)
+        {
+            if (baseSeed.IsEmpty)
+                return null;
+            var members = recorded.Seeds;
+            var context = memos.CompletedContext;
+            SummarySeed? complete = null;
+            foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+            {
+                if (members.TryGetValue(name, out var read) && !read.IsEmptyWithoutFolding() && IsComplete(read, component))
+                {
+                    complete = read;
+                    break;
+                }
+            }
+
+            if (complete is null)
+                return null;
+
+            // The copied expansion of a cycle member unites the members it reads in the base's order: each one's OWN sets
+            // (the parts it holds wait for the next fold, which comes after the last member) and an escaping name as a
+            // reference anchored here, after folding what the members before it hold. Everything it writes lies within the
+            // complete seed, whose own sets it writes in full, so its references stand in the complete seed's order exactly
+            // when the distinct references written before them are that order's prefix. An escaping name after a member that
+            // holds parts would write those parts' references first: such a base decides nothing here.
+            List<string>? before = null;
+            HashSet<string>? written = null;
+            var partsWait = false;
+            foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+            {
+                if (!members.TryGetValue(name, out var read))
+                {
+                    if (partsWait)
+                        return null;
+                    Write(new PendingReference(name, [], context).ResolutionKey);
+                    continue;
+                }
+
+                if (ReferenceEquals(read, complete))
+                    break;
+                foreach (var reference in read.OwnPendingReferencesWithoutFolding ?? [])
+                    Write(reference.ResolutionKey);
+                partsWait |= read.AbsorbedPartsWithoutFolding is not null;
+            }
+
+            if (before is not null)
+            {
+                var at = 0;
+                foreach (var reference in complete.OwnPendingReferencesWithoutFolding!)
+                {
+                    if (at == before.Count || !string.Equals(reference.ResolutionKey, before[at], StringComparison.Ordinal))
+                        break;
+                    at++;
+                }
+
+                if (at != before.Count)
+                    return null;
+            }
+
+            // The expansion's side effects (ExpandAtLevel): its checkpoints, the context its references use and its reads.
+            var memo = memos.SharedMemo;
+            memo.ObserveCancellation();
+            foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+            {
+                if (recorded.TryGetValue(name, out _))
+                    continue;
+                memo.ObserveCancellation();
+                memo.UseContext();
+            }
+
+            foreach (var pending in baseSeed.PendingReferences)
+            {
+                memo.UseContext();
+                if (memo.SelectsLocalMember(pending, context) && recorded.TryGetValue(pending.Head, out _))
+                    throw new InvalidOperationException("A member's base seed still holds a reference that selects a local member.");
+            }
+
+            return complete;
+
+            void Write(string key)
+            {
+                if ((written ??= new(StringComparer.Ordinal)).Add(key))
+                    (before ??= []).Add(key);
+            }
+        }
+    }
+
+    /// <summary>
+    /// MIXED-CYCLE COMPLETE SEEDS (<see cref="SolveMemberSeeds"/>): the BOUND of a mixed component — the union of what its
+    /// members' expansions can write: each member's own requirements qualified at the level, its escaping names and paths
+    /// anchored there, and the seeds of the members outside the component it reads. An expansion writes nothing else, so
+    /// every member seed of the component lies within the bound (a reference with at least the bound's owners), and so
+    /// does every seed outside the component that a member reads. Only the counts and the references are kept.
+    /// </summary>
+    private sealed class ComponentBound
+    {
+        public required int Required { get; init; }
+        public required int Visible { get; init; }
+        public required int Qualified { get; init; }
+        public required PendingReferenceSet References { get; init; }
+
+        /// <summary>The last seed found to hold the whole bound.</summary>
+        public SummarySeed? Complete { get; set; }
+
+        public static ComponentBound Of(List<int> members, int component, int[] mixedOf, SummarySeed[] baseSeeds,
+            Dictionary<string, SummarySeed> seeds, Dictionary<string, int> equationOf, LevelContext level)
+        {
+            var memos = level.Memos;
+            var context = memos.CompletedContext;
+            var token = memos.SharedMemo.CancellationToken;
+            var bound = new SummarySeed();
+            foreach (var member in members)
+            {
+                token.ThrowIfCancellationRequested();
+                var baseSeed = baseSeeds[member];
+                var own = new SummarySeed(baseSeed.RequiredAncestorOwnedParameterNames,
+                    ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
+                own.QualifyOwnParameters(level.Algorithm, level.ParameterNames, observations: null);
+                bound.UnionWith(own);
+                foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+                {
+                    if (!seeds.TryGetValue(name, out var read))
+                        bound.AddPendingReference(new PendingReference(name, [], context), keepHeldParts: true);
+                    else if (mixedOf[equationOf[name]] != component)
+                        bound.UnionWith(read);
+                }
+
+                foreach (var pending in baseSeed.PendingReferences)
+                    bound.AddPendingReference(pending.At(context), keepHeldParts: true);
+            }
+
+            var result = new ComponentBound
+            {
+                Required = bound.RequiredAncestorOwnedParameterNames.Count,
+                Visible = bound.VisiblePropertyDependencyNames.Count,
+                Qualified = bound.OwnerQualifiedParameters.Count,
+                References = bound.PendingReferences,
+            };
+            memos.Observations?.RecordSummaryMemberComponentBound(bound.OwnEntryCount);
+            return result;
         }
     }
 
@@ -3657,6 +3950,15 @@ internal static class PropertyDependencyGraphBuilder
     /// built before November 27 2026, which the folded shares must equal in content. Never set by production code.
     /// </summary>
     internal static readonly AsyncLocal<bool> MemberSharesUnfoldedForTesting = new();
+
+    /// <summary>
+    /// TEST SEAM (<c>MixedCycleCompleteSeedTests</c>): while set on the calling flow, the member solver takes no complete seed
+    /// in a mixed cycle (MIXED-CYCLE COMPLETE SEEDS): every cycle member copies and folds the member seeds it reads, compares
+    /// its seeds by folding them, and holds nothing — the seeds the complete ones must equal in content, reference order and
+    /// shape. The discovery order (<see cref="MemberSolveInDiscoveryOrderForTesting"/>) takes none either. Never set by
+    /// production code.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> MixedCycleSeedsCopiedForTesting = new();
 
     /// <summary>
     /// The member solver's worklist (<see cref="SolveMemberSeeds"/>). Each evaluation unit is RANKED by its position in the
@@ -3952,7 +4254,7 @@ internal static class PropertyDependencyGraphBuilder
     /// keeps its shares too (PATH PARTS settles its parts).</para>
     /// </summary>
     private static SummarySeed? TryShareMemberSeed(SummarySeed baseSeed, RecordingMemberSeeds seeds, LevelContext level,
-        bool foldsHeldParts, ref HeldMemberSeeds? held)
+        bool foldsHeldParts, ref HeldMemberSeeds? held, Func<SummarySeed, bool>? takesComplete = null)
     {
         if (baseSeed.PendingReferences.Count != 0 || baseSeed.VisiblePropertyDependencyNames.Count == 0)
             return null;
@@ -3978,6 +4280,15 @@ internal static class PropertyDependencyGraphBuilder
             seeds.Reads.Add(name);
         if (baseSeed.RequiredAncestorOwnedParameterNames.Count == 0 && baseSeed.OwnerQualifiedParameters.Count == 0)
             return shared ?? empty;
+
+        // MIXED-CYCLE COMPLETE SEEDS: where the copied seeds' change test folds this share into a new flat seed
+        // (takesComplete), that seed is a new seed over the complete member's own sets: they already hold the share's own
+        // requirements, and the share writes its references in the member's order.
+        if (shared is not null && takesComplete?.Invoke(shared) == true)
+        {
+            level.Memos.Observations?.RecordSummaryMemberCompleteSeed();
+            return shared.WithSharedOwnSets();
+        }
 
         // Own requirements, qualified here exactly as a full expansion qualifies them (the shared
         // member is already qualified at this level, and qualification distributes over union). A name
@@ -4119,14 +4430,26 @@ internal static class PropertyDependencyGraphBuilder
         return budgets[root];
     }
 
-    // Exact content equality of a member's new and previous seed, without folding when structure decides.
-    private static bool SameContent(SummarySeed next, SummarySeed previous)
+    // Exact content equality of a member's new and previous seed, without folding when structure decides. With
+    // referenceFree (a mixed-cycle member, MIXED-CYCLE COMPLETE SEEDS), a seed that carries a reference differs from one
+    // that holds parts and carries none anywhere (HeldMemberSeeds.MayHold), decided without folding either.
+    private static bool SameContent(SummarySeed next, SummarySeed previous, HeldMemberSeeds? referenceFree = null)
     {
         if (ReferenceEquals(next, previous))
             return true;
         if (previous.IsEmptyWithoutFolding())
             return next.IsEmptyWithoutFolding();
+        if (referenceFree is not null
+            && (CarriesReferenceAgainstReferenceFree(next, previous, referenceFree)
+                || CarriesReferenceAgainstReferenceFree(previous, next, referenceFree)))
+        {
+            return false;
+        }
+
         return next.StructurallyEquals(previous) || next.SetEquals(previous);
+
+        static bool CarriesReferenceAgainstReferenceFree(SummarySeed carrier, SummarySeed other, HeldMemberSeeds referenceFree)
+            => !carrier.OwnSetsHoldNoReferences && other.AbsorbedPartsWithoutFolding is not null && referenceFree.MayHold(other);
     }
 
     /// <summary>
