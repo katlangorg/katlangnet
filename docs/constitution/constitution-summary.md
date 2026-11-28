@@ -1,5 +1,7 @@
 # KatLang Semantic Constitution: law summary
 
+> **Q-57, the position of `xor` on the precedence ladder — 2026-11-28 (ONE owner decision, made on 2026-11-27 and recorded from the brief of the task that records it; no law title changed, no law added, retired or renumbered; ONE registry status change, Q-57 RESOLVED BY DECISION; uncommitted over `main` @ `a11ad7fa`):** the law headings and markers follow `constitution.md`. OP-01 loses its *(Open Q-57)* marker, because the owner confirmed the order `or` < `xor` < `and` and adopted its rationale: each side of an exclusive choice can express a conjunction, and the whole choice can serve as one alternative in a larger disjunction. OP-01 keeps *(C#-only)*: the ladder is a rule of the C# parser, and Lean has no parser.
+
 > **Q-51, a written spread right-hand side of assignment deconstruction — 2026-11-28 (ONE owner decision, recorded from the brief of the task that records it; no law title changed, no law added, retired or renumbered; ONE registry status change, Q-51 RESOLVED BY DECISION; uncommitted over `main` @ `1708b36f`):** the law headings and markers follow `constitution.md`. VAR-05 loses its *(Open Q-51)* marker, because the owner decided that a written spread right-hand side is captured by ordinary capture before deconstruction opens it one level, and keeps *(Open Q-84)*, the independent question about argument views.
 
 > **Demand-driven evaluation: short-circuit `and`/`or` (#202), lazy `reduce` accumulators (#203), lazy collections and pipelines (#204) — 2026-11-26 (reconciliation with language changes already landed on `main`; owner decisions recorded from the record, none made here; five law titles changed, no law added, retired or renumbered; no Q, PV or X status change; uncommitted over `main` @ `c9116ed6`):** the law headings and markers follow `constitution.md`. BOOL-04 is restated for short-circuit `and` and `or` (issue #202) and loses its *(Open Q-57)* marker, because Q-57 now asks only about the `xor` tier, which OP-01 keeps; SEQ-02 and COLL-04 name the positions a list evaluates on demand (issue #204). OP-03 names its arithmetic scope, and VAR-03 distinguishes selective reads from whole reads of a collector.
@@ -176,7 +178,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 
 ## OP — Operators and numerics
 
-- **OP-01** Operators group by one fixed precedence ladder; `^` is right-associative and binds tighter than prefix minus *(Open Q-57 C#-only)*
+- **OP-01** Operators group by one fixed precedence ladder; `^` is right-associative and binds tighter than prefix minus *(C#-only)*
 - **OP-02** Prefix `not` sits between the logical operators and the comparisons, and is never silently regrouped *(C#-only)*
 - **OP-03** Arithmetic operators evaluate operands in source order before checking their kinds
 - **OP-04** Arithmetic operators and Math functions take numeric scalars only: no vectorization, no identity element, no concatenation, no coercion

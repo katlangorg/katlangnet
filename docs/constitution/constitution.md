@@ -2,6 +2,8 @@
 
 **Status: draft for human review. This document is not authoritative in itself.**
 
+> **Q-57, the position of `xor` on the precedence ladder — 2026-11-28 (ONE owner decision, made on 2026-11-27 and recorded from the brief of the task that records it; OP-01's *Open Q-57* note becomes a dated *Resolved* note, the rationale bullet and one qualification are added and one example is added, and its law-index marker keeps only *C#-only*, in step with `constitution-summary.md`; no law title changed, no law added, retired or renumbered; ONE registry status change, Q-57 RESOLVED BY DECISION; no change in the grammar, Lean or C#; no program was run; uncommitted over `main` @ `a11ad7fa`):** the owner confirmed the Boolean order `or` < `xor` < `and`, from loosest to tightest, and adopted its rationale. `xor` binds less tightly than `and` so each side of an exclusive choice can express a conjunction. It binds more tightly than `or` so the whole exclusive choice can serve as one alternative in a larger disjunction. The rationale dates from 2026-11-27; the original reason for the parser's ordering was undocumented. The decision concerns grouping only. Issue #202 and BOOL-04 govern evaluation separately: `and` and `or` short-circuit, and `xor` needs both Boolean operands. Each boundary is observable: `true or false xor true` is `true or (false xor true)`, and `true xor true and false` is `true xor (true and false)`; both are `true`, and each would be `false` under the other grouping. The grammar (`KatLang.ebnf`: `OrExpr`, `XorExpr`, `AndExpr`), the parser's table (`Parser.BinaryOperatorPrecedence`) and the parse-tree test `ComparisonChainParserTests.PairwisePrecedenceContract_EveryOperatorPairParsesAsTheLadderPrescribes` already state the confirmed order, so only the records change. The registry entry, its history and the recount are in `open-questions.md`; the lineage is `decision-lineages.md` § Q-57.
+
 > **Q-51, a written spread right-hand side of assignment deconstruction — 2026-11-28 (ONE owner decision, recorded from the brief of the task that records it; VAR-05's *Open Q-51* note becomes a dated *Resolved* note, one bullet is restated and two examples are added, and its law-index marker is cleared in step with `constitution-summary.md`; no law added, retired or renumbered; ONE registry status change, Q-51 RESOLVED BY DECISION; no change in Lean or C#; uncommitted over `main` @ `1708b36f`):** the owner decided that the behavior Q-51 asked about is intended. Assignment deconstruction captures the right-hand side's output rows into one value by ordinary capture (SUP-06). A written spread contributes its immediate items to that capture, and when it contributes the only item, capture returns that item itself. Deconstruction then opens the captured value one level (VAR-05). With `Points = [(10, 20)]`, `x, y = Points*` binds `10` and `20`, as `Point = Points*` / `x, y = Point` does; `x, y = Points` is `ArityMismatch`, because the outer list holds one point for two targets; and with `Points = [(10, 20), (30, 40)]` each target binds a whole pair. Lean and C# already behave so, and existing pins cover it. SUP-03's qualification already stated this and is unchanged. VAR-05 keeps *Open Q-84*, the independent question about argument views. The registry entry, its history and the recount are in `open-questions.md`; the lineage is `decision-lineages.md` § Q-51.
 
 > **Returned callables across detached reads (EXPORTED-DETACHED, formal ledger rows E-22 and R-1) — 2026-11-27 (ONE owner decision recorded from the brief of the task that implements it, Lean first: the expected outcome — a correctly classified returned callable keeps its value in both row orders — and the change of the detachment contract it needs; PROP-08's enforcement bullet, its retained-cell reuse bullet and its host contract restated, one sentence of a RES-08 bullet restated; no law added, retired or renumbered; no Q, PV or X status change, Q-59 stays OPEN; uncommitted over `main` @ `024da438`):** an exported evaluation is detached from its ENCLOSING CALLS — the activations of the levels that enclose the property being evaluated and exist when it starts — and no longer from every activation that exists then. With `Cap(meta r) = r`, `Build(z) = { G(x) = x + z ⏎ Cap(G(0)) }`, `B = Build(5).Algorithm` and `Observe = B(1) + 0`, with both readers classified exported by the front end, `B(2), Observe` is `(7, 6)` and `Observe, B(2)` is `(6, 7)`, at the root and inside a call; until this change the first order was `UnknownName(z)`, because the row had established `B` first and `Build`'s activation — the returned callable's own, enclosing no call around `Observe` — existed when `Observe` started. An enclosing call's input is still refused: a callable that also reads `F`'s `y`, forced exported, is `UnknownName(y)` in both orders, and a falsely exported member declared in `Build` and read through the callable is `UnknownName(z)`. A retained runtime-alias cell keeps every read of its computation and refuses its reuse exactly to a reader that detaches one of them. Demanding a lazy position in the returned callable uses the same ownership test (`evaluator-and-hosting.md` § Detached evaluation of exported properties, "Returned callables"; HP-23a…n, compared with Lean).
@@ -270,7 +272,7 @@ Superseded spellings and laws (`;` joins, `...`, `spread(x)`, receiver segments,
 
 | Law | Statement | Marker |
 | --- | --- | --- |
-| OP-01 | Operators group by one fixed precedence ladder; `^` is right-associative and binds tighter than prefix minus | Open Q-57 C#-only |
+| OP-01 | Operators group by one fixed precedence ladder; `^` is right-associative and binds tighter than prefix minus | C#-only |
 | OP-02 | Prefix `not` sits between the logical operators and the comparisons, and is never silently regrouped | C#-only |
 | OP-03 | Arithmetic operators evaluate operands in source order before checking their kinds |  |
 | OP-04 | Arithmetic operators and Math functions take numeric scalars only: no vectorization, no identity element, no concatenation, no coercion |  |
@@ -4844,10 +4846,11 @@ Owned elsewhere and not restated here: the two-tier correspondence (FORMAL-04); 
 
 ### OP-01 — Operators group by one fixed precedence ladder; `^` is right-associative and binds tighter than prefix minus
 
-*Open: Q-57, the rationale for the position of `xor` in the ladder is not recorded.*
+*Resolved (Q-57, owner decision 2026-11-27): the order `or` < `xor` < `and` is confirmed, with the reason given in the second bullet. The reason was adopted on that date; the original reason for the parser's ordering was undocumented.*
 *C#-only by design.*
 
 - From loosest to tightest: `or`, `xor`, `and`, prefix `not` (OP-02), the ONE comparison tier (`<` `>` `<=` `>=` `==` `!=`), `+` `-`, `*` `/` `div` `mod`, prefix `-`, `^`, and the postfix forms: member access `.`, postfix selection `[…]`, call application and the postfix spread marker `*`.
+- `xor` binds less tightly than `and` so each side of an exclusive choice can express a conjunction. It binds more tightly than `or` so the whole exclusive choice can serve as one alternative in a larger disjunction. Thus `a or b and c xor d and e` groups as `a or ((b and c) xor (d and e))`.
 - The only prefix operators are `not` and `-`. There is no unary `+`: `+1` is the parse error `UnexpectedToken`.
 - `or`, `xor`, `and`, `+`, `-`, `*`, `/`, `div` and `mod` are left-associative (`10 - 4 - 3` is `(10 - 4) - 3`). Consecutive comparisons form one chain (BOOLCMP).
 - `^` is right-associative. Its base is parsed at the postfix level and its exponent re-enters the prefix-minus level, so `-a ^ b` is `-(a ^ b)`, `a ^ -b` is legal and `a ^ b ^ c` is `a ^ (b ^ c)`.
@@ -4857,7 +4860,8 @@ Owned elsewhere and not restated here: the two-tier correspondence (FORMAL-04); 
 - Explicit parentheses override the ladder (SYN-06). Postfix Grace `~` is a marker on a bare name, not a tier (SYN-12).
 
 **Qualifications**
-- Grouping is not evaluation order: operands are evaluated in source order (OP-03). `trace(2) ^ trace(3) ^ trace(2)` traces 2, 3, 2.
+- OP-03 governs arithmetic operand evaluation. Even though `^` groups to the right, `trace(2) ^ trace(3) ^ trace(2)` traces 2, 3, 2 in source order.
+- BOOL-04 and issue #202 govern Boolean operand evaluation. `and` skips its right operand when its left is `false`, and `or` skips its right operand when its left is `true`. `xor` needs both Boolean operands.
 - `(-2) ^ 2` is 4: the group makes the negation the base.
 - A spread is not an operand. `A = (1, 2)` / `-A*, 0` is the parse failure `MisplacedSpread` at the closed `A*`, and so are `not A*, 0` and the attached line-final `-A*` and `not A*`. Only a detached `-A *` leaves line-final multiplication missing its operand (SYN-11).
 - Newline and line-final-star classification belong to SYN-08 and SYN-11.
@@ -4868,6 +4872,14 @@ true or false and false, true xor true and false, 2 + 3 * 4, 10 - 4 - 3, 2 * 3 ^
 ⇒ `S[true, true, 14, 3, 18, -4, 512, 0.25]`
 
 `A = (10, 20)` / `G(x) = x + 1` / `A[0].G, A.count[0], G(A[1]), [5, 6].count[0], A[1].string` is `S[11, 2, 21, 2, '20']`. `2 ^ -2 ^ 2` is `0.0625`.
+
+```katlang
+Ready(testMode, mainOn, mainHealthy, backupOn, backupHealthy) = testMode or mainOn and mainHealthy xor backupOn and backupHealthy
+Ready(true, true, true, true, true)
+```
+⇒ `true`
+
+The body groups as `testMode or ((mainOn and mainHealthy) xor (backupOn and backupHealthy))`. Each conjunction describes one usable source. In normal mode exactly one source must be usable. A true `testMode` suffices on its own. Each boundary can be observed: `true or false xor true` is `true or (false xor true)`, which is `true`, while `(true or false) xor true` is `false`; and `true xor true and false` is `true xor (true and false)`, which is `true`, while `(true xor true) and false` is `false`.
 
 ### OP-02 — Prefix `not` sits between the logical operators and the comparisons, and is never silently regrouped
 
