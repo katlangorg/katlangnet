@@ -24,6 +24,7 @@ namespace KatLang.Tests;
 public class LexerNumericLiteralConversionTests
 {
     private const string TooLargeMessage = "Number literal is too large.";
+    private const string TooSmallMessage = "Number literal is too small to represent as a nonzero value.";
     private const string InvalidMessage =
         "Number literal is not a valid KatLang number: only the ASCII digits 0-9 are recognized (with an optional fraction and a lowercase 'e' exponent).";
 
@@ -39,7 +40,7 @@ public class LexerNumericLiteralConversionTests
         @"\G[0-9](_*[0-9])*(\.[0-9](_*[0-9])*)?(e[+-]?[0-9](_*[0-9])*)?",
         RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture);
 
-    private enum Outcome { Value, TooLarge, Invalid }
+    private enum Outcome { Value, TooLarge, TooSmall, Invalid }
 
     /// <summary>
     /// The pre-optimization conversion, reproduced test-side: the token's source text with
@@ -51,7 +52,11 @@ public class LexerNumericLiteralConversionTests
         var parsed = Decimal128.TryParse(stripped, NumberStyles.Float, CultureInfo.InvariantCulture, out var value);
         if (!parsed)
             return (Outcome.Invalid, default);
-        return Decimal128.IsFinite(value) ? (Outcome.Value, value) : (Outcome.TooLarge, default);
+        if (!Decimal128.IsFinite(value))
+            return (Outcome.TooLarge, default);
+        if (value == Decimal128.Zero && Regex.IsMatch(stripped, @"^[0.]*[1-9]"))
+            return (Outcome.TooSmall, default);
+        return (Outcome.Value, value);
     }
 
     private static string Canonical(Decimal128 value) => value.ToString(CultureInfo.InvariantCulture);
@@ -111,9 +116,11 @@ public class LexerNumericLiteralConversionTests
                     expectedDiagnostics.Add((DiagnosticCode.NumberLiteralTooLarge, TooLargeMessage, TokenSpan(token)));
                     break;
                 case Outcome.Invalid:
+                case Outcome.TooSmall:
                     if (!token.NumValue.Equals(Decimal128.Zero))
-                        Assert.Fail($"{Context(source, token)}: an unparsable literal must lex as the zero placeholder.");
-                    expectedDiagnostics.Add((DiagnosticCode.InvalidNumberLiteral, InvalidMessage, TokenSpan(token)));
+                        Assert.Fail($"{Context(source, token)}: an invalid literal must lex as the zero placeholder.");
+                    expectedDiagnostics.Add((DiagnosticCode.InvalidNumberLiteral,
+                        outcome == Outcome.TooSmall ? TooSmallMessage : InvalidMessage, TokenSpan(token)));
                     break;
             }
         }
@@ -196,10 +203,11 @@ public class LexerNumericLiteralConversionTests
     [Fact]
     public void GridLiterals_CoverEveryConversionOutcome()
     {
-        // The grid is only a differential oracle if it reaches all three outcomes.
+        // Exercise every outcome reachable with ASCII digits.
         var outcomes = GridLiterals().Select(static literal => LegacyConvert(literal).Outcome).ToHashSet();
         Assert.Contains(Outcome.Value, outcomes);
         Assert.Contains(Outcome.TooLarge, outcomes);
+        Assert.Contains(Outcome.TooSmall, outcomes);
         Assert.DoesNotContain(Outcome.Invalid, outcomes); // ASCII grid: invalid literals are pinned below
     }
 
@@ -236,7 +244,8 @@ public class LexerNumericLiteralConversionTests
         { "1e6144", "1.000000000000000000000000000000000E+6144" },
         { "1e-6176", "1E-6176" },       // smallest subnormal
         { "1e-6143", "1E-6143" },       // smallest normal
-        { "1e-6177", "0E-6176" },       // underflows to zero, finite: no diagnostic
+        { "6e-6177", "1E-6176" },       // rounds up to the smallest subnormal
+        { "0.0_0e-7_000", "0E-6176" },  // nonzero exponent digits on written zero
         { "0e99999999999", "0E+6111" }, // zero with a huge exponent clamps, finite
         // Separators in every legal position.
         { "1_000", "1000" },
@@ -282,6 +291,10 @@ public class LexerNumericLiteralConversionTests
 
     public static TheoryData<string, DiagnosticCode, string> FailingLiterals => new()
     {
+        { "1e-6177", DiagnosticCode.InvalidNumberLiteral, TooSmallMessage },
+        { "5e-6177", DiagnosticCode.InvalidNumberLiteral, TooSmallMessage }, // midpoint rounds to even zero
+        { "1e-7000", DiagnosticCode.InvalidNumberLiteral, TooSmallMessage },
+        { "0.00_1e-7_000", DiagnosticCode.InvalidNumberLiteral, TooSmallMessage },
         { "1e6145", DiagnosticCode.NumberLiteralTooLarge, TooLargeMessage },
         { "10e6144", DiagnosticCode.NumberLiteralTooLarge, TooLargeMessage },
         { "9999999999999999999999999999999999e6112", DiagnosticCode.NumberLiteralTooLarge, TooLargeMessage },
@@ -324,6 +337,23 @@ public class LexerNumericLiteralConversionTests
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         // The diagnostic spans exactly the literal (columns 5 .. 4 + length), half-open.
         Assert.Equal(new SourceSpan(1, 5, 1, 5 + literal.Length), diagnostic.Span);
+    }
+
+    [Theory]
+    [InlineData("Tiny = 1e-7000\n42", 8)]
+    [InlineData("Tiny = -1e-7000\n42", 9)]
+    public void NonzeroLiteralRoundedToZero_StopsTheProgramAtTheLiteral(string source, int column)
+    {
+        var span = new SourceSpan(1, column, 1, column + "1e-7000".Length);
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(source));
+        Assert.Equal(DiagnosticCode.InvalidNumberLiteral, diagnostic.Code);
+        Assert.Equal(span, diagnostic.Span);
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.InvalidNumberLiteral, error.Code);
+        Assert.Equal(TooSmallMessage, error.Message);
+        Assert.Equal(span, error.Span);
     }
 
     // ── Token boundaries: where the scan stops ───────────────────────────────
@@ -450,12 +480,12 @@ public class LexerNumericLiteralConversionTests
         Assert.Equal(DiagnosticCode.NumberLiteralTooLarge, Assert.Single(hugeDiagnostics).Code);
         Assert.Equal(huge.Length, hugeTokens[0].Length);
 
-        // 100,000 digits past the point: underflows to zero without a diagnostic.
+        // 100,000 digits past the point: diagnose the nonzero literal even without an exponent.
         var tiny = "0." + new string('0', 100_000) + "1";
         AssertAgreesWithOracles(tiny);
         var (tinyTokens, tinyDiagnostics) = Lexer.Tokenize(tiny);
-        Assert.Empty(tinyDiagnostics);
-        Assert.Equal("0E-6176", Canonical(tinyTokens[0].NumValue));
+        Assert.Equal(TooSmallMessage, Assert.Single(tinyDiagnostics).Message);
+        Assert.Equal(tiny.Length, tinyTokens[0].Length);
 
         // 100,000 separators between two digits: one token, value 11.
         var separated = "1" + new string('_', 100_000) + "1";

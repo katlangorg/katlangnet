@@ -452,7 +452,7 @@ public class Decimal128NumericsTests
     // ── Specified behavior preserved: zero-valued divisors stay errors ───────
     // The check is on the EVALUATED divisor value, exactly as the Lean model
     // specifies — a literal zero, a zero-valued property, a computed zero, a
-    // negative zero, and an underflowed-to-zero literal all reject identically.
+    // negative zero, and an underflowed arithmetic result all reject identically.
 
     [Theory]
     [InlineData("1 / 0")]
@@ -463,7 +463,7 @@ public class Decimal128NumericsTests
     [InlineData("1 / (1 - 1)")]
     [InlineData("1 / -0")]
     [InlineData("5 mod (2 - 2)")]
-    [InlineData("1 / 1e-9999")] // the literal underflows to a zero VALUE before the division
+    [InlineData("1 / (1e-6176 / 10)")]
     public void DivisionByZeroValuedDivisor_StaysTheSpecifiedError(string source)
         => Assert.IsType<EvalError.DivByZero>(EvalError(source));
 
@@ -499,7 +499,7 @@ public class Decimal128NumericsTests
     [InlineData("0 ^ 0", "1")]
     [InlineData("0 ^ -0", "1")]
     [InlineData("Math.Pow(-0.0, -0.0)", "1")]
-    [InlineData("0 ^ -1e-6177", "1")] // exponent rounds to signed zero, not a negative value
+    [InlineData("0 ^ -(1e-6176 / 10)", "1")]
     [InlineData("0 ^ 1e-6176", "0")]
     [InlineData("0 ^ 1", "0")]
     [InlineData("0 ^ 0.5", "0")]
@@ -1206,18 +1206,15 @@ public class Decimal128NumericsTests
     }
 
     [Fact]
-    public void UnderflowedLiteral_NegatedByTheUnaryOperator_IsNegativeZero()
+    public void UnderflowedArithmeticResult_NegatedByTheUnaryOperator_IsNegativeZero()
     {
-        // Literals are unsigned; 1e-9999 quietly underflows to a positive zero
-        // (carrying the minimum quantum, so it DISPLAYS as 0.000…0 — the same
-        // quantum-faithful rendering as every other value) and the unary minus
-        // then produces the observable signed zero.
-        var negated = Assert.Single(Assert.IsType<RunResult.Success>(KatLangEngine.Run("-1e-9999")).Atoms);
+        var negatedRun = Assert.IsType<RunResult.Success>(KatLangEngine.Run("-(1e-6176 / 10)"));
+        var negated = Assert.Single(negatedRun.Atoms);
         Assert.Equal(Decimal128.Zero, negated);
         Assert.True(Decimal128.IsNegative(negated));
-        Assert.StartsWith("-0.0", Assert.IsType<RunResult.Success>(KatLangEngine.Run("-1e-9999")).ToDisplayString());
+        Assert.StartsWith("-0.0", negatedRun.ToDisplayString());
 
-        var positive = Assert.Single(Assert.IsType<RunResult.Success>(KatLangEngine.Run("1e-9999")).Atoms);
+        var positive = Assert.Single(Assert.IsType<RunResult.Success>(KatLangEngine.Run("1e-6176 / 10")).Atoms);
         Assert.Equal(Decimal128.Zero, positive);
         Assert.False(Decimal128.IsNegative(positive));
     }

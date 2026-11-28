@@ -850,7 +850,7 @@ Each chain lists the decision steps in order (A proposes → B refines → C reg
 
 **Steps:** #8 (03-08) a crash on a literal beyond System.Decimal -> 8a34693 (03-13) FIXES it with a positioned 'Number literal is too large.' diagnostic -> #97/cadb441 (05-26) EXTENDS the syntax (lowercase e exponent, _ separators, digits on both sides of the point; still parsed as System.Decimal, so 2e30 stayed too large) -> #153/7f0bab0 (08-20) CHANGES the rule: parse into Decimal128, more than 34 digits ROUNDS half-even, only an out-of-range magnitude is too large, underflow is a quiet zero -> 49edb94 (08-30) adds the code NumberLiteralTooLarge -> 5fa9db5 (09-13) REFINES with a distinct InvalidNumberLiteral for non-ASCII digits -> ee1fdc7 (09-16) span-based parsing (implementation only)
 
-**Surviving semantics:** Number = /[0-9](_*[0-9])*(\.[0-9](_*[0-9])*)?(e[+-]?[0-9](_*[0-9])*)?/; only lowercase e (1.5E3 is UnseparatedSameLineItem). Literals are unsigned (-0 is prefix minus; +0 is a parse error). Excess digits round to 34. A magnitude beyond the range is NumberLiteralTooLarge; unparseable digits are InvalidNumberLiteral. An underflowing literal silently becomes zero (pinned by LexerNumericLiteralConversionTests:239,:451).
+**Surviving semantics:** Number = /[0-9](_*[0-9])*(\.[0-9](_*[0-9])*)?(e[+-]?[0-9](_*[0-9])*)?/; only lowercase e (1.5E3 is UnseparatedSameLineItem). Literals are unsigned (-0 is prefix minus; +0 is a parse error). Excess digits round to 34. A magnitude beyond the range is NumberLiteralTooLarge; unparseable digits are InvalidNumberLiteral. A written nonzero literal rounding to zero is InvalidNumberLiteral (Q-56).
 
 #### Arithmetic overflow and IEEE special values
 

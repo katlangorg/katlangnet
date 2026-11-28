@@ -5825,7 +5825,7 @@ Surviving semantics:
 - Literals are unsigned, so `-0` is prefix minus over `0` and `+0` is a parse error.
 - The value rounds to 34 digits (probe: a 38-digit literal gives `12345678901234567890123456789012350000`).
 - A magnitude beyond the range is `NumberLiteralTooLarge` (probe: `1e7000`).
-- An underflowing literal silently becomes zero, with an extreme quantum and a very long zero display (probe: `1e-7000`; pinned by `LexerNumericLiteralConversionTests:239`, `:451` and `Decimal128NumericsTests.UnderflowedLiteral_NegatedByTheUnaryOperator_IsNegativeZero`).
+- A written nonzero significand rounding to Decimal128 zero now gives `InvalidNumberLiteral` (Q-56, 2026-11-28; `LexerNumericLiteralConversionTests`).
 - Invalid digit text is `InvalidNumberLiteral`.
 
 Historical only:
@@ -6231,7 +6231,7 @@ I reviewed and confirmed these classifications, with no correction: #9 CURRENT (
    - `lean/KatLang.lean:24-25` says `avg(1, 2) = 1`; under fixed collection arity (#135) that call is an `ArityMismatch`, and the intended text is `avg((1, 2))`.
    - `lean/CoreTests/Numerics.lean:25-26` says division "matches the C# runtime (`Math.Truncate` for `div`)" and guards `.div (-7) 2 == -3`, but C# gives `-7 / 2 = -3.5`, and `div` now uses `Decimal128Numerics.IntegerDivide`.
    - `evaluator-and-hosting.md:106` still cites "the patterned-call view", deleted by parentheses-group syntax (SEMANTIC-ALIGNMENT.md:429).
-9. **Literal asymmetry.** An overflowing literal is a front-end diagnostic, while an underflowing literal (`1e-7000`) silently becomes a zero with an extreme quantum and a very long display. This is pinned deliberately (`LexerNumericLiteralConversionTests:239`, `:451`). Should it be listed as intended law rather than an accident of `Decimal128.TryParse`? No design note chooses it explicitly; UNCERTAIN.
+9. **Literal asymmetry.** An overflowing literal is a front-end diagnostic, while an underflowing literal (`1e-7000`) silently becomes a zero with an extreme quantum and a very long display. This is pinned deliberately (`LexerNumericLiteralConversionTests:239`, `:451`). Should it be listed as intended law rather than an accident of `Decimal128.TryParse`? No design note chooses it explicitly; UNCERTAIN. *(Q-56 resolved 2026-11-28: OP-10 now rejects that literal.)*
 10. **Error-kind taxonomy for numeric element rejections.** `sum((1, true))` and `order((1, 'a'))` are `ArityMismatch`/BadArity, while `1 + true` is `TypeMismatch`. This belongs to the collection area; noted here only because it concerns numeric consumers (T1/L5a questions). *(2026-10-05: RESOLVED BY DECISION — Q-27: both are `TypeMismatch`.)*
 
 

@@ -613,7 +613,7 @@ public class IntegerDivisionContractTests
     [InlineData("5 div 0")]
     [InlineData("5 div -0")]
     [InlineData("5 div (1 - 1)")]
-    [InlineData("5 div 1e-9999")]
+    [InlineData("5 div (1e-6176 / 10)")]
     [InlineData("8999999999999999999999999999999999 div 0")]
     public void ZeroValuedDivisor_StaysTheSpecifiedErrorWithItsSpan(string source)
     {
@@ -675,7 +675,7 @@ public class IntegerDivisionContractTests
     [InlineData(false, "0")]
     [InlineData(true, "0")]
     [InlineData(false, "-0")]
-    [InlineData(true, "1e-9999")]
+    [InlineData(true, "0e-7000")]
     public void PlannedDivisionByZero_PreservesTheStructuredErrorAndSpan(bool useWhile, string divisor)
     {
         var expression = $"v div {divisor}";

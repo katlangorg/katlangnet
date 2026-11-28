@@ -275,6 +275,7 @@ public static class Lexer
                 ScanDigits(source, ref i, ref col);
             }
 
+            var significandEnd = i;
             // Check for scientific notation part (e, optional sign, digits)
             if (i < source.Length && source[i] == 'e')
             {
@@ -289,34 +290,35 @@ public static class Lexer
                 { i = savedI; col = savedCol; } // no digit after 'e' — backtrack
             }
 
-            // The scan above owns the literal's extent; conversion reads exactly
-            // that text. Source text parses DIRECTLY into Decimal128 — no narrower
-            // intermediate representation. A finite literal with more than 34
-            // significant digits rounds to the nearest representable value (IEEE
-            // round-half-even). Two failure modes stay distinct: text Decimal128
-            // cannot parse at all (the scan admits any Unicode decimal digit so a
-            // digit never starts an identifier, but only the ASCII digits 0-9 form
-            // a value) is the invalid-literal diagnostic, while a well-formed
-            // literal whose magnitude exceeds the Decimal128 range (parses to an
-            // infinity) is the too-large diagnostic.
-            var parsed = TryParseNumberLiteral(source.AsSpan(start, i - start), out var value);
-            if (parsed && Decimal128.IsFinite(value))
+            // Let Decimal128 do the rounding. Only a zero result needs a look
+            // back at the significand: digits in the exponent do not make it nonzero.
+            DiagnosticCode code;
+            string message;
+            if (!TryParseNumberLiteral(source.AsSpan(start, i - start), out var value))
             {
-                tokens.Add(Token.CreateNumber(value, start, i - start, startLine, startCol));
+                code = DiagnosticCode.InvalidNumberLiteral;
+                message = "Number literal is not a valid KatLang number: only the ASCII digits 0-9 are recognized (with an optional fraction and a lowercase 'e' exponent).";
+            }
+            else if (!Decimal128.IsFinite(value))
+            {
+                code = DiagnosticCode.NumberLiteralTooLarge;
+                message = "Number literal is too large.";
+            }
+            else if (value == Decimal128.Zero && source.AsSpan(start, significandEnd - start).ContainsAnyInRange('1', '9'))
+            {
+                code = DiagnosticCode.InvalidNumberLiteral;
+                message = "Number literal is too small to represent as a nonzero value.";
             }
             else
             {
-                // The diagnostic covers exactly the scanned literal: the placeholder
-                // token's span, whose exclusive end is the lexer's live cursor column
-                // (one past the last consumed digit; at least one digit was consumed).
-                var placeholder = Token.CreateNumber(0, start, i - start, startLine, startCol);
-                var (message, code) = parsed
-                    ? ("Number literal is too large.", DiagnosticCode.NumberLiteralTooLarge)
-                    : ("Number literal is not a valid KatLang number: only the ASCII digits 0-9 are recognized (with an optional fraction and a lowercase 'e' exponent).", DiagnosticCode.InvalidNumberLiteral);
-                diagnostics.Report(code, message, placeholder.Span);
-                lexicalErrorStarts?.Add(placeholder.Span.Start);
-                tokens.Add(placeholder);
+                tokens.Add(Token.CreateNumber(value, start, i - start, startLine, startCol));
+                return;
             }
+
+            var placeholder = Token.CreateNumber(0, start, i - start, startLine, startCol);
+            diagnostics.Report(code, message, placeholder.Span);
+            lexicalErrorStarts?.Add(placeholder.Span.Start);
+            tokens.Add(placeholder);
             return;
         }
 

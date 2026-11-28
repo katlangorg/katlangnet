@@ -176,7 +176,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 - **CMP-02** A chain evaluates every operand exactly once, left to right and incrementally; a `false` link never stops it; the first error does
 - **CMP-03** `==` and `!=` are total, kind-exact structural equality over every value
 - **CMP-04** Ordering (`<`, `>`, `<=`, `>=`) is defined only between numeric scalars
-- **CMP-05** On the Decimal128 runtime tier, numeric equality is value equality — representation is not part of it — while ordering is IEEE *(Open Q-56 C#-only)*
+- **CMP-05** On the Decimal128 runtime tier, numeric equality is value equality — representation is not part of it — while ordering is IEEE *(C#-only)*
 
 ## OP — Operators and numerics
 
@@ -189,10 +189,10 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 - **OP-07** A violation of a numeric domain yields an IEEE value, not an error; IEEE special values are ordinary numbers *(C#-only)*
 - **OP-08** `div` truncates the exact quotient toward zero, and `mod` is the matching remainder
 - **OP-09** `^`, `pow` and `Math.Pow` are one operation; a zero base with any negative exponent is an error
-- **OP-10** A numeric literal denotes the nearest Decimal128 value with its written quantum; an out-of-range magnitude is a front-end error *(Open Q-56 C#-only)*
+- **OP-10** Numeric literals round to Decimal128. Overflow and rounding a written nonzero to zero are source errors *(C#-only)*
 - **OP-11** Every spelling of a Math member is the same function; the spellings are nevertheless distinct bindings *(C#-only)*
 - **OP-12** `avg` is the correctly rounded exact mean, independent of element order *(C#-only)*
-- **OP-13** `min`/`max` are IEEE minimum/maximum: they return an input element, propagate NaN, and order the two zeros by sign *(Open Q-56 C#-only)*
+- **OP-13** `min`/`max` are IEEE minimum/maximum: they return an input element, propagate NaN, and order the two zeros by sign *(C#-only)*
 - **OP-14** `.string` renders a number as its canonical positional text; quantum, sign and specials are part of that string value *(C#-only)*
 
 ## ALGHO — Algorithms and the higher-order channel

@@ -268,7 +268,7 @@ Superseded spellings and laws (`;` joins, `...`, `spread(x)`, receiver segments,
 | CMP-02 | A chain evaluates every operand exactly once, left to right and incrementally; a `false` link never stops it; the first error does |  |
 | CMP-03 | `==` and `!=` are total, kind-exact structural equality over every value |  |
 | CMP-04 | Ordering (`<`, `>`, `<=`, `>=`) is defined only between numeric scalars |  |
-| CMP-05 | On the Decimal128 runtime tier, numeric equality is value equality — representation is not part of it — while ordering is IEEE | Open Q-56 C#-only |
+| CMP-05 | On the Decimal128 runtime tier, numeric equality is value equality — representation is not part of it — while ordering is IEEE | C#-only |
 
 **OP — Operators and numerics**
 
@@ -283,10 +283,10 @@ Superseded spellings and laws (`;` joins, `...`, `spread(x)`, receiver segments,
 | OP-07 | A violation of a numeric domain yields an IEEE value, not an error; IEEE special values are ordinary numbers | C#-only |
 | OP-08 | `div` truncates the exact quotient toward zero, and `mod` is the matching remainder |  |
 | OP-09 | `^`, `pow` and `Math.Pow` are one operation; a zero base with any negative exponent is an error |  |
-| OP-10 | A numeric literal denotes the nearest Decimal128 value with its written quantum; an out-of-range magnitude is a front-end error | Open Q-56 C#-only |
+| OP-10 | Numeric literals round to Decimal128. Overflow and rounding a written nonzero to zero are source errors | C#-only |
 | OP-11 | Every spelling of a Math member is the same function; the spellings are nevertheless distinct bindings | C#-only |
 | OP-12 | `avg` is the correctly rounded exact mean, independent of element order | C#-only |
-| OP-13 | `min`/`max` are IEEE minimum/maximum: they return an input element, propagate NaN, and order the two zeros by sign | Open Q-56 C#-only |
+| OP-13 | `min`/`max` are IEEE minimum/maximum: they return an input element, propagate NaN, and order the two zeros by sign | C#-only |
 | OP-14 | `.string` renders a number as its canonical positional text; quantum, sign and specials are part of that string value | C#-only |
 
 **ALGHO — Algorithms and the higher-order channel**
@@ -4819,7 +4819,6 @@ The planned loop agrees: `W(n) = n + 1, 0 <= trace(n) < 3` / `W(0).while` is `3`
 
 ### CMP-05 — On the Decimal128 runtime tier, numeric equality is value equality — representation is not part of it — while ordering is IEEE
 
-*Open: Q-56, whether the NaN split below is stated as an accepted exception.*
 *C#-only by design.*
 
 - Number leaves compare with `Decimal128.Equals` value semantics, so `==` is a reflexive equivalence relation: NaN equals NaN, `-0 == 0`, and quantum (trailing zeros) is ignored (`1.0 == 1.00`).
@@ -5047,9 +5046,8 @@ The planned loop agrees: `S(s) = s div 2, s mod 3` / `S(-7).repeat(1)` is `S[-3,
 
 `0 ^ -1`, `0 ^ -0.5`, `pow(0, -1)` and `Math.Pow(0, -2.5)` are `IllegalInEval`, as is the planned-loop step `S(s) = s ^ -1` / `S(0).repeat(2)`.
 
-### OP-10 — A numeric literal denotes the nearest Decimal128 value with its written quantum; an out-of-range magnitude is a front-end error
+### OP-10 — Numeric literals round to Decimal128. Overflow and rounding a written nonzero to zero are source errors
 
-*Open: Q-56, whether silent literal underflow (B below) is stated as an accepted exception.*
 *C#-only by design.*
 
 - A number literal (lexical form: SYN-02) parses directly to Decimal128 and keeps its written quantum (`1.50` stays `1.50`).
@@ -5058,7 +5056,7 @@ The planned loop agrees: `S(s) = s div 2, s mod 3` / `S(-7).repeat(1)` is `S[-3,
 - Literals are unsigned (SYN-02); `-0` is the negated zero, and OP-01 holds uniformly (`-2 ^ 2` is `-(2 ^ 2)`).
 
 **Qualifications**
-- An underflowing literal such as `1e-7000` is not a diagnostic: it silently becomes a zero with an extreme quantum, so `1e-7000 == 0` is `true`.
+- A written nonzero significand that rounds to Decimal128 zero is a front-end `InvalidNumberLiteral` error at the literal. For example, `1e-7000` is rejected, `0e-7000` denotes zero, and `1e-6176` is a valid subnormal. Arithmetic such as `1e-6176 / 10` can still underflow to zero. See [literal boundary cases](../../dotnet/tests/KatLang.Tests/LexerNumericLiteralConversionTests.cs).
 - Positive-exponent quanta are not written by `.string` (OP-14 and below): `1e3.string` is `'1000'`.
 
 ```katlang
@@ -5113,7 +5111,6 @@ The two `avg` values agree, while the two `sum` values differ by order.
 
 ### OP-13 — `min`/`max` are IEEE minimum/maximum: they return an input element, propagate NaN, and order the two zeros by sign
 
-*Open: Q-56, whether the failure of `min = first ∘ order` and `max = last ∘ order` on signed zeros and NaN is stated as an accepted exception.*
 *C#-only for the Decimal128 refinement (FORMAL-04); the `Int` instance is shared with Lean.*
 
 - `min(collection)` and `max(collection)` fold with IEEE 754 `minimum`/`maximum`. The result is always one of the elements, so no value or sign is manufactured; any NaN element makes the result NaN; a tie between `0` and `-0` is decided by sign in every element order: `min` returns `-0` whenever a negative zero takes part in a zero minimum, and `max` returns `0` whenever a positive zero takes part in a zero maximum.

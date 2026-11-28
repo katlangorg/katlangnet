@@ -36,11 +36,12 @@
         "expectedNeutral": "ok raw=10.00 n=1"
       },
       {
-        "source": "1.50",
-        "expectedNeutral": "ok raw=1.50 n=1"
+        "source": "1.50, 0e-7000 == 0, 6e-6177 == 1e-6176, 1e-6176 / 10 == 0",
+        "expectedNeutral": "ok raw=S[1.50, true, true, true] n=4"
       }
     ],
     "explanation": "Numbers are IEEE 754 Decimal128, so decimal fractions are exact (`0.1 + 0.2 == 0.3` is `true`) and ordinary arithmetic exposes the Decimal128-selected result quantum without canonicalizing it: `0.5 + 0.5` displays `1.0`, not `1`. Quantum affects display, not structural numeric equality; formatting never re-rounds the computed value.",
+    "notes": "Q-56: written zero and literals rounding to a representable nonzero subnormal are valid. A written nonzero literal rounding to zero is InvalidNumberLiteral. Arithmetic may underflow to zero.",
     "leanExclusionReason": "Fractional Decimal128 literals and values are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design rather than approximating them, so the program itself has no faithful Lean form."
   },
   {

@@ -625,7 +625,7 @@ public class LeanAstEncoderTests
         var tiny = Assert.Throws<NotSupportedException>(() =>
             LeanAstEncoder.EncodeExpr(new Expr.Num(Decimal128.Epsilon)));
         Assert.Contains("non-integer or non-finite", tiny.Message);
-        foreach (var source in new[] { "1e-6177", "0e-6176", "0.5 + 0.5", "-0.5 + -0.5" })
+        foreach (var source in new[] { "1e-6176 / 10", "0e-6176", "0.5 + 0.5", "-0.5 + -0.5" })
         {
             var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
             Assert.False(result.IsError);

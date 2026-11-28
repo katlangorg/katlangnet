@@ -198,7 +198,7 @@ KatLang numbers are decimal numbers with 34 significant digits. Decimal fraction
 
 A result can keep decimal places from its inputs: `2.50 * 4` is ten, displayed as `10.00`. [Displayed Decimal Places](#displayed-decimal-places) shows how to choose the number of decimal places.
 
-Number literals may use `_` between digits and an exponent written with a lowercase `e`: `1_000_000`, `6.674e-11`, `1.5e3`. A decimal point needs digits on both sides (`0.5`, not `.5`). A result that needs more than 34 significant digits is rounded, and one too large to represent becomes `Infinity` or `-Infinity`.
+Number literals may use `_` between digits and an exponent written with a lowercase `e`: `1_000_000`, `6.674e-11`, `1.5e3`. A decimal point needs digits on both sides (`0.5`, not `.5`). A written nonzero literal that rounds to zero, such as `1e-7000`, is a source error. Small representable numbers such as `1e-6176` are valid. Arithmetic can still round to zero. A result that needs more than 34 significant digits is rounded, and one too large to represent becomes `Infinity` or `-Infinity`.
 
 Dividing by zero is an error, and so is raising zero to a negative power, as in `0 ^ -1`:
 
