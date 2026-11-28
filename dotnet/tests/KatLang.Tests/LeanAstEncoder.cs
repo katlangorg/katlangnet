@@ -850,13 +850,15 @@ internal sealed class LeanAstEncoding
     /// Conditional clause head. Pattern SHAPE and KIND are load-bearing: a nested
     /// <c>sequenceValue</c> (written <c>F((x, y))</c>) matches sequences only, a
     /// <c>listValue</c> (written <c>F([x, y])</c>) lists only, and a bare <c>bind</c>
-    /// head (written <c>F(x)</c>) any value. Compiler-exhaustive over the closed
+    /// head (written <c>F(x)</c>) any value. A COLLECTING binder keeps its kind (Q-47): it is
+    /// Lean's <c>.bind name true</c>, never the fixed <c>.bind name</c>, wherever it stands — Lean's
+    /// own validation refuses the positions the language does (a collector directly among a
+    /// family's call arguments), so the encoder decides nothing. Compiler-exhaustive over the closed
     /// Pattern hierarchy: a new variant fails this build until the encoder covers it.
     /// </summary>
     public static string EncodePattern(Pattern pattern) => pattern switch
     {
-        Pattern.Bind { ParameterKind: ParameterKind.Collecting } =>
-            throw new NotSupportedException("Lean clause binders cannot represent collecting bindings."),
+        Pattern.Bind { ParameterKind: ParameterKind.Collecting } collecting => $".bind {Quote(collecting.Name)} true",
         Pattern.Bind { ParameterKind: ParameterKind.Meta } =>
             throw new NotSupportedException("Lean clause binders cannot represent META bindings."),
         Pattern.Bind(var name) => $".bind {Quote(name)}",

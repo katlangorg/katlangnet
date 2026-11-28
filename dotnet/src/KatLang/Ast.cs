@@ -2499,8 +2499,9 @@ public closed record Expr
 ///
 /// STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE (September 2026):
 /// a nested <see cref="SequenceValue"/> <c>(p1, …, pn)</c> matches SEQUENCE values only and
-/// a <see cref="ListValue"/> <c>[p1, …, pn]</c> LIST values only, each of exactly its
-/// length; a one-item sequence pattern is invalid (no one-item sequence value exists). At the
+/// a <see cref="ListValue"/> <c>[p1, …, pn]</c> LIST values only. Fixed items each consume one
+/// element. A collecting binder takes the remaining elements as one list. A sequence pattern
+/// whose only item is fixed is invalid, while <c>(*xs)</c> matches every sequence. At the
 /// TOP of a clause head a <see cref="SequenceValue"/> is the head's own argument list —
 /// <c>F(x, y)</c> is <c>SequenceValue[x, y]</c>, and a lone structural pattern is wrapped in
 /// it (<c>F((x, y))</c> is <c>SequenceValue[SequenceValue[x, y]]</c>, <c>F([x])</c> is
@@ -2518,7 +2519,7 @@ public closed record Pattern
 {
     private Pattern() { }
 
-    /// <summary>Matches any Result and binds it to the given name.</summary>
+    /// <summary>Binds one supplied item by name, or a list of items when collecting.</summary>
     public sealed record Bind(string Name) : Pattern
     {
         private readonly RuntimeStateSlot<bool> _isRecoveryPlaceholder;
@@ -2532,7 +2533,8 @@ public closed record Pattern
         /// <summary>Exact span of the binder identifier when available.</summary>
         public SourceSpan? NameSpan { get; init; }
 
-        /// <summary>Parameter binding kind when this binder elaborates to an ordinary explicit parameter.</summary>
+        /// <summary>Binding kind in an ordinary head or clause family. Family heads permit collecting
+        /// binders inside structural patterns and fixed binders at any argument position.</summary>
         public ParameterKind ParameterKind { get; init; } = ParameterKind.Normal;
 
         /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
@@ -2553,9 +2555,9 @@ public closed record Pattern
     public sealed record LitBool(bool Value) : Pattern;
 
     /// <summary>
-    /// Nested: matches only a <c>Result.SequenceValue(items)</c> of the same length, each
-    /// sub-pattern matching its element — never a list and never a scalar (Lean:
-    /// <c>Pattern.sequenceValue</c>). At the top of a clause head: the head's argument list.
+    /// Inside an argument, matches a <c>Result.SequenceValue</c> using the fixed items and optional
+    /// collecting binder. At the top of a clause head, holds its argument list (Lean:
+    /// <c>Pattern.sequenceValue</c>).
     /// </summary>
     public sealed record SequenceValue(IReadOnlyList<Pattern> Items) : Pattern
     {
@@ -2574,9 +2576,8 @@ public closed record Pattern
     }
 
     /// <summary>
-    /// Matches only a <c>Result.ListValue(items)</c> of the same length, each sub-pattern
-    /// matching its element — never a sequence and never a scalar (Lean:
-    /// <c>Pattern.listValue</c>).
+    /// Matches a <c>Result.ListValue</c> using the fixed items and optional collecting binder
+    /// (Lean: <c>Pattern.listValue</c>).
     /// </summary>
     public sealed record ListValue(IReadOnlyList<Pattern> Items) : Pattern
     {
@@ -2732,15 +2733,135 @@ public closed record Pattern
     }
 
     /// <summary>
-    /// Whether this branch head holds a binder of <paramref name="kind"/> (a host-built
-    /// <see cref="Bind"/> whose <see cref="Bind.ParameterKind"/> is that kind) at any depth. Clause
-    /// binders are always ordinary — the parser refuses a collecting or <c>meta</c> binder in a clause
-    /// family, and Lean's clause binders neither collect (<c>NeedPattern.ofClause</c>) nor have a kind —
-    /// so the pre-evaluation gate refuses a head with a collecting binder
-    /// (<see cref="PreEvaluationAstViolation.CollectingClauseBinder"/>) or a META one
-    /// (<see cref="PreEvaluationAstViolation.MetaClauseBinder"/>). Iterative, linear in the distinct
-    /// pattern nodes of a host-built head that shares subtrees, and allocation-free for a head whose
-    /// items are leaves (every run validates every clause head).
+    /// A COLLECTOR DIRECTLY AMONG A CLAUSE FAMILY'S CALL ARGUMENTS (Q-47, decided 2026-11-27; Lean:
+    /// <c>Pattern.headHasDirectCollector</c>): the head's own argument list holds a collecting
+    /// binder (<c>F(head, *rest)</c>, <c>F(*xs)</c>), or a host-built head is itself one. A clause
+    /// family has ONE fixed call arity (<see cref="TopLevelArity"/>), which such a binder would make
+    /// variable, so the head is invalid in a family: the parser reports
+    /// <see cref="DiagnosticCode.InvalidCollectingBinding"/> and the pre-evaluation gate refuses a
+    /// host-built tree (<see cref="PreEvaluationAstViolation.CollectingClauseBinder"/>). A collecting
+    /// binder INSIDE a sequence or list pattern of an argument is not one: that pattern still
+    /// consumes exactly one argument, whatever its collector collects. Allocation-free.
+    /// </summary>
+    internal bool HeadHasDirectCollector(ValidationWork? work = null)
+    {
+        if (this is not SequenceValue(var items))
+            return this is Bind { ParameterKind: ParameterKind.Collecting };
+
+        for (var index = 0; index < items.Count; index++)
+        {
+            work?.Step();
+            if (items[index] is Bind { ParameterKind: ParameterKind.Collecting })
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// AT MOST ONE COLLECTING BINDER PER PATTERN LEVEL (X-02; Lean:
+    /// <c>Pattern.hasMultipleCollectingLevel</c>, the <see cref="Pattern"/> twin of
+    /// <see cref="ParameterPattern.HasMultipleCollectingCapturesAtAnyLevel"/>): whether some level of
+    /// this clause head holds more than one. The head's own argument list is a level too, since a
+    /// top-level <see cref="SequenceValue"/> IS that list. Iterative and linear in the distinct
+    /// pattern nodes of a host-built head that shares subtrees (expand once: a group met again held
+    /// no violation the first time or is still waiting to be read); allocation-free for a head whose
+    /// items are leaves.
+    /// </summary>
+    internal bool HasMultipleCollectingLevel(ValidationWork? work = null)
+    {
+        Stack<IReadOnlyList<Pattern>>? pending = null;
+        HashSet<Pattern>? expanded = null;
+        var items = ClauseGroupItems(this);
+        while (items is not null)
+        {
+            work?.Step();
+            var collecting = 0;
+            for (var index = 0; index < items.Count; index++)
+            {
+                work?.Step();
+                var item = items[index];
+                if (item is Bind { ParameterKind: ParameterKind.Collecting } && ++collecting > 1)
+                    return true;
+                if (ClauseGroupItems(item) is { Count: > 0 } nested
+                    && (expanded ??= new HashSet<Pattern>(ReferenceEqualityComparer.Instance)).Add(item))
+                    (pending ??= new Stack<IReadOnlyList<Pattern>>()).Push(nested);
+            }
+
+            if (pending is null || !pending.TryPop(out items))
+                return false;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether a repeated binder name of this clause head includes a collecting binder (X-02; Lean:
+    /// <c>Pattern.hasRepeatedNameIncludingCollecting</c>, the <see cref="Pattern"/> twin of
+    /// <see cref="ParameterPattern.HasRepeatedCaptureNameIncludingCollecting"/>): a head may repeat a
+    /// name only among fixed binders (PAT-09), never with a collector. A head without a collecting
+    /// binder is answered by <see cref="HeadHasBinderOfKind"/> alone. SHARED-DAG RULE (visit at most
+    /// twice): the rule reads only zero/one/many occurrences per name and whether one of them
+    /// collects, so a structural node a host-built head shares along many paths is visited
+    /// min(2, paths to it) times and the work stays linear in the head's distinct nodes and edges.
+    /// </summary>
+    internal bool HasRepeatedNameIncludingCollecting(ValidationWork? work = null)
+    {
+        // A lone binder or literal repeats nothing.
+        if (ClauseGroupItems(this) is not { } headItems)
+            return false;
+        if (!HeadHasBinderOfKind(ParameterKind.Collecting, work))
+            return false;
+
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        var collectingNames = new HashSet<string>(StringComparer.Ordinal);
+        var visits = new Dictionary<Pattern, int>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<Pattern>();
+        for (var index = headItems.Count - 1; index >= 0; index--)
+        {
+            work?.Step();
+            pending.Push(headItems[index]);
+        }
+
+        while (pending.TryPop(out var pattern))
+        {
+            work?.Step();
+            if (pattern is Bind binder)
+            {
+                var collects = binder.ParameterKind == ParameterKind.Collecting;
+                if (!seenNames.Add(binder.Name) && (collects || collectingNames.Contains(binder.Name)))
+                    return true;
+                if (collects)
+                    collectingNames.Add(binder.Name);
+                continue;
+            }
+
+            // A literal binds nothing.
+            if (ClauseGroupItems(pattern) is not { } items)
+                continue;
+            var seen = visits.GetValueOrDefault(pattern);
+            if (seen == 2)
+                continue;
+            visits[pattern] = seen + 1;
+            for (var index = items.Count - 1; index >= 0; index--)
+            {
+                work?.Step();
+                pending.Push(items[index]);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether this branch head holds a binder of <paramref name="kind"/> (a
+    /// <see cref="Bind"/> whose <see cref="Bind.ParameterKind"/> is that kind) at any depth. A clause
+    /// family never carries a <c>meta</c> binder — the parser refuses one, and Lean's clause binder
+    /// has no META kind — so the pre-evaluation gate refuses a head with one
+    /// (<see cref="PreEvaluationAstViolation.MetaClauseBinder"/>). A collecting binder is judged by
+    /// its position instead (<see cref="HeadHasDirectCollector"/>, Q-47). Iterative, linear in the
+    /// distinct pattern nodes of a host-built head that shares subtrees, and allocation-free for a
+    /// head whose items are leaves (every run validates every clause head).
     /// </summary>
     internal bool HeadHasBinderOfKind(ParameterKind kind, ValidationWork? work = null)
     {
@@ -2753,9 +2874,10 @@ public closed record Pattern
         while (items is not null)
         {
             work?.Step();
-            foreach (var item in items)
+            for (var index = 0; index < items.Count; index++)
             {
                 work?.Step();
+                var item = items[index];
                 if (item is Bind bind && bind.ParameterKind == kind)
                     return true;
                 if (ClauseGroupItems(item) is { Count: > 0 } nested
@@ -3141,11 +3263,14 @@ public closed record Pattern
         => !IsLiteralFreeClauseHead();
 
     /// <summary>
-    /// Check whether two patterns are match-equivalent, i.e., they match
-    /// the same set of inputs. Binder spelling is irrelevant, but repeated
+    /// Check whether two patterns have the same structure up to binder renaming.
+    /// For example, <c>[x, *r]</c> and <c>[*r, x]</c> both accept every nonempty list
+    /// and have different collector positions. Binder spelling is irrelevant, but repeated
     /// binder names impose equality constraints whose position must agree, and the
     /// structural KIND is part of the shape: a sequence pattern is never
-    /// match-equivalent to a list pattern. Lean: <c>Pattern.isMatchEquivalent</c>.
+    /// match-equivalent to a list pattern, and a fixed binder never to a collecting one
+    /// (<c>[x]</c> and <c>[*xs]</c> are different heads, while <c>[head, *rest]</c> and
+    /// <c>[first, *others]</c> are duplicates). Lean: <c>Pattern.isMatchEquivalent</c>.
     /// Duplicate detection over many patterns uses <see cref="PatternMatchEquivalenceIndex"/>,
     /// whose canonical key encodes exactly this relation.
     /// </summary>
@@ -3159,6 +3284,10 @@ public closed record Pattern
             switch (left, right)
             {
                 case (Bind leftBind, Bind rightBind):
+                    // The collecting flag is part of the shape (Q-47; Lean:
+                    // `matchEquivalentWithRenaming`): `[x]` and `[*xs]` are different heads.
+                    if ((leftBind.ParameterKind == ParameterKind.Collecting) != (rightBind.ParameterKind == ParameterKind.Collecting))
+                        return false;
                     if (leftToRight.TryGetValue(leftBind.Name, out var mappedName))
                         return string.Equals(mappedName, rightBind.Name, StringComparison.Ordinal);
                     if (rightToLeft.ContainsKey(rightBind.Name))
@@ -4809,14 +4938,14 @@ internal closed record PreEvaluationAstViolation
     internal sealed record RepeatedNameIncludesCollecting() : PreEvaluationAstViolation;
 
     /// <summary>
-    /// A clause-family branch head holding a collecting binder (a host-built
-    /// <see cref="Pattern.Bind"/> whose <see cref="Pattern.Bind.ParameterKind"/> is collecting).
-    /// The parser reports <see cref="DiagnosticCode.InvalidCollectingBinding"/> for a written
-    /// clause family and elaborates a single binder clause into a user algorithm, so only a
-    /// host-built tree reaches this. C#-only: Lean clause binders never collect
-    /// (<c>NeedPattern.ofClause</c>), so the gate refuses exactly the heads Lean cannot express —
-    /// shapes outside the source-reachable core (constitution FORMAL-08; FORMAL-07 research,
-    /// October 2026).
+    /// A clause-family branch head holding a collecting binder DIRECTLY among its call arguments
+    /// (<see cref="Pattern.HeadHasDirectCollector"/>; Q-47, decided 2026-11-27): a family has one
+    /// fixed call arity. The parser reports <see cref="DiagnosticCode.InvalidCollectingBinding"/>
+    /// for a written clause family and elaborates a single literal-free clause into a user
+    /// algorithm, so only a host-built tree reaches this. A collecting binder inside a sequence or
+    /// list pattern of an argument is valid and is held to the two collector rules of every
+    /// signature (<see cref="MultipleCollectingCaptures"/>, <see cref="RepeatedNameIncludesCollecting"/>).
+    /// Lean: <c>Error.illegalInEval familyDirectCollectorMessage</c>.
     /// </summary>
     internal sealed record CollectingClauseBinder() : PreEvaluationAstViolation;
 
@@ -4831,8 +4960,8 @@ internal closed record PreEvaluationAstViolation
 
     /// <summary>
     /// A clause-family branch head holding a META binder (CallReference S1). The parser reports
-    /// <see cref="DiagnosticCode.InvalidMetaParameter"/> for a written family; C#-only like
-    /// <see cref="CollectingClauseBinder"/>: Lean's clause binders have no kind.
+    /// <see cref="DiagnosticCode.InvalidMetaParameter"/> for a written family. C#-only: Lean's
+    /// clause binder has no META kind.
     /// </summary>
     internal sealed record MetaClauseBinder() : PreEvaluationAstViolation;
 
@@ -5701,24 +5830,45 @@ internal static class AlgorithmValidation
                     return;
             }
 
-            // A clause binder never collects: the parser refuses a collecting binder in a
-            // clause family, and Lean's clause binders cannot collect (`NeedPattern.ofClause`),
-            // so a host-built head with one is refused here, before the one binder sees it
-            // (FORMAL-07 research, October 2026). Formerly it reached the binder: two collecting
-            // binders at one level made a short supply index out of range — a raw
-            // ArgumentOutOfRangeException escaped Evaluator.Run — and silently bound the second
-            // collector to ONE raw item otherwise; a single collecting binder lost its kind in
-            // the single-clause flat-binder conversion and was ignored by zero-argument
-            // acceptance while the binder accepted an empty supply.
+            // THE COLLECTOR RULES OF A CLAUSE-FAMILY HEAD (Q-47, decided 2026-11-27), in Lean's
+            // order (`validateAlgorithmTree`): at most one collecting binder per pattern level, no
+            // collecting binder directly among the head's call arguments, no repeated name that
+            // includes one. A family has one fixed call arity; inside an argument, a sequence or
+            // list pattern collects under the ordinary rules and the one binder binds it. A
+            // host-built head that breaks a rule is refused here, before that binder sees it
+            // (FORMAL-07 research, October 2026): two collecting binders at one level made a short
+            // supply index out of range — a raw ArgumentOutOfRangeException escaped Evaluator.Run —
+            // and silently bound the second collector to ONE raw item otherwise; a collecting
+            // binder at the top of a head lost its kind in the single-clause flat-binder conversion
+            // and was ignored by zero-argument acceptance while the binder accepted an empty supply.
+            // A family without any collecting binder — the common one — is answered by the one
+            // scan it always had; the three rules run only when a head collects.
             if (checkConditionalBranchArities && AnyHeadHasBinderOfKind(algorithm.Branches, ParameterKind.Collecting))
             {
-                Violations.Add(new PreEvaluationAstViolation.CollectingClauseBinder());
-                if (stopAfterFirst)
-                    return;
+                if (AnyHead(algorithm.Branches, static (head, work) => head.HasMultipleCollectingLevel(work)))
+                {
+                    Violations.Add(new PreEvaluationAstViolation.MultipleCollectingCaptures());
+                    if (stopAfterFirst)
+                        return;
+                }
+
+                if (AnyHead(algorithm.Branches, static (head, work) => head.HeadHasDirectCollector(work)))
+                {
+                    Violations.Add(new PreEvaluationAstViolation.CollectingClauseBinder());
+                    if (stopAfterFirst)
+                        return;
+                }
+
+                if (AnyHead(algorithm.Branches, static (head, work) => head.HasRepeatedNameIncludingCollecting(work)))
+                {
+                    Violations.Add(new PreEvaluationAstViolation.RepeatedNameIncludesCollecting());
+                    if (stopAfterFirst)
+                        return;
+                }
             }
 
             // A clause binder is never META (CallReference S1): the parser refuses one in a clause
-            // family, and Lean's clause binders have no kind.
+            // family, and Lean's clause binder has no META kind.
             if (checkConditionalBranchArities && AnyHeadHasBinderOfKind(algorithm.Branches, ParameterKind.Meta))
             {
                 Violations.Add(new PreEvaluationAstViolation.MetaClauseBinder());
@@ -5755,6 +5905,19 @@ internal static class AlgorithmValidation
             {
                 work?.Step();
                 if (branch.Pattern.HeadHasBinderOfKind(kind, work))
+                    return true;
+            }
+
+            return false;
+        }
+
+        // One head rule over a family's branches, in branch order with the first answer winning.
+        private bool AnyHead(IReadOnlyList<CondBranch> branches, Func<Pattern, ValidationWork?, bool> rule)
+        {
+            foreach (var branch in branches)
+            {
+                work?.Step();
+                if (rule(branch.Pattern, work))
                     return true;
             }
 

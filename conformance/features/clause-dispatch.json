@@ -321,5 +321,230 @@
       }
     ],
     "explanation": "The repeated-name (patterned) callee shape does not change caller-side spread: `F(A*)` supplies two argument slots that must satisfy the repeated-bind equality, exactly like the flat callee `G(x, y)` would receive them. The unspread `F(A)` is one argument against two parameters."
+  },
+  {
+    "id": "family-list-pattern-collects-tail",
+    "category": "conditionals",
+    "source": "Tail([]) = []\nTail([head, *rest]) = rest\n\nTail(['a', ['b', 'c'], 'd'])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[[b, c], d]"
+      }
+    ],
+    "expectedRaw": "L[L['b', 'c'], 'd']",
+    "expectedEmittedCount": 1,
+    "probes": [
+      {
+        "source": "Tail([]) = []\nTail([head, *rest]) = rest\nTail([])",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Tail([]) = []\nTail([head, *rest]) = rest\nTail(['a'])",
+        "expectedNeutral": "ok raw=L[] n=1"
+      },
+      {
+        "source": "Tail([]) = []\nTail([head, *rest]) = rest\nTail([1 / 0, 'b'])",
+        "expectedNeutral": "ok raw=L['b'] n=1"
+      },
+      {
+        "source": "Tail([]) = []\nTail([head, *rest]) = rest\nTail(('a', 'b'))",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "Tail([]) = []\nTail([head, *rest]) = rest\nTail('a', 'b')",
+        "expectedNeutral": "err arity"
+      },
+      {
+        "source": "Tail([]) = []\nTail([head, *rest]) = rest\nTailArgs(*items) = Tail(items)\nTailArgs('a', 'b', 'c')",
+        "expectedNeutral": "ok raw=L['b', 'c'] n=1"
+      },
+      {
+        "source": "OrdinaryTail([head, *rest]) = rest\nOrdinaryTail(['a', ['b', 'c'], 'd'])",
+        "expectedNeutral": "ok raw=L[L['b', 'c'], 'd'] n=1"
+      }
+    ],
+    "includeInGeneratorPrompt": true,
+    "explanation": "A clause family has one fixed call arity, and inside any argument a list or sequence pattern may collect under the ordinary structural-pattern rules. Both `Tail` clauses consume exactly one argument: `[]` matches the empty list, and `[head, *rest]` a list of at least one element, with `rest` the exact list of the others (nested values stay elements). Adding the empty-list clause to the single-clause definition leaves the meaning of its nonempty-list pattern unchanged. `Tail(['a'])` collects an empty slice; binding the unused `head` leaves that list position undemanded, so `Tail([1 / 0, 'b'])` is `['b']`. `Tail(('a', 'b'))` supplies one argument that no list pattern matches (`NoMatchingBranch`), while `Tail('a', 'b')` supplies two and is the family call's `ArityMismatch` before any clause is tried. A caller that wants to gather separate arguments uses an ordinary entry point with a top-level collecting parameter."
+  },
+  {
+    "id": "literal-clause-sequence-pattern-collects-between-fixed-positions",
+    "category": "conditionals",
+    "source": "Payload(('packet', *fields, 'end')) = fields\n\nPayload(('packet', 10, [20, 30], 'end'))\nPayload(('packet', 'end'))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[10, [20, 30]]\n[]"
+      }
+    ],
+    "expectedRaw": "S[L[10, L[20, 30]], L[]]",
+    "expectedEmittedCount": 2,
+    "probes": [
+      {
+        "source": "Payload(('packet', *fields, 'end')) = fields\nPayload(('packet', 10, 'stop'))",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "Payload(('packet', *fields, 'end')) = fields\nPayload(('parcel', 10, 'end'))",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "Payload(('packet', *fields, 'end')) = fields\nPayload('packet')",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "Payload(('packet', *fields, 'end')) = fields\nPayload(['packet', 'end'])",
+        "expectedNeutral": "err branch"
+      },
+      {
+        "source": "Payload(('packet', *fields, 'end')) = fields\nPayload('packet', 10, 'end')",
+        "expectedNeutral": "err arity"
+      }
+    ],
+    "explanation": "A single clause whose head holds a literal is a clause family. Its sequence pattern consumes ONE argument however many elements go into `fields`: the fixed positions bind from both ends and the collector takes the exact middle as one list, possibly empty. The wrong closing or opening literal, too few elements, a list, or a scalar is a non-match (`NoMatchingBranch`); three separate arguments are the family call's `ArityMismatch`."
+  },
+  {
+    "id": "family-direct-collector-is-invalid",
+    "category": "conditionals",
+    "source": "F(0, 0) = 0\nF(head, *rest) = rest\nF(1, 2)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidCollectingBinding",
+    "expectedParseDiagnosticFragment": "has one fixed call arity, so a collecting binding cannot stand directly among its call arguments",
+    "probes": [
+      {
+        "source": "F(head, *rest) = rest\nF(1, 2, 3)",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      },
+      {
+        "source": "Only(*xs) = xs\nOnly, Only(), Only(1)",
+        "expectedNeutral": "ok raw=S[L[], L[], L[1]] n=3"
+      },
+      {
+        "source": "F(0, 0) = 0\nF([head, *rest], x) = rest\nF([1, 2, 3], 0)",
+        "expectedNeutral": "ok raw=L[2, 3] n=1"
+      }
+    ],
+    "explanation": "A collecting binding directly among a clause family's call arguments would make the family's call arity variable, so it is rejected at parse time, in a family of several clauses and (see `literal-clause-direct-collector-is-invalid`) in a single literal-bearing clause. The whole same-name group is classified first: a single literal-free clause such as `F(head, *rest)` or `Only(*xs)` is an ordinary algorithm and keeps its top-level collecting parameter. Inside an argument, a list or sequence pattern collects normally."
+  },
+  {
+    "id": "literal-clause-direct-collector-is-invalid",
+    "category": "conditionals",
+    "source": "F(0, *rest) = rest\nF(0, 1)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidCollectingBinding",
+    "expectedParseDiagnosticFragment": "Clause family 'F' has one fixed call arity",
+    "probes": [
+      {
+        "source": "F((0, *rest)) = rest\nF((0, 1, 2))",
+        "expectedNeutral": "ok raw=L[1, 2] n=1"
+      },
+      {
+        "source": "F([0, *rest]) = rest\nF([0])",
+        "expectedNeutral": "ok raw=L[] n=1"
+      }
+    ],
+    "explanation": "A literal anywhere in its head makes a single clause a clause family, so its top-level `*rest` is a collector directly among a family's call arguments and is rejected. The same collector written inside a sequence or list pattern of ONE argument is valid."
+  },
+  {
+    "id": "family-nested-collectors-keep-one-per-level",
+    "category": "conditionals",
+    "source": "F([]) = 0\nF([*a, *b]) = 1\nF([1])",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidCollectingBinding",
+    "expectedParseDiagnosticFragment": "Only one collecting binding is allowed per pattern level",
+    "probes": [
+      {
+        "source": "F(0) = 0\nF([*a, (x, *b)]) = [a, x, b]\nF([1, 2, (3, 4, 5)])",
+        "expectedNeutral": "ok raw=L[L[1, 2], 3, L[4, 5]] n=1"
+      },
+      {
+        "source": "F(0, 0) = 0\nF([a, *as], (b, *bs)) = [a, as, b, bs]\nF([1, 2], (3, 4, 5))",
+        "expectedNeutral": "ok raw=L[1, L[2], 3, L[4, 5]] n=1"
+      }
+    ],
+    "explanation": "Inside a clause family's patterns the ordinary collector rule holds: each pattern level (the item list of one sequence or list pattern) contains at most one collecting binding. Collectors at different levels, and in different arguments, are each their own level."
+  },
+  {
+    "id": "family-collector-name-is-never-repeated",
+    "category": "conditionals",
+    "source": "F([]) = 0\nF([x, *x]) = 1\nF([1])",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "InvalidCollectingBinding",
+    "expectedParseDiagnosticFragment": "Repeated parameter names cannot include collecting bindings",
+    "probes": [
+      {
+        "source": "F([]) = 'empty'\nF([x, x, *rest]) = rest\nF(other) = 'other'\nF([1, 1, 2]), F([1, 2, 3])",
+        "expectedNeutral": "ok raw=S[L[2], 'other'] n=2"
+      },
+      {
+        "source": "F([]) = 0\nF([x, *rest]) = rest.count\nF((x, *rest)) = 10 + rest.count\nF([1, 2, 3]), F((1, 2, 3))",
+        "expectedNeutral": "ok raw=S[2, 12] n=2"
+      }
+    ],
+    "explanation": "A name bound by a collecting binding is never repeated elsewhere in its clause head, at any depth. A repeated FIXED name stays an equality constraint beside a collector of another name, and the same collector name in different clauses is unrelated: a binder belongs to its own branch."
+  },
+  {
+    "id": "family-collecting-heads-fixed-and-collecting-are-distinct",
+    "category": "conditionals",
+    "source": "K([x]) = 'one'\nK([*xs]) = 'any'\n\nK([1])\nK([])\nK([1, 2])",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "one\nany\nany"
+      }
+    ],
+    "expectedRaw": "S['one', 'any', 'any']",
+    "expectedEmittedCount": 3,
+    "probes": [
+      {
+        "source": "K([*xs]) = 'any'\nK([x]) = 'one'\nK([1]), K([]), K([1, 2])",
+        "expectedNeutral": "ok raw=S['any', 'any', 'any'] n=3"
+      },
+      {
+        "source": "K([x, *r]) = 'first'\nK([*r, x]) = 'last'\nK((x, *r)) = 'seq'\nK([1]), K((1, 2))",
+        "expectedNeutral": "ok raw=S['first', 'seq'] n=2"
+      }
+    ],
+    "explanation": "`[x]` and `[*xs]` are different heads: the first matches a one-element list, the second every list, and written order decides a value both match. The collecting flag, the collector's position and the structural kind are all part of a head's shape, so none of these families is a duplicate."
+  },
+  {
+    "id": "family-renamed-collecting-heads-are-duplicates",
+    "category": "conditionals",
+    "source": "F([head, *rest]) = 1\nF([first, *others]) = 2\nF([1])",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "DuplicateBranchPattern",
+    "explanation": "Two clause heads that differ only by a consistent renaming of their binders are duplicates, collecting binders included: `[head, *rest]` and `[first, *others]` match exactly the same values."
+  },
+  {
+    "id": "family-nested-collector-fallback-and-demand",
+    "category": "conditionals",
+    "source": "Deep(('pair', [x, (first, *others)])) = others\nDeep((tag, [x, *more])) = more\nDeep(other) = 'fallback'\n\nDeep(('pair', [1, (2, 3, 4)]))\nDeep(('other', [1, (2, 3)]))\nDeep(('pair', [1, 2, 3]))\nDeep(('pair', 7))\nDeep(('none', [1 / 0, 9]))",
+    "outcome": "Evaluates",
+    "displayChecks": [
+      {
+        "text": "[3, 4]\n[(2, 3)]\n[2, 3]\nfallback\n[9]"
+      }
+    ],
+    "expectedRaw": "S[L[3, 4], L[S[2, 3]], L[2, 3], 'fallback', L[9]]",
+    "expectedEmittedCount": 5,
+    "probes": [
+      {
+        "source": "Lit([0, *rest]) = rest\nLit(other) = 'other'\nLit([0, 2, 3]), Lit([1, 2])",
+        "expectedNeutral": "ok raw=S[L[2, 3], 'other'] n=2"
+      },
+      {
+        "source": "Lit([0, *rest]) = rest\nLit(other) = 'other'\nLit([1 / 0, 2])",
+        "expectedNeutral": "err div0"
+      },
+      {
+        "source": "Size([0, *rest]) = rest.count\nSize(other) = -1\nSize([0, 1 / 0, 1 / 0])",
+        "expectedNeutral": "ok raw=2 n=1"
+      },
+      {
+        "source": "Deep(('pair', [x, (first, *others)])) = others\nDeep((tag, [x, *more])) = more\nDeep(other) = 'fallback'\nDeep((1 / 0, [1, 2]))",
+        "expectedNeutral": "err div0"
+      }
+    ],
+    "explanation": "A collector may stand below a second structural level, and the clauses are tried in written order over the same argument. A clause whose literal, kind or length does not match is skipped and the next one is tried; the catch-all takes what no structural clause matches. Matching demands only what a pattern inspects: a list position that a plain name or the collector takes stays unread (`Deep(('none', [1 / 0, 9]))`, and `rest.count` in `Size`), while a position a literal inspects is demanded, and its failure aborts dispatch instead of falling through to a later clause."
   }
 ]

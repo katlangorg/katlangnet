@@ -102,10 +102,11 @@ theorem parameterPatternsOf?_eq_mapM : (ps : List Pattern) →
       simp only [Pattern.parameterPatternsOf?, List.mapM_cons, parameterPatternsOf?_eq_mapM rest]
       rfl
 
-/-- `parameterPattern?` satisfies the former `partial` recurrence, constructor by constructor. -/
+/-- `parameterPattern?` satisfies the former `partial` recurrence, constructor by constructor;
+    since Q-47 a binder carries its collecting flag, which the capture keeps as its kind. -/
 theorem parameterPattern?_old_recurrence (p : Pattern) :
     p.parameterPattern? = match p with
-      | .bind x => some (.capture { name := x })
+      | .bind x collecting => some (.capture { name := x, kind := if collecting then .collecting else .normal })
       | .sequenceValue ps => do
           let patterns <- ps.mapM Pattern.parameterPattern?
           some (.sequenceValue patterns)
@@ -119,7 +120,7 @@ theorem parameterPattern?_old_recurrence (p : Pattern) :
     argument list, never wrapped; a top-level list pattern is ONE structural argument). -/
 theorem plainClauseParameterPatterns?_old_body (p : Pattern) :
     p.plainClauseParameterPatterns? = match p with
-      | .bind x => some [.capture { name := x }]
+      | .bind x collecting => some [.capture { name := x, kind := if collecting then .collecting else .normal }]
       | .sequenceValue ps => ps.mapM Pattern.parameterPattern?
       | .listValue ps => (Pattern.parameterPattern? (.listValue ps)).map (fun pattern => [pattern])
       | _ => none := by
@@ -153,9 +154,9 @@ mutual
       conversion is the clause's own need pattern (kind, nesting and order preserved). -/
   theorem parameterPattern?_ofParameter : (p : Pattern) → (q : ParameterPattern) →
       p.parameterPattern? = some q → NeedPattern.ofParameter q = NeedPattern.ofClause p
-    | .bind x, q, h => by
+    | .bind x collecting, q, h => by
         simp only [Pattern.parameterPattern?, Option.some.injEq] at h
-        subst h; simp [NeedPattern.ofParameter, NeedPattern.ofClause]
+        subst h; cases collecting <;> simp [NeedPattern.ofParameter, NeedPattern.ofClause]
     | .litInt _, _, h => by simp [Pattern.parameterPattern?] at h
     | .litString _, _, h => by simp [Pattern.parameterPattern?] at h
     | .litBool _, _, h => by simp [Pattern.parameterPattern?] at h
@@ -188,7 +189,7 @@ mutual
       exactly when it contains no literal at any depth. -/
   theorem parameterPattern?_isSome : (p : Pattern) →
       (p.parameterPattern?).isSome = (NeedPattern.ofClause p).literalFree
-    | .bind _ => by simp [Pattern.parameterPattern?, NeedPattern.ofClause, NeedPattern.literalFree]
+    | .bind _ _ => by simp [Pattern.parameterPattern?, NeedPattern.ofClause, NeedPattern.literalFree]
     | .litInt _ => by simp [Pattern.parameterPattern?, NeedPattern.ofClause, NeedPattern.literalFree]
     | .litString _ => by simp [Pattern.parameterPattern?, NeedPattern.ofClause, NeedPattern.literalFree]
     | .litBool _ => by simp [Pattern.parameterPattern?, NeedPattern.ofClause, NeedPattern.literalFree]
@@ -220,9 +221,9 @@ theorem plain_clause_head_is_the_need_head (p : Pattern) (qs : List ParameterPat
     (h : p.plainClauseParameterPatterns? = some qs) :
     qs.map NeedPattern.ofParameter = needClauseHead p := by
   cases p with
-  | bind x =>
+  | bind x collecting =>
       simp only [Pattern.plainClauseParameterPatterns?, Option.some.injEq] at h
-      subst h; simp [NeedPattern.ofParameter, NeedPattern.ofClause, needClauseHead]
+      subst h; cases collecting <;> simp [NeedPattern.ofParameter, NeedPattern.ofClause, needClauseHead]
   | sequenceValue ps =>
       exact parameterPatternsOf?_ofParameter ps qs h
   | listValue ps =>
@@ -238,7 +239,7 @@ theorem plain_clause_eligible_iff (p : Pattern) :
     (p.plainClauseParameterPatterns?).isSome
       = BinderCorrespondence.literalFreeList (needClauseHead p) := by
   cases p with
-  | bind _ => simp [Pattern.plainClauseParameterPatterns?, needClauseHead, NeedPattern.ofClause, NeedPattern.literalFree, BinderCorrespondence.literalFreeList]
+  | bind _ _ => simp [Pattern.plainClauseParameterPatterns?, needClauseHead, NeedPattern.ofClause, NeedPattern.literalFree, BinderCorrespondence.literalFreeList]
   | litInt _ => simp [Pattern.plainClauseParameterPatterns?, needClauseHead, NeedPattern.ofClause, NeedPattern.literalFree, BinderCorrespondence.literalFreeList]
   | litString _ => simp [Pattern.plainClauseParameterPatterns?, needClauseHead, NeedPattern.ofClause, NeedPattern.literalFree, BinderCorrespondence.literalFreeList]
   | litBool _ => simp [Pattern.plainClauseParameterPatterns?, needClauseHead, NeedPattern.ofClause, NeedPattern.literalFree, BinderCorrespondence.literalFreeList]
@@ -250,14 +251,80 @@ theorem plain_clause_eligible_iff (p : Pattern) :
       exact this
 
 mutual
+  /-- The captures a clause pattern's binders declare, in written order, repeated names kept:
+      a fixed binder an ordinary capture, a collecting binder a collecting one (Q-47). A
+      literal declares none. -/
+  def clauseCaptures : Pattern → List CallableParameter
+    | .bind x collecting => [{ name := x, kind := if collecting then .collecting else .normal }]
+    | .litInt _ => []
+    | .litString _ => []
+    | .litBool _ => []
+    | .sequenceValue ps => clauseCapturesOfList ps
+    | .listValue ps => clauseCapturesOfList ps
+
+  def clauseCapturesOfList : List Pattern → List CallableParameter
+    | [] => []
+    | p :: ps => clauseCaptures p ++ clauseCapturesOfList ps
+end
+
+mutual
+  /-- The declared captures are named by the pattern's binders, in order. -/
+  theorem clauseCaptures_names : (p : Pattern) →
+      (clauseCaptures p).map CallableParameter.name = p.boundNames
+    | .bind _ _ => by simp [clauseCaptures, Pattern.boundNames]
+    | .litInt _ => by simp [clauseCaptures, Pattern.boundNames]
+    | .litString _ => by simp [clauseCaptures, Pattern.boundNames]
+    | .litBool _ => by simp [clauseCaptures, Pattern.boundNames]
+    | .sequenceValue ps => by
+        simp only [clauseCaptures, Pattern.boundNames]; exact clauseCapturesOfList_names ps
+    | .listValue ps => by
+        simp only [clauseCaptures, Pattern.boundNames]; exact clauseCapturesOfList_names ps
+
+  theorem clauseCapturesOfList_names : (ps : List Pattern) →
+      (clauseCapturesOfList ps).map CallableParameter.name = ps.flatMap Pattern.boundNames
+    | [] => rfl
+    | p :: ps => by
+        simp only [clauseCapturesOfList, List.map_append, List.flatMap_cons, clauseCaptures_names p,
+          clauseCapturesOfList_names ps]
+end
+
+mutual
+  /-- A clause binder is never META: its captures are fixed or collecting only. -/
+  theorem clauseCaptures_never_meta : (p : Pattern) →
+      ∀ parameter ∈ clauseCaptures p, parameter.kind ≠ ParameterKind.metaRef
+    | .bind _ collecting => by
+        intro parameter h
+        simp only [clauseCaptures, List.mem_singleton] at h
+        subst h; cases collecting <;> simp
+    | .litInt _ => by simp [clauseCaptures]
+    | .litString _ => by simp [clauseCaptures]
+    | .litBool _ => by simp [clauseCaptures]
+    | .sequenceValue ps => by
+        simp only [clauseCaptures]; exact clauseCapturesOfList_never_meta ps
+    | .listValue ps => by
+        simp only [clauseCaptures]; exact clauseCapturesOfList_never_meta ps
+
+  theorem clauseCapturesOfList_never_meta : (ps : List Pattern) →
+      ∀ parameter ∈ clauseCapturesOfList ps, parameter.kind ≠ ParameterKind.metaRef
+    | [] => by simp [clauseCapturesOfList]
+    | p :: ps => by
+        intro parameter h
+        simp only [clauseCapturesOfList, List.mem_append] at h
+        rcases h with h | h
+        · exact clauseCaptures_never_meta p parameter h
+        · exact clauseCapturesOfList_never_meta ps parameter h
+end
+
+mutual
   /-- CAPTURE ORDER AND KIND: a converted pattern's captures are the clause's binders in
-      written order, repeated names kept, every one an ordinary (non-collecting, non-META)
-      capture. -/
+      written order, repeated names kept, each with its own kind — a fixed binder an ordinary
+      capture, a collecting binder a collecting capture, never a META one
+      (`clauseCaptures_never_meta`). -/
   theorem parameterPattern?_captures : (p : Pattern) → (q : ParameterPattern) →
-      p.parameterPattern? = some q → q.captures = p.boundNames.map (fun x => { name := x })
-    | .bind x, q, h => by
+      p.parameterPattern? = some q → q.captures = clauseCaptures p
+    | .bind x collecting, q, h => by
         simp only [Pattern.parameterPattern?, Option.some.injEq] at h
-        subst h; simp [ParameterPattern.captures, Pattern.boundNames]
+        subst h; simp [ParameterPattern.captures, clauseCaptures]
     | .litInt _, _, h => by simp [Pattern.parameterPattern?] at h
     | .litString _, _, h => by simp [Pattern.parameterPattern?] at h
     | .litBool _, _, h => by simp [Pattern.parameterPattern?] at h
@@ -265,16 +332,16 @@ mutual
         simp only [Pattern.parameterPattern?, Option.bind_eq_bind, Option.bind_eq_some_iff,
           Option.some.injEq] at h
         obtain ⟨qs, hqs, rfl⟩ := h
-        simp only [ParameterPattern.captures, Pattern.boundNames, parameterPatternsOf?_captures ps qs hqs]
+        simp only [ParameterPattern.captures, clauseCaptures, parameterPatternsOf?_captures ps qs hqs]
     | .listValue ps, q, h => by
         simp only [Pattern.parameterPattern?, Option.bind_eq_bind, Option.bind_eq_some_iff,
           Option.some.injEq] at h
         obtain ⟨qs, hqs, rfl⟩ := h
-        simp only [ParameterPattern.captures, Pattern.boundNames, parameterPatternsOf?_captures ps qs hqs]
+        simp only [ParameterPattern.captures, clauseCaptures, parameterPatternsOf?_captures ps qs hqs]
 
   theorem parameterPatternsOf?_captures : (ps : List Pattern) → (qs : List ParameterPattern) →
       Pattern.parameterPatternsOf? ps = some qs →
-        ParameterPattern.capturesOfList qs = (ps.flatMap Pattern.boundNames).map (fun x => { name := x })
+        ParameterPattern.capturesOfList qs = clauseCapturesOfList ps
     | [], qs, h => by
         simp only [Pattern.parameterPatternsOf?, Option.some.injEq] at h
         subst h; rfl
@@ -283,7 +350,7 @@ mutual
           Option.some.injEq] at h
         obtain ⟨q, hq, qs', hqs', rfl⟩ := h
         simp only [ParameterPattern.capturesOfList, parameterPattern?_captures p q hq,
-          parameterPatternsOf?_captures rest qs' hqs', List.flatMap_cons, List.map_append]
+          parameterPatternsOf?_captures rest qs' hqs', clauseCapturesOfList]
 end
 
 /-- The names an eligible sole clause head declares are its binders in written order. -/
@@ -292,17 +359,18 @@ theorem plainClauseParamNames?_eq_boundNames (p : Pattern) (names : List Ident)
   simp only [Pattern.plainClauseParamNames?, Option.map_eq_some_iff] at h
   obtain ⟨qs, hqs, rfl⟩ := h
   cases p with
-  | bind x =>
+  | bind x collecting =>
       simp only [Pattern.plainClauseParameterPatterns?, Option.some.injEq] at hqs
       subst hqs; simp [ParameterPattern.captures, Pattern.boundNames]
   | sequenceValue ps =>
       simp only [Pattern.plainClauseParameterPatterns?] at hqs
-      rw [← capturesOfList_eq_flatMap, parameterPatternsOf?_captures ps qs hqs]
-      simp [Pattern.boundNames, Function.comp_def]
+      rw [← capturesOfList_eq_flatMap, parameterPatternsOf?_captures ps qs hqs,
+        clauseCapturesOfList_names]
+      simp [Pattern.boundNames]
   | listValue ps =>
       simp only [Pattern.plainClauseParameterPatterns?, Option.map_eq_some_iff] at hqs
       obtain ⟨q, hq, rfl⟩ := hqs
-      simp [parameterPattern?_captures _ q hq, Function.comp_def]
+      simp [parameterPattern?_captures _ q hq, clauseCaptures_names]
   | litInt _ => simp [Pattern.plainClauseParameterPatterns?] at hqs
   | litString _ => simp [Pattern.plainClauseParameterPatterns?] at hqs
   | litBool _ => simp [Pattern.plainClauseParameterPatterns?] at hqs
@@ -471,13 +539,21 @@ theorem matchPatternInto_listValue (ps : List Pattern) (r : Result) (env : ValEn
       = matchStructureInto ps (patternStructureMembers? (Result.listPatternItems? r) ps.length) env := by
   simp only [matchPatternInto, matchStructureInto]
 
-/-- `matchPatternInto` satisfies its former `partial` body, constructor by constructor. -/
+/-- A COLLECTING binder is no value pattern (Q-47): it stands for a slice of its level, which
+    only the need binder allocates, so the value matcher matches nothing with it. -/
+theorem matchPatternInto_collecting (x : Ident) (r : Result) (env : ValEnv) :
+    matchPatternInto (.bind x true) r env = none := by
+  rfl
+
+/-- `matchPatternInto` satisfies its former `partial` body, constructor by constructor; the
+    collecting binder, which that body did not have, matches nothing. -/
 theorem matchPatternInto_old_recurrence (p : Pattern) (r : Result) (env : ValEnv) :
     matchPatternInto p r env = match p with
-      | .bind x =>
+      | .bind x false =>
           match env.lookup x with
           | some existing => if existing == r then some env else none
           | none => some (env ++ [(x, r)])
+      | .bind _ true => none
       | .litInt n => match r with
           | .atom v => if v = n then some env else none
           | _ => none
@@ -492,6 +568,7 @@ theorem matchPatternInto_old_recurrence (p : Pattern) (r : Result) (env : ValEnv
   cases p with
   | sequenceValue ps => exact matchPatternInto_sequenceValue ps r env
   | listValue ps => exact matchPatternInto_listValue ps r env
+  | bind x collecting => cases collecting <;> rfl
   | _ => rfl
 
 theorem matchStructureInto_none (ps : List Pattern) (env : ValEnv) :
@@ -616,7 +693,9 @@ mutual
       once, for every incoming environment. -/
   theorem matchPatternInto_appends : (p : Pattern) → (r : Result) → (env out : ValEnv) →
       matchPatternInto p r env = some out → Appends env out
-    | .bind x, r, env, out, h => by
+    | .bind x true, r, env, out, h => by
+        rw [matchPatternInto_collecting] at h; cases h
+    | .bind x false, r, env, out, h => by
         rw [matchPatternInto_bind] at h
         cases hl : env.lookup x with
         | some existing =>
@@ -706,6 +785,22 @@ section Renaming
 open Pattern
 
 /-! ### The seeded equations -/
+
+/-- THE COLLECTING FLAG IS PART OF THE SHAPE (Q-47): two binders are compared only when both
+    are fixed or both collecting; then the comparison is the fixed binders' own. `[x]` and
+    `[*xs]` are therefore never duplicates, whatever the names. -/
+theorem equiv_bind_flags (left right : Ident) (leftCollecting rightCollecting : Bool)
+    (pairs : List (Ident × Ident)) :
+    matchEquivalentWithRenaming (.bind left leftCollecting) (.bind right rightCollecting) pairs
+      = if leftCollecting = rightCollecting
+        then matchEquivalentWithRenaming (.bind left) (.bind right) pairs else none := by
+  cases leftCollecting <;> cases rightCollecting <;> simp [matchEquivalentWithRenaming]
+
+/-- A fixed binder and a collecting one are never match-equivalent, in either order. -/
+theorem equiv_bind_fixed_collecting (left right : Ident) (pairs : List (Ident × Ident)) :
+    matchEquivalentWithRenaming (.bind left) (.bind right true) pairs = none
+    ∧ matchEquivalentWithRenaming (.bind left true) (.bind right) pairs = none := by
+  constructor <;> simp [matchEquivalentWithRenaming]
 
 /-- A left binder already in the table must meet its recorded right name. -/
 theorem equiv_bind_known (left right existing : Ident) (pairs : List (Ident × Ident))
@@ -849,9 +944,9 @@ def Sub (t m : List (Ident × Ident)) : Prop := ∀ e ∈ t, e ∈ m
 
 mutual
   /-- Rename every binder of a pattern through a table (a binder without an entry keeps its
-      name); literals, kinds, lengths and nesting are untouched. -/
+      name); literals, kinds, lengths, nesting and every binder's collecting flag are untouched. -/
   def renameWith (t : List (Ident × Ident)) : Pattern → Pattern
-    | .bind x => .bind ((binderRenaming? x t).getD x)
+    | .bind x collecting => .bind ((binderRenaming? x t).getD x) collecting
     | .litInt n => .litInt n
     | .litString s => .litString s
     | .litBool b => .litBool b
@@ -866,7 +961,7 @@ end
 mutual
   /-- The table has an entry for every binder of the pattern. -/
   def Covers (t : List (Ident × Ident)) : Pattern → Prop
-    | .bind x => (binderRenaming? x t).isSome = true
+    | .bind x _ => (binderRenaming? x t).isSome = true
     | .litInt _ => True
     | .litString _ => True
     | .litBool _ => True
@@ -911,9 +1006,11 @@ theorem extends_trans {a b c : List (Ident × Ident)} (h1 : Extends a b) (h2 : E
 mutual
   theorem equiv_extends : (p q : Pattern) → (t out : List (Ident × Ident)) →
       matchEquivalentWithRenaming p q t = some out → Extends t out
-    | .bind l, q, t, out, h => by
+    | .bind l lc, q, t, out, h => by
         cases q <;> simp only [matchEquivalentWithRenaming, reduceCtorEq] at h
-        rename_i r
+        rename_i r rc
+        split at h
+        · cases h
         cases hl : binderRenaming? l t with
         | some e =>
             simp only [hl] at h
@@ -976,9 +1073,11 @@ mutual
   /-- A success from a well-formed table returns a well-formed (injective) table. -/
   theorem equiv_wf : (p q : Pattern) → (t out : List (Ident × Ident)) → RenamingWF t →
       matchEquivalentWithRenaming p q t = some out → RenamingWF out
-    | .bind l, q, t, out, hwf, h => by
+    | .bind l lc, q, t, out, hwf, h => by
         cases q <;> simp only [matchEquivalentWithRenaming, reduceCtorEq] at h
-        rename_i r
+        rename_i r rc
+        split at h
+        · cases h
         cases hl : binderRenaming? l t with
         | some e =>
             simp only [hl] at h
@@ -1052,9 +1151,14 @@ mutual
   theorem equiv_sound : (p q : Pattern) → (t out : List (Ident × Ident)) →
       matchEquivalentWithRenaming p q t = some out →
       ∀ m, RenamingWF m → Sub out m → renameWith m p = q ∧ Covers m p
-    | .bind l, q, t, out, h, m, hwf, hs => by
+    | .bind l lc, q, t, out, h, m, hwf, hs => by
         cases q <;> simp only [matchEquivalentWithRenaming, reduceCtorEq] at h
-        rename_i r
+        rename_i r rc
+        split at h
+        · cases h
+        rename_i hflag
+        have hflag : lc = rc := by simpa using hflag
+        subst hflag
         have key : binderRenaming? l m = some r := by
           cases hl : binderRenaming? l t with
           | some e =>
@@ -1120,7 +1224,7 @@ mutual
   theorem equiv_complete : (p : Pattern) → (t m : List (Ident × Ident)) → RenamingWF m →
       Covers m p → Sub t m →
       ∃ out, matchEquivalentWithRenaming p (renameWith m p) t = some out ∧ Sub out m
-    | .bind l, t, m, hwf, hc, hs => by
+    | .bind l lc, t, m, hwf, hc, hs => by
         simp only [Covers, Option.isSome_iff_exists] at hc
         obtain ⟨r, hr⟩ := hc
         simp only [renameWith, hr, Option.getD_some]
@@ -1206,7 +1310,7 @@ def IdTable (t : List (Ident × Ident)) : Prop := ∀ e ∈ t, e.1 = e.2
 mutual
   theorem equiv_refl_aux : (p : Pattern) → (t : List (Ident × Ident)) → IdTable t →
       ∃ out, matchEquivalentWithRenaming p p t = some out ∧ IdTable out
-    | .bind x, t, ht => by
+    | .bind x xc, t, ht => by
         cases hl : binderRenaming? x t with
         | some e =>
             have he : x = e := ht _ (binderRenaming?_mem hl)
@@ -1264,7 +1368,7 @@ mutual
   /-- Renaming back through the inverse table restores the pattern. -/
   theorem rename_swap : (p : Pattern) → (m : List (Ident × Ident)) → RenamingWF m → Covers m p →
       Covers (swapTable m) (renameWith m p) ∧ renameWith (swapTable m) (renameWith m p) = p
-    | .bind x, m, hwf, hc => by
+    | .bind x xc, m, hwf, hc => by
         simp only [Covers, Option.isSome_iff_exists] at hc
         obtain ⟨y, hy⟩ := hc
         have hmem : (y, x) ∈ swapTable m := List.mem_map.2 ⟨(x, y), binderRenaming?_mem hy, rfl⟩

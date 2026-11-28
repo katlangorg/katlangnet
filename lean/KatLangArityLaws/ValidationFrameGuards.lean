@@ -70,7 +70,7 @@ def hostOnAlgorithm : Expr := .algorithmExpr ((alg [] [] [] [.num 1]).withDeclar
 -- hostIncoherent
 def hostReused : Expr := twoOpened (hostAt 0 [pShared]) (hostAt 0)
 #guard refuses hostReused (.illegalInEval (hostProvenanceIncoherentMessage 0))
--- illegal: the five fixed messages
+-- illegal: the six fixed messages
 def singletonPattern : Expr :=
   holding [privateProp "Bad" (algWithParameterPatterns [.sequenceValue [cap "x"]] [] [] [param "x"])]
 #guard refuses singletonPattern (.illegalInEval singletonSequencePatternMessage)
@@ -86,6 +86,32 @@ def nestedMeta : Expr :=
 def aliasLoop : Expr :=
   holding [privateProp "X" (.alias none [] [] (resolve "Y")), privateProp "Y" (.alias none [] [] (resolve "X"))]
 #guard refuses aliasLoop (.illegalInEval aliasCycleMessage)
+-- A clause family (Q-47): a collector directly among its call arguments, in a single
+-- literal-bearing clause and in a family of several; nested, the two collector rules of every signature.
+def familyDirectCollector : Expr := holding [privateProp "Bad" (.conditional none [] [
+  ⟨ .sequenceValue [.litInt 0, .bind "rest" true], alg [] [] [] [num 1] ⟩])]
+#guard refuses familyDirectCollector (.illegalInEval familyDirectCollectorMessage)
+def familyLoneCollector : Expr := holding [privateProp "Bad" (.conditional none [] [
+  ⟨ .litInt 0, alg [] [] [] [num 1] ⟩,
+  ⟨ .bind "xs" true, alg [] [] [] [num 2] ⟩])]
+#guard refuses familyLoneCollector (.illegalInEval familyDirectCollectorMessage)
+def familyTwoNestedCollectors : Expr := holding [privateProp "Bad" (.conditional none [] [
+  ⟨ .sequenceValue [.listValue []], alg [] [] [] [num 1] ⟩,
+  ⟨ .sequenceValue [.listValue [.bind "a" true, .bind "b" true]], alg [] [] [] [num 2] ⟩])]
+#guard refuses familyTwoNestedCollectors (.illegalInEval multipleCollectingBindingsPerLevelMessage)
+def familyRepeatedCollector : Expr := holding [privateProp "Bad" (.conditional none [] [
+  ⟨ .sequenceValue [.listValue []], alg [] [] [] [num 1] ⟩,
+  ⟨ .sequenceValue [.listValue [.bind "x", .bind "x" true]], alg [] [] [] [num 2] ⟩])]
+#guard refuses familyRepeatedCollector (.illegalInEval repeatedNameIncludesCollectingMessage)
+-- One collector per level comes first: two direct collectors report the level rule.
+def familyTwoDirectCollectors : Expr := holding [privateProp "Bad" (.conditional none [] [
+  ⟨ .sequenceValue [.bind "a" true, .bind "b" true], alg [] [] [] [num 1] ⟩])]
+#guard refuses familyTwoDirectCollectors (.illegalInEval multipleCollectingBindingsPerLevelMessage)
+-- A collector inside a list or sequence pattern of an argument is admitted.
+def familyNestedCollector : Expr := holding [privateProp "Tail" (.conditional none [] [
+  ⟨ .sequenceValue [.listValue []], alg [] [] [] [.listLiteral []] ⟩,
+  ⟨ .sequenceValue [.listValue [.bind "head", .bind "rest" true]], alg [] [] [] [param "rest"] ⟩])]
+#guard accepts familyNestedCollector
 -- aliasTarget
 def numberAlias : Expr := holding [privateProp "Bad" (.alias none [] [] (num 1))]
 #guard refuses numberAlias (.illegalInEval (aliasTargetNotStaticPathMessage "(num)"))

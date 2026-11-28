@@ -80,6 +80,19 @@
 --   binding for higher-order arguments, while true conditional algorithms keep
 --   their full-input-specification and whole-argument matching semantics.
 --
+--   Collecting bindings in a clause family (Q-47, decided 2026-11-27): A CLAUSE
+--   FAMILY HAS ONE FIXED CALL ARITY, and within any argument a list or sequence
+--   pattern may contain collecting bindings under the ordinary structural-
+--   pattern rules. `Tail([head, *rest])` inspects ONE list argument and
+--   `Tail((head, *rest))` ONE sequence argument, in a single literal-bearing
+--   clause and in a family of several clauses alike (`Pattern.bind name true`,
+--   bound by the one need binder as in an ordinary head, `NeedPattern.ofClause`).
+--   A collector DIRECTLY among a family's call arguments — `F(head, *rest)`,
+--   `F(*xs)` — is invalid (`Pattern.headHasDirectCollector`; the C# parser
+--   reports `InvalidCollectingBinding`). The whole same-name group is classified
+--   first, so a single literal-free clause keeps its top-level collecting
+--   parameters as an ordinary algorithm.
+--
 -- Structural patterns (September 2026): STRUCTURAL PATTERN DELIMITERS SELECT
 --   THE VALUE KIND THEY DESTRUCTURE. In both pattern languages a
 --   parenthesized structural pattern `(p1, …, pn)` (`sequenceValue`) matches
@@ -500,8 +513,9 @@ namespace ParameterPattern
       TOP-LEVEL capture of a parameter list whose name occurs ONCE in that list — never a
       capture inside a sequence, list or unpacking pattern, and never a repeated name. A
       META capture is fixed by construction (`ParameterKind.metaRef` is not `collecting`). Clause
-      families cannot carry META at all: Lean's clause binder `Pattern.bind` has no kind, and
-      the C# front end and preflight reject a META clause binder. `none` for a valid list.
+      families cannot carry META at all: Lean's clause binder `Pattern.bind` has no META kind (it
+      carries only its collecting flag), and the C# front end and preflight reject a META clause
+      binder. `none` for a valid list.
       C#: `ParameterPattern.FindMetaViolation`. -/
   def metaViolation? (patterns : List ParameterPattern) : Option Ident :=
     match patterns.find? hasNestedMeta with
@@ -1007,6 +1021,17 @@ def builtinArityError (b : Builtin) (actual : Nat) : Error :=
     parameter patterns. Conditional patterns match against Result values at
     call time.
     - `bind x`: matches any Result and binds it to name `x`
+    - `bind x true` (`*x`, a COLLECTING binder): an item of a structural pattern
+      that collects, as one exact list, the elements its level's fixed patterns
+      leave over (VAR-01, VAR-02; the allocation is the need binder's,
+      `needLevelSources`). It is valid inside a sequence or list pattern only:
+      directly among a clause family's call arguments it is invalid
+      (`headHasDirectCollector`), and a single literal-free clause that carries
+      one there is an ordinary algorithm with a collecting parameter
+      (`parameterPattern?`). At most one per pattern level, and its name is
+      never repeated (`hasMultipleCollectingLevel`,
+      `hasRepeatedNameIncludingCollecting`). C#: a `Pattern.Bind` whose
+      `ParameterKind` is `Collecting`.
     - `litInt n`: matches only `Result.atom n`
     - `litBool b`: matches only `Result.bool b` (the reserved literals `true` /
       `false` in a clause head; a Boolean is never a number, so `F(1)` and
@@ -1014,12 +1039,16 @@ def builtinArityError (b : Builtin) (actual : Nat) : Error :=
     - `sequenceValue ps` (a nested `(p1, …, pn)`): matches ONLY a
       `Result.sequenceValue rs` of the same length, each sub-pattern matching
       its element; never a list and never a scalar. `()` matches only the empty
-      sequence value. A one-item `(p)` is invalid (the singleton rule,
-      `headHasSingletonSequenceGroup`): no one-item sequence value exists.
+      sequence value. A one-item `(p)` whose item is not a collecting binder is
+      invalid (the singleton rule, `headHasSingletonSequenceGroup`): no one-item
+      sequence value exists. With a collecting binder among its items it matches
+      a sequence of at least its fixed items (`(x, *rest)`; `(*xs)` every
+      sequence, `()` included).
     - `listValue ps` (`[p1, …, pn]`): matches ONLY a `Result.listValue rs` of
       the same length, each sub-pattern matching its element; never a sequence
       and never a scalar. `[]` matches only the empty list, `[p]` a one-element
-      list.
+      list. With a collecting binder among its items it matches a list of at
+      least its fixed items (`[x, *rest]`; `[*xs]` every list).
     At the TOP of a clause head a `sequenceValue` is the head's own argument
     list (`F(x, y)` is `sequenceValue [bind x, bind y]`, `F((x, y))` is
     `sequenceValue [sequenceValue [bind x, bind y]]`, `F([x])` is
@@ -1051,7 +1080,7 @@ def builtinArityError (b : Builtin) (actual : Nat) : Error :=
     and no interaction with Grace-based parameter reordering at the branch's
     own level. -/
 inductive Pattern where
-  | bind      : Ident -> Pattern
+  | bind      (name : Ident) (collecting : Bool := false) : Pattern   -- `x`; `*x` when collecting (C#: Pattern.Bind, ParameterKind.Collecting)
   | litInt    : Int -> Pattern
   | litString : String -> Pattern    -- matches only Result.str s (exact string equality)
   | litBool   : Bool -> Pattern      -- matches only Result.bool b (C#: Pattern.LitBool)
@@ -1062,7 +1091,7 @@ inductive Pattern where
 /-- The `Repr` printer of `Pattern`: total, the derived one written out (§ Total `Repr`
     printers). -/
 def reprPatternPrec : Pattern → Nat → Std.Format
-  | .bind a, prec => reprCtorFormat "KatLang.Pattern.bind" [reprArg a] prec
+  | .bind a collecting, prec => reprCtorFormat "KatLang.Pattern.bind" [reprArg a, reprArg collecting] prec
   | .litInt a, prec => reprCtorFormat "KatLang.Pattern.litInt" [reprArg a] prec
   | .litString a, prec => reprCtorFormat "KatLang.Pattern.litString" [reprArg a] prec
   | .litBool a, prec => reprCtorFormat "KatLang.Pattern.litBool" [reprArg a] prec
@@ -1076,25 +1105,37 @@ decreasing_by all_goals (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; simp only 
 instance instReprPattern : Repr Pattern := ⟨reprPatternPrec⟩
 
 namespace Pattern
-  /-- Collect all binder names in a pattern (left-to-right). -/
+  /-- Collect all binder names in a pattern (left-to-right), collecting binders included. -/
   def boundNames : Pattern -> List Ident
-    | .bind x      => [x]
+    | .bind x _    => [x]
     | .litInt _    => []
     | .litString _ => []
     | .litBool _   => []
     | .sequenceValue ps    => ps.flatMap boundNames
     | .listValue ps        => ps.flatMap boundNames
 
+  /-- Whether a pattern is a collecting binder `*name`. -/
+  def isCollecting : Pattern -> Bool
+    | .bind _ collecting => collecting
+    | _ => false
+
+  /-- THE SINGLETON RULE over the items of one SEQUENCE clause pattern, the `Pattern` twin of
+      `ParameterPattern.isSingletonSequenceItems`: exactly one item that is not a collecting
+      binder. The collector-only `(*xs)` is valid: a collector stands for a sequence's
+      elements, not for a sequence of one. C#: `Pattern.IsSingletonSequenceItems`. -/
+  def isSingletonSequenceItems : List Pattern -> Bool
+    | [p] => !p.isCollecting
+    | _ => false
+
   mutual
     /-- THE SINGLETON RULE for the family pattern language (see
         `ParameterPattern.isSingletonSequenceItems`): a NESTED sequence pattern
-        with exactly one item describes a one-item sequence, which no value is,
-        so it is invalid. A family pattern has no collecting binder, so every
-        one-item sequence pattern is a singleton. A list pattern `[p]` is valid. -/
+        with exactly one non-collecting item describes a one-item sequence, which
+        no value is, so it is invalid. A list pattern `[p]` is valid. -/
     def hasSingletonSequenceGroup : Pattern -> Bool
-      | .sequenceValue ps => ps.length == 1 || anyHasSingletonSequenceGroup ps
+      | .sequenceValue ps => isSingletonSequenceItems ps || anyHasSingletonSequenceGroup ps
       | .listValue ps => anyHasSingletonSequenceGroup ps
-      | .bind _ => false
+      | .bind _ _ => false
       | .litInt _ => false
       | .litString _ => false
       | .litBool _ => false
@@ -1111,6 +1152,65 @@ namespace Pattern
   def headHasSingletonSequenceGroup : Pattern -> Bool
     | .sequenceValue ps => anyHasSingletonSequenceGroup ps
     | p => hasSingletonSequenceGroup p
+
+  /-- A COLLECTOR DIRECTLY AMONG A CLAUSE FAMILY'S CALL ARGUMENTS (Q-47, decided 2026-11-27):
+      the head's own argument list holds a collecting binder (`F(head, *rest)`, `F(*xs)`), or
+      a host-built head is itself one. A clause family has ONE fixed call arity
+      (`topLevelArity`), which such a binder would make variable, so the head is invalid in a
+      family: the C# parser reports `InvalidCollectingBinding`, and a host-built tree is
+      refused before evaluation (`validateAlgorithmTree`, `familyDirectCollectorMessage`). A
+      collecting binder INSIDE a sequence or list pattern of an argument is not one: that
+      pattern still consumes exactly one argument, whatever its collector collects. C#:
+      `Pattern.HeadHasDirectCollector`. -/
+  def headHasDirectCollector : Pattern -> Bool
+    | .sequenceValue ps => ps.any isCollecting
+    | p => p.isCollecting
+
+  /-- The number of collecting binders at ONE pattern level; a binder nested inside a
+      structural pattern belongs to that pattern's own level. -/
+  def collectingCountAtCurrentLevel (ps : List Pattern) : Nat :=
+    (ps.filter isCollecting).length
+
+  mutual
+    /-- AT MOST ONE COLLECTING BINDER PER PATTERN LEVEL (X-02, the `Pattern` twin of
+        `ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel`): whether some level of a
+        clause pattern holds more than one. The head's own argument list is a level too,
+        since a top-level `sequenceValue` IS that list. The binder allocates a level around
+        ONE collector (`needLevelSources`). C#: `Pattern.HasMultipleCollectingLevel`. -/
+    def hasMultipleCollectingLevel : Pattern -> Bool
+      | .sequenceValue ps => 1 < collectingCountAtCurrentLevel ps || anyHasMultipleCollectingLevel ps
+      | .listValue ps => 1 < collectingCountAtCurrentLevel ps || anyHasMultipleCollectingLevel ps
+      | .bind _ _ => false
+      | .litInt _ => false
+      | .litString _ => false
+      | .litBool _ => false
+
+    def anyHasMultipleCollectingLevel : List Pattern -> Bool
+      | [] => false
+      | p :: ps => hasMultipleCollectingLevel p || anyHasMultipleCollectingLevel ps
+  end
+
+  mutual
+    /-- The names of the COLLECTING binders of a pattern, at any depth, left to right. -/
+    def collectingNames : Pattern -> List Ident
+      | .bind x collecting => if collecting then [x] else []
+      | .sequenceValue ps => anyCollectingNames ps
+      | .listValue ps => anyCollectingNames ps
+      | .litInt _ => []
+      | .litString _ => []
+      | .litBool _ => []
+
+    def anyCollectingNames : List Pattern -> List Ident
+      | [] => []
+      | p :: ps => collectingNames p ++ anyCollectingNames ps
+  end
+
+  /-- Whether a repeated binder name of a clause head includes a collecting binder (X-02, the
+      `Pattern` twin of `ParameterPattern.hasRepeatedCaptureNameIncludingCollecting`): a head
+      may repeat a name only among fixed binders (PAT-09), never with a collector. C#:
+      `Pattern.HasRepeatedNameIncludingCollecting`. -/
+  def hasRepeatedNameIncludingCollecting (head : Pattern) : Bool :=
+    head.collectingNames.any (fun name => 2 ≤ (head.boundNames.filter (· == name)).length)
 
   /-- Compute the top-level arity of a pattern.
       - `sequenceValue [p1, ..., pn] ⟹ n` (the head's own argument list)
@@ -1165,7 +1265,7 @@ namespace Pattern
         its kind: a sequence pattern stays a sequence pattern and a list pattern a
         list pattern. -/
     def parameterPattern? : Pattern -> Option ParameterPattern
-      | .bind x => some (.capture { name := x })
+      | .bind x collecting => some (.capture { name := x, kind := if collecting then .collecting else .normal })
       | .sequenceValue ps => do
           let patterns <- parameterPatternsOf? ps
           some (.sequenceValue patterns)
@@ -1185,7 +1285,7 @@ namespace Pattern
   end
 
   def plainClauseParameterPatterns? : Pattern -> Option (List ParameterPattern)
-    | .bind x => some [.capture { name := x }]
+    | .bind x collecting => some [.capture { name := x, kind := if collecting then .collecting else .normal }]
     | .sequenceValue ps => parameterPatternsOf? ps
     | .listValue ps => (parameterPattern? (.listValue ps)).map (fun pattern => [pattern])
     | _ => none
@@ -1195,7 +1295,9 @@ namespace Pattern
 
   /-- Check whether two patterns are match-equivalent. Binder spelling is
       irrelevant, but repeated-name equality positions must agree:
-      - `bind _` ≡ `bind _` (any binder matches everything)
+      - `bind _` ≡ `bind _` (any binder matches everything) when both are fixed or both
+        collecting; a fixed binder is never equivalent to a collecting one (`[x]` and
+        `[*xs]` are different heads)
       - `litInt m` ≡ `litInt n` iff `m = n` (likewise `litString`, `litBool`)
       - `sequenceValue ps` ≡ `sequenceValue qs` iff same length and pairwise match-equivalent
       - `listValue ps` ≡ `listValue qs` iff same length and pairwise match-equivalent
@@ -1218,12 +1320,14 @@ namespace Pattern
   mutual
   def matchEquivalentWithRenaming : Pattern -> Pattern ->
       List (Ident × Ident) -> Option (List (Ident × Ident))
-    | .bind left, .bind right, pairs =>
-        match binderRenaming? left pairs with
-        | some existing => if existing = right then some pairs else none
-        | none =>
-            if binderTargetUsed right pairs then none
-            else some ((left, right) :: pairs)
+    | .bind left leftCollecting, .bind right rightCollecting, pairs =>
+        if leftCollecting != rightCollecting then none
+        else
+          match binderRenaming? left pairs with
+          | some existing => if existing = right then some pairs else none
+          | none =>
+              if binderTargetUsed right pairs then none
+              else some ((left, right) :: pairs)
     | .litInt m, .litInt n, pairs =>
         if m = n then some pairs else none
     | .litString s, .litString t, pairs =>
@@ -1567,6 +1671,21 @@ mutual
         by `Pattern.isMatchEquivalent`).  Duplicate patterns are unreachable
         (first-match semantics) and indicate a static error detected by the
         front-end / parser.
+
+        **Collecting-binder invariant** (Q-47, decided 2026-11-27): a branch
+        head holds no collecting binder directly among its call arguments
+        (`Pattern.headHasDirectCollector`) — the family's call arity is fixed —
+        while a sequence or list pattern inside an argument may hold one under
+        the ordinary rules: at most one per pattern level
+        (`Pattern.hasMultipleCollectingLevel`) and never a repeated name
+        (`Pattern.hasRepeatedNameIncludingCollecting`). Such a pattern still
+        consumes exactly ONE argument; its collector collects, as one exact
+        list, the opened elements its level's fixed patterns leave over, bound
+        by the one need binder exactly as in an ordinary head
+        (`NeedPattern.ofClause`). A wrong kind or too few elements is the
+        clause's non-match. Front ends report a violation
+        (`InvalidCollectingBinding`); `validateAlgorithmTree` refuses a
+        host-built tree.
 
         **Clause elaboration rule**: front-ends should use
         `Algorithm.elaborateClauseGroup` when lowering surface syntax
@@ -3335,13 +3454,34 @@ def repeatedNameIncludesCollectingMessage : String :=
 def invalidMetaParameterMessage : String :=
   "`meta` may modify only a plain, fixed parameter name written once at the top level of an ordinary parameter list."
 
-/-- The collector rule over an algorithm's OWN parameter patterns (X-02): some
-    pattern level holds more than one collecting capture. -/
+/-- The message of a clause family whose head holds a collecting binder DIRECTLY among its call
+    arguments (Q-47, `Pattern.headHasDirectCollector`). C#: `Parser.FamilyDirectCollectorDiagnostic`,
+    the wording of the parser's `InvalidCollectingBinding` report for a written family (which
+    names the family) and of the pre-evaluation violation
+    `PreEvaluationAstViolation.CollectingClauseBinder`. -/
+def familyDirectCollectorMessage : String :=
+  "A clause family has one fixed call arity, so a collecting binding cannot stand directly among its call arguments. Collect inside a list pattern `[head, *rest]` or a sequence pattern `(head, *rest)`, or gather the arguments in an ordinary single-clause definition."
+
+/-- The collector rule over an algorithm's OWN patterns (X-02): some pattern level holds more
+    than one collecting capture — a level of its explicit parameter patterns, or a level of a
+    clause family's branch head. -/
 def Algorithm.hasMultipleCollectingCaptures : Algorithm -> Bool
   | .mk _ parameters _ _ _ _ => ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel parameters
   | .builtin _ => false
-  | .conditional _ _ _ _ => false
+  | .conditional _ _ branches _ => branches.any (fun branch => branch.pattern.hasMultipleCollectingLevel)
   | .alias _ _ _ _ _ _ => false
+
+/-- Whether a clause family holds a head with a collecting binder directly among its call
+    arguments (Q-47; `Pattern.headHasDirectCollector`). -/
+def Algorithm.hasFamilyDirectCollector : Algorithm -> Bool
+  | .conditional _ _ branches _ => branches.any (fun branch => branch.pattern.headHasDirectCollector)
+  | _ => false
+
+/-- Whether a clause family holds a head that repeats a name including a collecting binder
+    (X-02; `Pattern.hasRepeatedNameIncludingCollecting`). -/
+def Algorithm.hasFamilyRepeatedNameIncludingCollecting : Algorithm -> Bool
+  | .conditional _ _ branches _ => branches.any (fun branch => branch.pattern.hasRepeatedNameIncludingCollecting)
+  | _ => false
 
 /-- Human-readable constructor kind for diagnostics. -/
 def Expr.kind : Expr -> String
@@ -3662,10 +3802,17 @@ mutual
         pattern (the singleton rule; `illegalInEval`
         `singletonSequencePatternMessage`) — a host-built tree cannot give such
         a pattern a meaning the surface language refuses it
-      - no parameter-pattern level holds more than one collecting capture (X-02;
-        `illegalInEval` `multipleCollectingBindingsPerLevelMessage`): the
-        binders allocate a level around ONE movable collector, so a host-built
-        tree cannot reach them with a second one
+      - no parameter-pattern level and no level of a clause-family head holds
+        more than one collecting capture (X-02; `illegalInEval`
+        `multipleCollectingBindingsPerLevelMessage`): the binders allocate a
+        level around ONE movable collector, so a host-built tree cannot reach
+        them with a second one
+      - no clause-family head holds a collecting binder directly among its call
+        arguments (Q-47; `illegalInEval` `familyDirectCollectorMessage`): a
+        family has one fixed call arity, and a collecting binder is valid only
+        inside a sequence or list pattern of one argument
+      - no clause-family head repeats a name that includes a collecting binder
+        (X-02; `illegalInEval` `repeatedNameIncludesCollectingMessage`)
       - conditional algorithms have uniform top-level branch pattern arity and
         uniform top-level branch output arity (`branchArityMismatch`,
         `branchOutputArityMismatch`)
@@ -3715,6 +3862,10 @@ mutual
           validateScopeTree scope aliases
     | .builtin _ => pure ()
     | .conditional parent? op branches _ =>
+        if a.hasFamilyDirectCollector then
+          .error (Error.illegalInEval familyDirectCollectorMessage)
+        if a.hasFamilyRepeatedNameIncludingCollecting then
+          .error (Error.illegalInEval repeatedNameIncludesCollectingMessage)
         validateConditionalBranchArities name a
         for openExpr in op do
           validateExprTree openExpr inner aliases
@@ -6314,10 +6465,14 @@ mutual
 def matchPatternInto (p : Pattern) (r : Result) (env : ValEnv)
     : Option ValEnv :=
   match p with
-  | .bind x =>
+  | .bind x false =>
       match env.lookup x with
       | some existing => if existing == r then some env else none
       | none => some (env ++ [(x, r)])
+  -- A collecting binder is no value pattern: it stands for a SLICE of its level, which only
+  -- the one need binder allocates (`needLevelSources`). This value matcher, which production
+  -- reaches with literal patterns only (`NeedBinder.bindOne`), matches nothing with it.
+  | .bind _ true => none
   | .litInt n  =>
       match r with
       | .atom v => if v = n then some env else none
@@ -8266,7 +8421,7 @@ def NeedPattern.ofParameter : ParameterPattern -> NeedPattern
   | .unpacking ps => .unpack (ps.map ofParameter)
 
 def NeedPattern.ofClause : Pattern -> NeedPattern
-  | .bind name => .bind name
+  | .bind name collecting => .bind name collecting
   | .sequenceValue ps => .sequence (ps.map ofClause)
   | .listValue ps => .list (ps.map ofClause)
   | pattern => .literal pattern
@@ -15057,7 +15212,8 @@ def Pattern.topLevelPositions : Pattern -> List Pattern
   | p => [p]
 
 /-- The name one clause votes for a position: the plain binder it binds there. A literal, a
-    structural pattern and a binderless group name nothing. -/
+    structural pattern and a binderless group name nothing; neither does a collecting binder,
+    which no valid family head holds at a top-level position (`Pattern.headHasDirectCollector`). -/
 def Pattern.positionName? : Pattern -> Option Ident
   | .bind x => some x
   | _ => none

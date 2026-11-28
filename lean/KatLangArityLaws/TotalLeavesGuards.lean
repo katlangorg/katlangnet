@@ -26,7 +26,7 @@ namespace KatLang.TotalLeavesGuards
 
 #guard reprStr (ScopeCtx.mk (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 4)))) ["x"] [] [] []
     [{ pattern := .sequenceValue [.bind "a", .litInt 2], body := .builtin .ifBuiltin }] (some 2) none) ==
-  "KatLang.ScopeCtx.mk\n  (some (KatLang.ScopeCtx.mk none [] [] [] [] [] none (some (KatLang.PropertyIdentity.host 4))))\n  [\"x\"]\n  []\n  []\n  []\n  [{ pattern := KatLang.Pattern.sequenceValue [KatLang.Pattern.bind \"a\", KatLang.Pattern.litInt 2],\n     body := KatLang.Algorithm.builtin (KatLang.Builtin.ifBuiltin) }]\n  (some 2)\n  none"
+  "KatLang.ScopeCtx.mk\n  (some (KatLang.ScopeCtx.mk none [] [] [] [] [] none (some (KatLang.PropertyIdentity.host 4))))\n  [\"x\"]\n  []\n  []\n  []\n  [{ pattern := KatLang.Pattern.sequenceValue [KatLang.Pattern.bind \"a\" false, KatLang.Pattern.litInt 2],\n     body := KatLang.Algorithm.builtin (KatLang.Builtin.ifBuiltin) }]\n  (some 2)\n  none"
 
 #guard reprStr (Result.sequenceValue [.atom 1, .listValue [.str "a", .bool true], .callRef 3]) ==
   "KatLang.Result.sequenceValue\n  [KatLang.Result.atom 1,\n   KatLang.Result.listValue [KatLang.Result.str \"a\", KatLang.Result.bool true],\n   KatLang.Result.callRef 3]"

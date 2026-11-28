@@ -14,16 +14,16 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 810
-- excluded parse-level cases (Lean has no surface parser): 89
+- specification surface cases: 820
+- excluded parse-level cases (Lean has no surface parser): 95
 - other shared cases outside the Lean model (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 697
-- probe observations (checked by surface runners): 1692
+- Lean-guarded cases: 701
+- probe observations (checked by surface runners): 1721
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
-  the other 693 programs have no cache observation, which is not an empty cache;
+  the other 697 programs have no cache observation, which is not an empty cache;
   each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
   C# runner requires the same entries of C#
 
@@ -1208,6 +1208,26 @@ def case_call_spread_dispatches_before_clause_selection : Expr :=
 def case_call_spread_into_patterned_callee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 7, .num 7])]), privateProp "F" (alg ["x", "x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "F") [(.sequenceSpread (.resolve "A"))])])
 #guard obs case_call_spread_into_patterned_callee == "ok raw=8 n=1"
+
+-- family-list-pattern-collects-tail [conditionals]: Tail([]) = [] \n Tail([head, *rest]) = rest \n  \n Tail(['a', ['b', 'c'], 'd'])
+def case_family_list_pattern_collects_tail : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Tail" (.conditional none [] [⟨.sequenceValue [.listValue []], (alg [] [] [] [(.listLiteral [])])⟩, ⟨.sequenceValue [.listValue [.bind "head", .bind "rest" true]], (alg [] [] [] [.param "rest"])⟩])] [(.call (.resolve "Tail") [(.listLiteral [.stringLiteral "a", (.listLiteral [.stringLiteral "b", .stringLiteral "c"]), .stringLiteral "d"])])])
+#guard obs case_family_list_pattern_collects_tail == "ok raw=L[L['b', 'c'], 'd'] n=1"
+
+-- literal-clause-sequence-pattern-collects-between-fixed-positions [conditionals]: Payload(('packet', *fields, 'end')) = fields \n  \n Payload(('packet', 10, [20, 30], 'end')) \n Payload(('packet', 'end'))
+def case_literal_clause_sequence_pattern_collects_between_fixed_positions : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Payload" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.litString "packet", .bind "fields" true, .litString "end"]], (alg [] [] [] [.param "fields"])⟩])] [(.call (.resolve "Payload") [(.capture [.stringLiteral "packet", .num 10, (.listLiteral [.num 20, .num 30]), .stringLiteral "end"])]), (.call (.resolve "Payload") [(.capture [.stringLiteral "packet", .stringLiteral "end"])])])
+#guard obs case_literal_clause_sequence_pattern_collects_between_fixed_positions == "ok raw=S[L[10, L[20, 30]], L[]] n=2"
+
+-- family-collecting-heads-fixed-and-collecting-are-distinct [conditionals]: K([x]) = 'one' \n K([*xs]) = 'any' \n  \n K([1]) \n K([]) \n K([1, 2])
+def case_family_collecting_heads_fixed_and_collecting_are_distinct : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (.conditional none [] [⟨.sequenceValue [.listValue [.bind "x"]], (alg [] [] [] [.stringLiteral "one"])⟩, ⟨.sequenceValue [.listValue [.bind "xs" true]], (alg [] [] [] [.stringLiteral "any"])⟩])] [(.call (.resolve "K") [(.listLiteral [.num 1])]), (.call (.resolve "K") [(.listLiteral [])]), (.call (.resolve "K") [(.listLiteral [.num 1, .num 2])])])
+#guard obs case_family_collecting_heads_fixed_and_collecting_are_distinct == "ok raw=S['one', 'any', 'any'] n=3"
+
+-- family-nested-collector-fallback-and-demand [conditionals]: Deep(('pair', [x, (first, *others)])) = others \n Deep((tag, [x, *more])) = more \n Deep(other) = 'fallback' \n  \n Deep(('pair', [1, (2, 3, 4)])) \n Deep(('other', [1, (2, 3)])) \n Deep(('pair', [1, 2, 3])) \n Deep(('pair', 7)) \n Deep(('none', [1 / 0, 9]))
+def case_family_nested_collector_fallback_and_demand : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Deep" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.litString "pair", .listValue [.bind "x", .sequenceValue [.bind "first", .bind "others" true]]]], (alg [] [] [] [.param "others"])⟩, ⟨.sequenceValue [.sequenceValue [.bind "tag", .listValue [.bind "x", .bind "more" true]]], (alg [] [] [] [.param "more"])⟩, ⟨.bind "other", (alg [] [] [] [.stringLiteral "fallback"])⟩])] [(.call (.resolve "Deep") [(.capture [.stringLiteral "pair", (.listLiteral [.num 1, (.capture [.num 2, .num 3, .num 4])])])]), (.call (.resolve "Deep") [(.capture [.stringLiteral "other", (.listLiteral [.num 1, (.capture [.num 2, .num 3])])])]), (.call (.resolve "Deep") [(.capture [.stringLiteral "pair", (.listLiteral [.num 1, .num 2, .num 3])])]), (.call (.resolve "Deep") [(.capture [.stringLiteral "pair", .num 7])]), (.call (.resolve "Deep") [(.capture [.stringLiteral "none", (.listLiteral [(.binary .div (.num 1) (.num 0)), .num 9])])])])
+#guard obs case_family_nested_collector_fallback_and_demand == "ok raw=S[L[3, 4], L[S[2, 3]], L[2, 3], 'fallback', L[9]] n=5"
 
 -- wrapped-pair-collapses [sequence-construction]: ((1, 2))
 def case_wrapped_pair_collapses : Expr :=
@@ -3749,7 +3769,7 @@ def case_decon_target_calls_reuse_the_shared_source : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.call (.resolve "tick") []), .num 20]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.call (.resolve "a") []), (.call (.resolve "a") []), .resolve "b"])
 #guard obs case_decon_target_calls_reuse_the_shared_source == "ok raw=S[1, 1, 20] n=3"
 
--- 697 canonical Lean-guarded specification cases.
+-- 701 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -3948,6 +3968,10 @@ def specCaseIds : List String := [
   "conditional-clause-head-rejects-extra-arguments",
   "call-spread-dispatches-before-clause-selection",
   "call-spread-into-patterned-callee",
+  "family-list-pattern-collects-tail",
+  "literal-clause-sequence-pattern-collects-between-fixed-positions",
+  "family-collecting-heads-fixed-and-collecting-are-distinct",
+  "family-nested-collector-fallback-and-demand",
   "wrapped-pair-collapses",
   "pair-of-pairs-preserved",
   "pair-then-empty-preserved",
@@ -4455,7 +4479,7 @@ def specCaseIds : List String := [
   "selective-collector-take-count-error-precedes-elements",
   "decon-target-calls-reuse-the-shared-source"
 ]
-#guard specCaseIds.length == 697
+#guard specCaseIds.length == 701
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards

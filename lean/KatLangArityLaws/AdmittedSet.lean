@@ -13,7 +13,8 @@ not depend on the entry state. This module states WHICH trees it accepts.
   declarative, monad-free and state-free predicate over the WHOLE tree the validator walks:
   every algorithm node satisfies its node conditions (no singleton sequence pattern, at most one
   collecting capture per level, no repeated name over a collector, no invalid `meta` parameter,
-  explicit parameters only with output, uniform clause-family arities, a static-path alias target
+  explicit parameters only with output, no collecting binder directly among a clause family's
+  call arguments (Q-47), uniform clause-family arities, a static-path alias target
   whose static chase meets no alias twice), with the static chain and alias count the validator
   uses at that node, and every child the validator visits — opens, properties, output rows,
   branch bodies, alias targets, host-built parent scopes and their members, every
@@ -175,6 +176,7 @@ def AdmittedAlgorithm (a : Algorithm) (name : Ident) (chain : List Algorithm) (a
       (match parent? with | none => True | some s => AdmittedScope s aliases)
   | .builtin _ => True
   | .conditional parent? op branches _ =>
+      a.hasFamilyDirectCollector = false ∧ a.hasFamilyRepeatedNameIncludingCollecting = false ∧
       a.validateBranchArities = none ∧ a.validateBranchOutputArities = none ∧
       (∀ e ∈ op, AdmittedExpr e inner aliases) ∧
       (∀ b ∈ branches, AdmittedAlgorithm b.body name inner aliases) ∧

@@ -97,7 +97,7 @@ public class HostBuiltParentScopeValidationTests
             ["a collecting clause binder (C#-only)"] = (
                 () => [new("Bad", Family(
                     new CondBranch(new Pattern.Bind("xs") { ParameterKind = ParameterKind.Collecting }, Callable([], new Expr.Num(0)))))],
-                new EvalError.IllegalInEval(Parser.CollectingClauseBinderDiagnostic)),
+                new EvalError.IllegalInEval(Parser.FamilyDirectCollectorDiagnostic)),
             ["an alias target that is no static path"] = (
                 () => [new("Bad", new Algorithm.Alias(null, [], [], new Expr.Num(1)))],
                 new EvalError.IllegalInEval(Evaluator.AliasTargetNotStaticPathMessage(new Expr.Num(1)))),

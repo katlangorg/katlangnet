@@ -141,9 +141,10 @@ public enum DiagnosticCode
 
     /// <summary>
     /// A collecting binding placed where the language does not allow one:
-    /// outside ordinary explicit parameter lists, more than one per pattern
-    /// level or deconstruction pattern, or combined with repeated parameter
-    /// names.
+    /// directly among a clause family's call arguments (a family has one fixed
+    /// call arity; a list or sequence pattern inside an argument may collect),
+    /// more than one per pattern level or deconstruction pattern, or combined
+    /// with repeated parameter names.
     /// </summary>
     InvalidCollectingBinding = 19,
 

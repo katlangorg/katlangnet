@@ -16,11 +16,15 @@ namespace KatLang.Tests;
 /// </summary>
 public class LeanAstEncoderTests
 {
+    // Q-47: a collecting clause binder is Lean's `.bind name true` wherever it stands. The encoder
+    // never drops the kind (the fixed `.bind "xs"` would be a different pattern) and never decides
+    // validity: Lean's own validation refuses a collector directly among a family's arguments.
     [Theory]
-    [InlineData("bare")]
-    [InlineData("sequence")]
-    [InlineData("list")]
-    public void CollectingClauseBinder_CannotSilentlyLoseItsKind(string shape)
+    [InlineData("bare", ".bind \"xs\" true")]
+    [InlineData("sequence", ".sequenceValue [.bind \"x\", .bind \"xs\" true]")]
+    [InlineData("list", ".listValue [.bind \"xs\" true]")]
+    [InlineData("nested", ".sequenceValue [.listValue [.bind \"x\", .sequenceValue [.litInt 0, .bind \"xs\" true]]]")]
+    public void CollectingClauseBinder_KeepsItsKind(string shape, string expected)
     {
         var collecting = new Pattern.Bind("xs") { ParameterKind = ParameterKind.Collecting };
         Pattern pattern = shape switch
@@ -28,9 +32,14 @@ public class LeanAstEncoderTests
             "bare" => collecting,
             "sequence" => new Pattern.SequenceValue([new Pattern.Bind("x"), collecting]),
             "list" => new Pattern.ListValue([collecting]),
+            "nested" => new Pattern.SequenceValue([new Pattern.ListValue(
+                [new Pattern.Bind("x"), new Pattern.SequenceValue([new Pattern.LitInt(0), collecting])])]),
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
-        Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodePattern(pattern));
+        Assert.Equal(expected, LeanAstEncoder.EncodePattern(pattern));
+        Assert.NotEqual(
+            LeanAstEncoder.EncodePattern(new Pattern.ListValue([new Pattern.Bind("xs")])),
+            LeanAstEncoder.EncodePattern(new Pattern.ListValue([collecting])));
     }
 
     private static string EncodeSource(string source)

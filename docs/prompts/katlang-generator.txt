@@ -944,7 +944,9 @@ Supported patterns:
 - integer literals: `0`, `1`, `-1`
 - string literals: `'apples'`, `'LV'`
 - sequence/nested patterns: `(1, (a, b))` — sequence values only
-- list patterns: `[]`, `[x]`, `[x, y]` — list values only (`Kind([]) = 0`, `Kind([x]) = 1`, `Kind(xs) = 2` gives `Kind([5])` = 1); a collecting form such as `[x, *rest]` is valid only in an ordinary definition (one literal-free clause), never in a true conditional algorithm
+- list patterns: `[]`, `[x]`, `[x, y]` — list values only (`Kind([]) = 0`, `Kind([x]) = 1`, `Kind(xs) = 2` gives `Kind([5])` = 1)
+- collecting forms INSIDE a list or sequence pattern: `[head, *rest]`, `[*xs]`, `(tag, *fields, 'end')` — one collecting binding per pattern level, exactly as in an ordinary definition; the pattern still consumes ONE argument. `Tail([]) = []` with `Tail([head, *rest]) = rest` gives `Tail(['a', ['b', 'c'], 'd'])` = `[['b', 'c'], 'd']`, and `Payload(('packet', *fields, 'end')) = fields` gives `Payload(('packet', 10, 'end'))` = `[10]`
+- never a collecting binding directly among a conditional algorithm's own arguments: `F(0) = 0` with `F(*xs) = xs`, `F(0, 0) = 0` with `F(head, *rest) = rest`, and the single literal clause `F(0, *rest) = rest` are all rejected, because a conditional algorithm takes a fixed number of arguments. Collect inside a pattern instead, or gather the arguments in an ordinary definition: `TailArgs(*items) = Tail(items)`
 - never a one-item sequence pattern `(x)` (a front-end error): write `x` or `[x]`
 
 Rules:
@@ -962,6 +964,8 @@ Rules:
 - All branches of the same conditional algorithm must have the same top-level input arity.
 - All branches of the same conditional algorithm must have the same top-level output arity.
 - Matching respects sequence-value shape: `F(1, (2, 3))` is not the same as `F(1, 2, 3)`.
+- A collecting pattern never changes the argument count: with `Tail([]) = []` and `Tail([head, *rest]) = rest`, `Tail(('a', 'b'))` matches no clause (one sequence argument, and a list pattern matches only lists) while `Tail('a', 'b')` is an argument-count error.
+- For a recursion over a list, prefer the two-clause form `Sum([]) = 0` / `Sum([first, *others]) = first + Sum(others)` to selecting and skipping by hand.
 - Do not repeat a binder name when any occurrence is a collecting binding; forms such as `F(*xs, xs)` and `F(*xs, *xs)` are unsupported.
 - Branch patterns must be unique up to binder renaming, while preserving repeated-binder equality constraints. Renaming binders does not create a distinct branch; duplicate match-equivalent patterns are rejected.
 
@@ -980,7 +984,7 @@ Sole recursive capture/structural (sequence or list) parameter-pattern clause fa
     ListSum([x, y]) = x + y
     CountSequenceValue((*values)) = values.count
 
-A sole parameter pattern with one collecting binder at its own pattern level is also an ordinary explicit-parameter interface, not conditional matching:
+A sole parameter pattern with one collecting binder at its own pattern level is also an ordinary explicit-parameter interface, not conditional matching. Only such a single literal-free definition may collect at the TOP level of its parameter list; a conditional algorithm collects inside list and sequence patterns only:
     Many(*values) = values.count
     Scale(*values, factor) = values.map{n * factor}
     CountSequenceValue((*values)) = values.count
@@ -1226,7 +1230,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (184 of the 810-case canonical language specification,
+Verified reference examples (185 of the 820-case canonical language specification,
 conformance/cases.json). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2167,6 +2171,16 @@ Regenerate this block from the repo root with:
 
   Displays:
     3
+
+[family-list-pattern-collects-tail] A clause family has one fixed call arity, and inside any argument a list or sequence pattern may collect under the ordinary structural-pattern rules. Both `Tail` clauses consume exactly one argument: `[]` matches the empty list, and `[head, *rest]` a list of at least one element, with `rest` the exact list of the others (nested values stay elements). Adding the empty-list clause to the single-clause definition leaves the meaning of its nonempty-list pattern unchanged. `Tail(['a'])` collects an empty slice; binding the unused `head` leaves that list position undemanded, so `Tail([1 / 0, 'b'])` is `['b']`. `Tail(('a', 'b'))` supplies one argument that no list pattern matches (`NoMatchingBranch`), while `Tail('a', 'b')` supplies two and is the family call's `ArityMismatch` before any clause is tried. A caller that wants to gather separate arguments uses an ordinary entry point with a top-level collecting parameter.
+
+    Tail([]) = []
+    Tail([head, *rest]) = rest
+
+    Tail(['a', ['b', 'c'], 'd'])
+
+  Displays:
+    [[b, c], d]
 
 [spread-one-level-only] Spread opens exactly one level: the inner `(2, 3)` stays intact, and `4` is a separate expression-list slot (the comma after the spread is required — `(1, (2, 3))* 4` would be multiplication).
 

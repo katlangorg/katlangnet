@@ -521,6 +521,14 @@ public class MaintainedDocumentationConsistencyTests
             @"(?:\bopen\b[^.;\r\n]{0,90}\bfuel-bounded\s+walk\b|\bchain\s+longer\s+than\s+.{0,30}\bOpenStructureFuel\b[^.;\r\n]{0,45}\balias\s+cycle\b)",
             "an open target's structure walk with a fixed fuel that reports a long chain as an alias cycle (superseded 2026-11-27)"
         },
+        // Collecting bindings inside clause-family patterns (Q-47, decided 2026-11-27): a clause family has one fixed
+        // call arity and collects inside a list or sequence pattern of an argument; only a collector directly among
+        // a family's call arguments is invalid. So no current text says that a clause binder never collects, that
+        // clauses cannot collect at all, or that a collecting pattern is valid in an ordinary definition only.
+        {
+            @"\bcollecting\s+bindings\s+are\s+only\s+supported\s+in\s+ordinary\s+explicit\s+parameter\s+lists\b|\bclause\s+binders?\s+(?:never|cannot)\s+collects?\b|\bclauses\s+cannot\s+collect\b|\bvalid\s+only\s+in\s+(?:an\s+)?ordinary\s+definitions?\b[^.;\r\n]{0,80}\b(?:clause\s+famil|conditional\s+algorithm)",
+            "collecting bindings refused everywhere in a clause family (superseded 2026-11-27 by Q-47: only a collector directly among a family's call arguments is invalid)"
+        },
     };
 
     [Theory]

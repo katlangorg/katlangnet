@@ -3291,7 +3291,10 @@ internal static partial class ImplicitArgumentResolver
     /// (a sequence pattern stays a sequence pattern, a list pattern a list pattern),
     /// including empty groups. The closed-specification name check consumes only
     /// captures, but single-collecting forwarding also depends on those group boundaries.
-    /// Collecting binders in conditional families are host-AST-only; the parser rejects them.
+    /// A collecting binder of a family head stands inside a sequence or list pattern of one
+    /// argument (Q-47): its name belongs to the branch like every binder of that group, and the
+    /// group stays ONE outer slot. A collecting binder directly among a family's call arguments
+    /// is host-AST-only — the parser rejects it and the pre-evaluation gate refuses it.
     /// </summary>
     internal static IReadOnlyList<ParameterPattern> BranchBinderParameterPatterns(Pattern pattern)
     {

@@ -102,7 +102,7 @@ public class FrontEndDecisionLeanArtifactTests
     }
 
     private const int ExpectedExplorerSyntaxErrors = 7;
-    private const int ExpectedSpecSyntaxErrors = 35;
+    private const int ExpectedSpecSyntaxErrors = 41;
     private const int ExpectedSemanticGeneratedSyntaxErrors = 4;
     private const int ExpectedTutorialSyntaxErrors = 3;
     private const int ExpectedTutorialUnresolvedLoads = 2;

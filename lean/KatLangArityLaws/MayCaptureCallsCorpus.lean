@@ -23,10 +23,10 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 4643
-- guarded: 4505 (697 may capture calls, 3808 cannot)
-- excluded: 138
-  language-spec: 810 programs, 697 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
+- corpus programs: 4653
+- guarded: 4509 (697 may capture calls, 3812 cannot)
+- excluded: 144
+  language-spec: 820 programs, 701 guarded (89 may capture calls), 95 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2821 programs, 2808 guarded (131 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
   generated: 744 programs, 735 guarded (365 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
@@ -239,6 +239,10 @@ open KatLang
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_conditional_clause_head_rejects_extra_arguments == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_call_spread_dispatches_before_clause_selection == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_call_spread_into_patterned_callee == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_family_list_pattern_collects_tail == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_literal_clause_sequence_pattern_collects_between_fixed_positions == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_family_collecting_heads_fixed_and_collecting_are_distinct == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_family_nested_collector_fallback_and_demand == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_wrapped_pair_collapses == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_pair_of_pairs_preserved == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_pair_then_empty_preserved == false
@@ -940,6 +944,10 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_conditional_clause_head_rejects_extra_arguments,
   LanguageSpecCases.case_call_spread_dispatches_before_clause_selection,
   LanguageSpecCases.case_call_spread_into_patterned_callee,
+  LanguageSpecCases.case_family_list_pattern_collects_tail,
+  LanguageSpecCases.case_literal_clause_sequence_pattern_collects_between_fixed_positions,
+  LanguageSpecCases.case_family_collecting_heads_fixed_and_collecting_are_distinct,
+  LanguageSpecCases.case_family_nested_collector_fallback_and_demand,
   LanguageSpecCases.case_wrapped_pair_collapses,
   LanguageSpecCases.case_pair_of_pairs_preserved,
   LanguageSpecCases.case_pair_then_empty_preserved,
@@ -1447,7 +1455,7 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_selective_collector_take_count_error_precedes_elements,
   LanguageSpecCases.case_decon_target_calls_reuse_the_shared_source
 ]
-#guard languageSpecPrograms.length == 697
+#guard languageSpecPrograms.length == 701
 #guard (languageSpecPrograms.filter Expr.mayCaptureCalls).length == 89
 
 /-! ## explorer -/
@@ -9126,5 +9134,5 @@ def plannedLoopTempPrograms : List Expr := [
 #guard plannedLoopTempPrograms.length == 36
 #guard (plannedLoopTempPrograms.filter Expr.mayCaptureCalls).length == 36
 
--- 4505 gate guards over 4643 corpus programs.
+-- 4509 gate guards over 4653 corpus programs.
 end KatLang.MayCaptureCallsCorpus

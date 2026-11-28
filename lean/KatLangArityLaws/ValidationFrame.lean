@@ -118,7 +118,8 @@ theorem ScopeCtx.staticChain_equation (s : ScopeCtx) :
           ((parent?.map ScopeCtx.staticChain).getD []) ++ [Algorithm.mk none [] op pr [] none] := by
   rcases s with ⟨_ | _⟩ <;> rfl
 
-/-- The former body of `validateAlgorithmTree` (unchanged). -/
+/-- The body of `validateAlgorithmTree`, as written: its `partial` predecessor's, plus the two
+    clause-family collector checks of Q-47 (a direct collector, a repeated collecting name). -/
 theorem validateAlgorithmTree_equation (a : Algorithm) (name : Ident) (chain : List Algorithm)
     (aliases : Nat) :
     validateAlgorithmTree a name chain aliases = (do
@@ -146,6 +147,10 @@ theorem validateAlgorithmTree_equation (a : Algorithm) (name : Ident) (chain : L
             validateScopeTree scope aliases
       | .builtin _ => pure ()
       | .conditional parent? op branches _ =>
+          if a.hasFamilyDirectCollector then
+            .error (Error.illegalInEval familyDirectCollectorMessage)
+          if a.hasFamilyRepeatedNameIncludingCollecting then
+            .error (Error.illegalInEval repeatedNameIncludesCollectingMessage)
           validateConditionalBranchArities name a
           for openExpr in op do
             validateExprTree openExpr inner aliases
@@ -317,14 +322,15 @@ theorem scanHostProvenanceProperty_equation (p : PropDef) :
 /-! ## 2. The error set and the frame of one validation step -/
 
 /-- THE VALIDATOR'S ERROR SET: every error the pre-evaluation validation can raise — the
-    host-provenance check's two messages (HOST-LEAN-O6), the five fixed pattern/alias messages,
-    a non-static alias target, explicit parameters without output, and the two conditional
-    arity mismatches. -/
+    host-provenance check's two messages (HOST-LEAN-O6), the six fixed pattern/alias messages
+    (a clause family's direct collector among them, Q-47), a non-static alias target, explicit
+    parameters without output, and the two conditional arity mismatches. -/
 inductive ValidatorError : Error → Prop
   | hostMisplaced : ValidatorError (.illegalInEval hostIdentityMisplacedMessage)
   | hostIncoherent (t : Nat) : ValidatorError (.illegalInEval (hostProvenanceIncoherentMessage t))
   | illegal (m : String) : m ∈ [singletonSequencePatternMessage, multipleCollectingBindingsPerLevelMessage,
-      repeatedNameIncludesCollectingMessage, invalidMetaParameterMessage, aliasCycleMessage] →
+      repeatedNameIncludesCollectingMessage, invalidMetaParameterMessage, aliasCycleMessage,
+      familyDirectCollectorMessage] →
       ValidatorError (.illegalInEval m)
   | aliasTarget (n : String) : ValidatorError (.illegalInEval (aliasTargetNotStaticPathMessage n))
   | explicitParams : ValidatorError .explicitParamsRequireOutput
@@ -343,6 +349,9 @@ theorem invalidMeta : ValidatorError (.illegalInEval invalidMetaParameterMessage
 theorem aliasCycle : ValidatorError (.illegalInEval aliasCycleMessage) :=
   .illegal _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
     (List.mem_cons_of_mem _ (List.mem_cons_self ..)))))
+theorem familyDirectCollector : ValidatorError (.illegalInEval familyDirectCollectorMessage) :=
+  .illegal _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
+    (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_self ..))))))
 
 /-- No validator error is the incomplete outcome. -/
 theorem ne_fuelExhausted {e : Error} (h : ValidatorError e) : e ≠ .fuelExhausted := by
@@ -467,6 +476,7 @@ def frameErrorLemma (err : Lean.Expr) : MetaM Name := do
   if mh == ``repeatedNameIncludesCollectingMessage then return ``ValidatorError.repeatedName
   if mh == ``invalidMetaParameterMessage then return ``ValidatorError.invalidMeta
   if mh == ``aliasCycleMessage then return ``ValidatorError.aliasCycle
+  if mh == ``familyDirectCollectorMessage then return ``ValidatorError.familyDirectCollector
   if mh == ``aliasTargetNotStaticPathMessage then return ``ValidatorError.aliasTarget
   if mh == ``hostIdentityMisplacedMessage then return ``ValidatorError.hostMisplaced
   if mh == ``hostProvenanceIncoherentMessage then return ``ValidatorError.hostIncoherent

@@ -213,16 +213,26 @@ ClauseDefinition = [ "public" ] Identifier "(" Pattern ")" [ OutputSpreadMarker 
                         assigned slots as one list. The head's own parentheses are
                         the call's argument list, never a SequencePattern.
                         Multi-clause families and literal/mixed heads elaborate as
-                        conditional algorithms. *)
+                        conditional algorithms, whose structural patterns may
+                        collect too (Tail([]) beside Tail([head, *rest])). The
+                        whole same-name group is classified before the family
+                        rule on collecting bindings applies. *)
 
 Pattern            = PatternAtom { "," PatternAtom } ;
 PatternAtom        = BindingIdentifier             (* fixed bind *)
                    | MetaParameter                (* META bind `meta name` (CallReference S1) *)
                    | CollectingBinding            (* collecting bind `*name`; the ONLY
-                                                      collecting-binding syntax. Valid only for
-                                                      ordinary recursive explicit parameter
-                                                      patterns, at most once per sibling pattern
-                                                      level, and not with "~". Postfix `*` after
+                                                      collecting-binding syntax. Valid at any
+                                                      pattern level of an ordinary explicit
+                                                      parameter list. A clause family (several
+                                                      clauses, or a literal in the head) has one
+                                                      fixed call arity: there it is valid only
+                                                      INSIDE a SequencePattern or ListPattern of
+                                                      one argument (Tail([head, *rest])), and
+                                                      directly among the head's own arguments it
+                                                      is InvalidCollectingBinding. At most once
+                                                      per sibling pattern level, never a repeated
+                                                      name, and not with "~". Postfix `*` after
                                                       a binding name is spread syntax and is a
                                                       targeted error in a binding pattern. *)
                    | [ "-" ] NumberLiteral

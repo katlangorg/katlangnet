@@ -454,6 +454,17 @@ public class LanguageSpecRunnerTests
             // rejection (IllegalInOpen), parse-level by construction.
             "exposure-shape-inline-head-dotted-open-row-capture-refused-open",
             "exposure-shape-inline-head-enclosing-open-row-capture-refused-open",
+            // Collecting bindings inside clause-family patterns (Q-47, decided 2026-11-27): a collector
+            // directly among a family's call arguments, two collectors at one nested level, a repeated
+            // collecting name, a renamed duplicate head and a group around a collector-only sequence
+            // pattern are front-end rejections. In Lean, guard 15 of CoreTests `StructuralPatterns`
+            // checks the validation errors. Guard 16 checks the duplicate error at family dispatch.
+            "family-direct-collector-is-invalid",
+            "literal-clause-direct-collector-is-invalid",
+            "family-nested-collectors-keep-one-per-level",
+            "family-collector-name-is-never-repeated",
+            "family-renamed-collecting-heads-are-duplicates",
+            "family-collector-only-sequence-pattern-and-the-singleton-rule",
         ];
         string[] expectedModelDivergences =
         [

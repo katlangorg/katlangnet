@@ -349,5 +349,24 @@
     ],
     "explanation": "Repeated callable contributions must have the same callable identity (declaration and captured lexical activations), and as soon as a plain value takes part, every contribution's own value must be equal to it. Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.",
     "includeInGeneratorPrompt": true
+  },
+  {
+    "id": "family-collector-only-sequence-pattern-and-the-singleton-rule",
+    "category": "empty-and-singleton",
+    "source": "F(0) = 0\nF(((*xs))) = xs\nF(0)",
+    "outcome": "ParseError",
+    "expectedDiagnosticCode": "SingletonSequencePattern",
+    "expectedParseDiagnosticFragment": "no one-item sequence value",
+    "probes": [
+      {
+        "source": "F(0) = 'zero'\nF((*xs)) = xs\nF(()), F((1, 2)), F(0)",
+        "expectedNeutral": "ok raw=S[L[], L[1, 2], 'zero'] n=3"
+      },
+      {
+        "source": "F(0) = 'zero'\nF((*xs)) = xs\nF([1, 2])",
+        "expectedNeutral": "err branch"
+      }
+    ],
+    "explanation": "The singleton rule is unchanged by collecting bindings in clause families. The collector-only `(*xs)` is a valid sequence pattern there, as in an ordinary definition, and matches every sequence value, `()` included; a group written around it, `((*xs))`, is a sequence pattern with exactly one non-collecting item and stays invalid."
   }
 ]

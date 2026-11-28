@@ -1960,11 +1960,18 @@ public sealed class Parser
 
             for (var i = 0; i < condAlg.Branches.Count; i++)
             {
-                if (condAlg.Branches[i].Pattern.HeadHasBinderOfKind(ParameterKind.Collecting))
+                // A CLAUSE FAMILY HAS ONE FIXED CALL ARITY (Q-47, decided 2026-11-27): a collecting
+                // binding directly among the family's call arguments (`F(head, *rest)`, `F(*xs)`)
+                // is invalid, judged only now that the whole same-name group is classified — a
+                // single literal-free clause is an ordinary algorithm and keeps its top-level
+                // collecting parameter. Inside an argument, a list or sequence pattern collects
+                // under the ordinary structural-pattern rules (`F([head, *rest])`), which the
+                // per-clause checks already applied (ValidateCollectingParameterDeclarations).
+                if (condAlg.Branches[i].Pattern.HeadHasDirectCollector())
                 {
                     ReportError(
                         DiagnosticCode.InvalidCollectingBinding,
-                        $"{CollectingClauseBinderDiagnosticStem} for '{name}'.",
+                        FamilyDirectCollectorDiagnosticFor(name),
                         spans[i]);
                 }
 
@@ -2378,16 +2385,23 @@ public sealed class Parser
 
     /// <summary>
     /// The pre-evaluation rejection of a host-built clause-family head holding a collecting
-    /// binder (<see cref="PreEvaluationAstViolation.CollectingClauseBinder"/>): the wording of the
+    /// binder directly among its call arguments
+    /// (<see cref="PreEvaluationAstViolation.CollectingClauseBinder"/>, Q-47): the wording of the
     /// parser's <see cref="DiagnosticCode.InvalidCollectingBinding"/> report for a written clause
-    /// family, without the family name. C#-only: Lean clause binders never collect.
+    /// family, without the family name. Shares its wording with the Lean model's
+    /// <c>familyDirectCollectorMessage</c>.
     /// </summary>
-    internal const string CollectingClauseBinderDiagnostic = CollectingClauseBinderDiagnosticStem + ".";
+    internal const string FamilyDirectCollectorDiagnostic =
+        "A clause family" + FamilyDirectCollectorDiagnosticTail;
 
-    /// <summary>The one wording of a collecting clause binder report, shared by the parser
-    /// (which appends the family name) and the pre-evaluation rejection.</summary>
-    internal const string CollectingClauseBinderDiagnosticStem =
-        "Collecting bindings are only supported in ordinary explicit parameter lists";
+    /// <summary>The parser's report of a written family's direct collector: the wording of
+    /// <see cref="FamilyDirectCollectorDiagnostic"/> naming the family.</summary>
+    internal static string FamilyDirectCollectorDiagnosticFor(string name) =>
+        $"Clause family '{name}'{FamilyDirectCollectorDiagnosticTail}";
+
+    /// <summary>The one wording of a family's direct-collector report after its subject.</summary>
+    private const string FamilyDirectCollectorDiagnosticTail =
+        " has one fixed call arity, so a collecting binding cannot stand directly among its call arguments. Collect inside a list pattern `[head, *rest]` or a sequence pattern `(head, *rest)`, or gather the arguments in an ordinary single-clause definition.";
 
     /// <summary>
     /// <see cref="DiagnosticCode.SingletonSequencePattern"/>: a structural pattern restriction,
@@ -3474,14 +3488,16 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Reports collecting-binding misuse in an ordinary clause head at the clause's name
+    /// Reports collecting-binding misuse in a clause head at the clause's name
     /// token and returns the pattern the recovered tree keeps. A head with more than one
     /// collecting binding at a pattern level keeps the FIRST at each level; the later
     /// ones become ordinary fixed bindings, exactly as a malformed collect marker never
     /// creates a collecting binding — so no recovered tree carries a parameter shape a
     /// valid program cannot have (the callable binding plans behind editor signatures
-    /// and evaluation reject such a shape outright). Collecting bindings in a
-    /// conditional family are reported once, per branch, by the family validation.
+    /// and evaluation reject such a shape outright). Both collector rules hold for every
+    /// clause head, ordinary or family, at every pattern level (Q-47). A
+    /// collecting binding DIRECTLY among a clause family's call arguments is reported once,
+    /// per branch, by the family validation, after the whole group is classified.
     /// </summary>
     private Pattern ValidateCollectingParameterDeclarations(Pattern pattern, Token nameToken)
     {
@@ -3495,10 +3511,7 @@ public sealed class Parser
             return recovered;
         }
 
-        if (pattern.TryGetOrdinaryClauseParameterPatterns() is not { } parameterPatterns)
-            return pattern;
-
-        if (ParameterPattern.HasRepeatedCaptureNameIncludingCollecting(parameterPatterns))
+        if (pattern.HasRepeatedNameIncludingCollecting())
         {
             ReportErrorAt(
                 DiagnosticCode.InvalidCollectingBinding,

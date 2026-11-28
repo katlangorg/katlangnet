@@ -1674,8 +1674,9 @@ result is — for a root row, when the run's assembled output is read. Runtime f
 are a scalar or the other kind where a structure is expected (`TypeMismatch`), one item too many at a
 level without a collector, one argument too many and a deconstruction that cannot bind
 (`ArityMismatch`), and a family no clause of which matches (`NoMatchingBranch`). The four intended
-refusals (`InvalidFrontEnd`, base member only) are a collecting clause beside another
-(`InvalidCollectingBinding`), two clauses of one structure in different extents
+refusals (`InvalidFrontEnd`, base member only) are a clause that collects directly among its
+family's call arguments beside another (`InvalidCollectingBinding`; its inner level collects too,
+which is valid inside a pattern), two clauses of one structure in different extents
 (`DuplicateBranchPattern`), a one-item sequence group around the inner structure
 (`SingletonSequencePattern`) and a two-parameter clause beside a one-parameter one
 (`BranchArityMismatch`), all reported by the parser (syntax phase). The recipe uses only named picks,
@@ -1693,7 +1694,7 @@ non-collecting level or the deepest level's last item missing. `repeated`: one n
 nested positions (the deepest head and the outer tail, the deepest tail and its parent's tail, or the
 deepest head and tail; NEED-04's group-aware repeated names, ALIAS-UNIFY-1) with equal or unequal data,
 as a single pattern, a parameter list (the plain repeated parameter demands its own value) and a
-clause family with a catch-all (clauses cannot collect). `spread`: one level's data written through a
+clause family with a catch-all (written with fixed levels only). `spread`: one level's data written through a
 spread — the whole level `((items)*)`, a leading pair `((i0, i1)*, …)` or an inserted `()*` — optionally
 with one item more inside the spread. `meta-head`: `F(meta m, (…), t)` or `F((…), t, meta m)` whose
 body counts `m.Arguments`, invokes `m` or ignores it, with a refused (non-call) META argument or a

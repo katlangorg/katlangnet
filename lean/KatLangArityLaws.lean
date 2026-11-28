@@ -4599,43 +4599,95 @@ private theorem single_head_accepts_one (q : NeedPattern) (n : Nat) (hq : q.isCo
   simp
   omega
 
-/-- A clause head's cardinality gate is its top-level arity: clause binders never collect. -/
-theorem clause_head_accepts_exactly_its_top_level_arity (p : Pattern) (n : Nat) :
+/-- THE COLLECTING KIND REACHES THE BINDER (Q-47): a clause pattern's need pattern collects
+    exactly when the clause pattern is a collecting binder. -/
+theorem clause_need_pattern_collects_iff (q : Pattern) :
+    NeedPattern.isCollecting (NeedPattern.ofClause q) = q.isCollecting := by
+  cases q <;> simp [NeedPattern.ofClause, NeedPattern.isCollecting, Pattern.isCollecting]
+
+/-- A clause head's cardinality gate is its top-level arity when no collecting binder stands
+    directly among its call arguments (Q-47: every family head `validateAlgorithmTree` admits,
+    `Pattern.headHasDirectCollector`). A collector nested in a structural pattern of an argument
+    never moves the gate: that pattern is one argument, whatever it collects. The hypothesis is
+    necessary (`direct_family_collector_would_accept_any_count`). -/
+theorem clause_head_accepts_exactly_its_top_level_arity (p : Pattern) (n : Nat)
+    (h : p.headHasDirectCollector = false) :
     needAcceptsCardinality (needClauseHead p) n = (Pattern.topLevelArity p == n) := by
-  have hcoll : ∀ q : Pattern, NeedPattern.isCollecting (NeedPattern.ofClause q) = false := by
-    intro q; cases q <;> simp [NeedPattern.ofClause, NeedPattern.isCollecting]
+  have hlit : ∀ q : Pattern, q.isCollecting = false →
+      NeedPattern.isCollecting (NeedPattern.ofClause q) = false := by
+    intro q hq; rw [clause_need_pattern_collects_iff]; exact hq
   cases p with
   | sequenceValue ps =>
+      have hall : ∀ r ∈ ps, r.isCollecting = false := by
+        simpa [Pattern.headHasDirectCollector] using h
       have hf : (ps.map NeedPattern.ofClause).filter NeedPattern.isCollecting = [] := by
         rw [List.filter_eq_nil_iff]; intro q hq
-        obtain ⟨r, _, rfl⟩ := List.mem_map.mp hq
-        simp [hcoll r]
+        obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hq
+        simp [hlit r (hall r hr)]
       have hany : (ps.map NeedPattern.ofClause).any NeedPattern.isCollecting = false := by
         rw [List.any_eq_false]; intro q hq
-        obtain ⟨r, _, rfl⟩ := List.mem_map.mp hq
-        simp [hcoll r]
+        obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hq
+        simp [hlit r (hall r hr)]
       simp only [needAcceptsCardinality, needMinimumSuppliedSlots, needClauseHead, hf, hany,
         Pattern.topLevelArity, List.length_map, List.length_nil, Nat.sub_zero, Bool.false_or]
       cases hn : (n == ps.length) <;> cases hm : (ps.length == n) <;> simp_all <;> omega
-  | bind x =>
-      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+  | bind x collecting =>
+      have hc : (Pattern.bind x collecting).isCollecting = false := by
+        simpa [Pattern.headHasDirectCollector] using h
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hlit _ hc)
   | litInt i =>
-      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hlit _ rfl)
   | litString str =>
-      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hlit _ rfl)
   | litBool b =>
-      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hlit _ rfl)
   | listValue ps =>
-      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hlit _ rfl)
 
-/-- ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY, clause families: a family accepts
-    the zero-argument demand exactly when the production dispatcher's gate
+/-- WHY A FAMILY REFUSES A DIRECT COLLECTOR (Q-47): a head that is itself a collecting binder
+    has top-level arity 1, yet its binder level would accept every supply count, so the family's
+    one fixed call arity would not exist. `validateAlgorithmTree` refuses such a head. -/
+theorem direct_family_collector_would_accept_any_count (name : Ident) (n : Nat) :
+    needAcceptsCardinality (needClauseHead (.bind name true)) n = true := by
+  simp [needAcceptsCardinality, needMinimumSuppliedSlots, needClauseHead, NeedPattern.ofClause,
+    NeedPattern.isCollecting, List.filter_cons]
+
+/-- A NESTED COLLECTOR NEVER CHANGES THE CALL ARITY (Q-47): a list or sequence pattern that
+    collects is ONE argument of its clause head, so the head accepts exactly one supplied
+    cell however many elements the collector takes. -/
+theorem nested_collector_head_accepts_exactly_one_argument (items : List Pattern) (n : Nat) :
+    needAcceptsCardinality (needClauseHead (.sequenceValue [.listValue items])) n = (1 == n)
+      ∧ needAcceptsCardinality (needClauseHead (.sequenceValue [.sequenceValue items])) n = (1 == n) := by
+  constructor
+  · simpa [Pattern.topLevelArity] using
+      clause_head_accepts_exactly_its_top_level_arity (.sequenceValue [.listValue items]) n
+        (by simp [Pattern.headHasDirectCollector, Pattern.isCollecting])
+  · simpa [Pattern.topLevelArity] using
+      clause_head_accepts_exactly_its_top_level_arity (.sequenceValue [.sequenceValue items]) n
+        (by simp [Pattern.headHasDirectCollector, Pattern.isCollecting])
+
+private theorem family_arity_zero_is_the_head_gate (branches : List CondBranch)
+    (hall : ∀ branch ∈ branches, branch.pattern.headHasDirectCollector = false) :
+    branches.any (fun branch => Pattern.topLevelArity branch.pattern == 0)
+      = branches.any (fun branch => needAcceptsCardinality (needClauseHead branch.pattern) 0) := by
+  induction branches with
+  | nil => rfl
+  | cons b rest ih =>
+      simp only [List.any_cons]
+      rw [clause_head_accepts_exactly_its_top_level_arity b.pattern 0 (hall b List.mem_cons_self),
+        ih (fun branch hbranch => hall branch (List.mem_cons_of_mem _ hbranch))]
+
+/-- ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY, clause families: a family whose heads
+    hold no direct collector (Q-47, every family `validateAlgorithmTree` admits) accepts the
+    zero-argument demand exactly when the production dispatcher's gate
     (`selectNeedFamilyBranch`: some head accepts the supply count) accepts zero cells. -/
 theorem family_zero_argument_acceptance_is_the_dispatch_gate (parent : Option ScopeCtx)
-    (opens : List Expr) (branches : List CondBranch) (identity : Option PropertyIdentity) :
+    (opens : List Expr) (branches : List CondBranch) (identity : Option PropertyIdentity)
+    (h : Algorithm.hasFamilyDirectCollector (.conditional parent opens branches identity) = false) :
     Algorithm.acceptsZeroSuppliedArguments (.conditional parent opens branches identity)
       = branches.any (fun branch => needAcceptsCardinality (needClauseHead branch.pattern) 0) := by
-  simp only [Algorithm.acceptsZeroSuppliedArguments, clause_head_accepts_exactly_its_top_level_arity]
+  simp only [Algorithm.acceptsZeroSuppliedArguments]
+  exact family_arity_zero_is_the_head_gate branches (by simpa [Algorithm.hasFamilyDirectCollector] using h)
 
 /-! ### The cardinality gate precedes every effect -/
 

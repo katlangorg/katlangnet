@@ -4016,7 +4016,7 @@ public static partial class Evaluator
             PreEvaluationAstViolation.RepeatedNameIncludesCollecting =>
                 new EvalError.IllegalInEval(Parser.RepeatedNameIncludesCollectingDiagnostic),
             PreEvaluationAstViolation.CollectingClauseBinder =>
-                new EvalError.IllegalInEval(Parser.CollectingClauseBinderDiagnostic),
+                new EvalError.IllegalInEval(Parser.FamilyDirectCollectorDiagnostic),
             PreEvaluationAstViolation.InvalidMetaParameter or PreEvaluationAstViolation.MetaClauseBinder =>
                 new EvalError.IllegalInEval(Parser.InvalidMetaParameterDiagnostic),
             PreEvaluationAstViolation.ConditionalBranchOutputArityMismatch v =>

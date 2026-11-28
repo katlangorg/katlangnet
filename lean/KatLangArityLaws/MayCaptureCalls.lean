@@ -15,7 +15,7 @@ A node fires the gate when it is
 
 * a `meta` capture of a parameter list, at any depth (`ParameterPattern.anyHasMetaCapture`; C#:
   `IsMetaBinder`, a `CaptureParameterPattern` of kind `Meta`). Lean's clause binder `Pattern.bind`
-  has no kind, so the clause-binder half of C#'s clause has no Lean form
+  has no META kind (it carries only its collecting flag), so the clause-binder half of C#'s clause has no Lean form
   (`ParameterPattern.metaViolation?`'s note: the C# front end and preflight reject one);
 * a name `Expr.resolve` or a dot edge `Expr.dotMember` spelled with the prelude name of a builtin
   whose signature declares a `meta` parameter (`metaBuiltinNames`: `while`, `repeat`), whatever it

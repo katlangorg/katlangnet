@@ -318,7 +318,7 @@ public class CollectingPropertyOwnerContextTests
     }
 
     [Theory]
-    // C15: a clause family cannot declare a collecting clause (the zero-supply family has no surface
+    // C15: a clause family cannot collect directly among its call arguments (the zero-supply family has no surface
     // spelling; ExplicitCallPublicationTests pins the host-built one), and `open` refuses an owner that
     // requires arguments, so neither reaches the new read.
     [InlineData("H(0) = 100\nH(*xs) = {\n    V = trace(k)\n    V\n}", "[0].map{ n + H }[0] + H", "InvalidCollectingBinding: ")]

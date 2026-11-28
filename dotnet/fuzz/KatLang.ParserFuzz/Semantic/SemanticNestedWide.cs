@@ -38,10 +38,11 @@ namespace KatLang.ParserFuzz;
 /// Failures: a non-structure where a structure is expected and a list for a sequence (or the
 /// reverse) are <c>TypeMismatch</c>; too many items for a level
 /// without a collector, too many arguments, and a deconstruction that cannot bind are
-/// <c>ArityMismatch</c>; a family none of whose clauses matches is <c>NoMatchingBranch</c>. Clauses
-/// cannot collect, two clauses of one structure are duplicates whatever their extents, a one-item
-/// sequence group is invalid, and all clauses take the same number of parameters (tutorial § Rules
-/// for Clauses): those are the four intended refusals.</para>
+/// <c>ArityMismatch</c>; a family none of whose clauses matches is <c>NoMatchingBranch</c>. A clause
+/// cannot collect directly among its family's call arguments (Q-47: a collector inside a pattern of
+/// one argument is valid), two clauses of one structure are duplicates whatever their extents, a
+/// one-item sequence group is invalid, and all clauses take the same number of parameters (tutorial
+/// § Rules for Clauses): those are the four intended refusals.</para>
 ///
 /// <para>Every decision is a named pick (never a <see cref="SemanticChooser.Chance"/>), so the recipe
 /// is finite and <see cref="SemanticExhaustive"/> enumerates it.</para>
@@ -433,13 +434,24 @@ internal static class SemanticNestedWide
             case 0:
             case 1:
             {
-                // A collecting first clause beside a second one of another deepest kind, or the
-                // same structure again with fresh names in another written extent.
+                // A first clause that collects DIRECTLY among the family's call arguments beside a
+                // second one of another deepest kind (Q-47: a family has one fixed call arity; the
+                // first clause's inner level collects too, which is valid inside its pattern), or
+                // the same structure again with fresh names in another written extent.
                 var second = new Writer(g);
                 var other = second.Levels(depth, kinds, false, false, false);
                 if (kind == 0) other.Deepest.IsList = !other.Deepest.IsList;
-                clauses.Add(new MClause(first.Pattern(top, layout), new MExpr.ListLit([SemanticGrammar.Atom(1), .. body.Select(static b => b.Expr)])));
-                clauses.Add(new MClause(second.Pattern(other, (layout + 1) % Layouts.Length),
+                var firstHead = first.Pattern(top, layout);
+                var secondHead = second.Pattern(other, (layout + 1) % Layouts.Length);
+                if (kind == 0)
+                {
+                    // `F((…), *rest)` beside `F((…), last)`: both clauses write two top-level items.
+                    firstHead = new MPattern.ParameterList([firstHead, new MPattern.Collecting(g.Fresh())]);
+                    secondHead = new MPattern.ParameterList([secondHead, new MPattern.Binder(g.Fresh())]);
+                }
+
+                clauses.Add(new MClause(firstHead, new MExpr.ListLit([SemanticGrammar.Atom(1), .. body.Select(static b => b.Expr)])));
+                clauses.Add(new MClause(secondHead,
                     new MExpr.ListLit([SemanticGrammar.Atom(2), .. second.Body(other).Select(static b => b.Expr)])));
                 break;
             }

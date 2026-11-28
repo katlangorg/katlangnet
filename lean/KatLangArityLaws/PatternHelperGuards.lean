@@ -16,6 +16,8 @@ separate, bounded evidence (`experimental/features/r3prime-pattern-helper-totali
 namespace KatLang.PatternHelperGuards
 
 def b (x : Ident) : Pattern := .bind x
+/-- A collecting binder `*x` (Q-47). -/
+def c (x : Ident) : Pattern := .bind x true
 def seq (ps : List Pattern) : Pattern := .sequenceValue ps
 def lst (ps : List Pattern) : Pattern := .listValue ps
 def cap (x : Ident) (kind : ParameterKind := .normal) : ParameterPattern := .capture { name := x, kind := kind }
@@ -50,6 +52,20 @@ def typeMismatchText? : Error → Option String
 #guard Pattern.matchEquivalentWithRenaming (b "x") (b "d") [("x", "c"), ("x", "d")] == none
 #guard Pattern.matchEquivalentWithRenaming (b "y") (b "d") [("x", "c"), ("x", "d")] == none
 
+-- The collecting flag is part of the shape (Q-47): renamed collecting heads are duplicates, a
+-- fixed binder never meets a collecting one, and the collector's POSITION distinguishes heads.
+#guard (lst [b "head", c "rest"]).isMatchEquivalent (lst [b "first", c "others"])
+#guard !(lst [b "x"]).isMatchEquivalent (lst [c "xs"])
+#guard !(lst [c "xs"]).isMatchEquivalent (lst [b "x"])
+#guard !(lst [b "x", c "r"]).isMatchEquivalent (lst [c "r", b "x"])
+#guard !(lst [b "x", c "r"]).isMatchEquivalent (seq [b "x", c "r"])
+#guard (seq [.litString "packet", c "fields", .litString "end"]).isMatchEquivalent
+  (seq [.litString "packet", c "payload", .litString "end"])
+#guard !(seq [.litString "packet", c "fields", .litString "end"]).isMatchEquivalent
+  (seq [.litString "packet", c "fields", .litString "stop"])
+#guard Pattern.matchEquivalentWithRenaming (lst [b "h", c "t"]) (lst [b "a", c "z"]) [] == some [("t", "z"), ("h", "a")]
+#guard Pattern.matchEquivalentWithRenaming (c "t") (b "z") [] == none
+
 def clause (pattern : Pattern) (n : Nat) : CondBranch := ⟨pattern, .mk none [] [] [] [.num n]⟩
 def family (bs : List CondBranch) : Algorithm := .conditional none [] bs
 
@@ -57,6 +73,9 @@ def family (bs : List CondBranch) : Algorithm := .conditional none [] bs
   clause (seq [b "p", b "p"]) 3]).hasDuplicateBranchPatterns
 #guard !(family [clause (seq [b "x", b "x"]) 1, clause (seq [b "a", b "b"]) 1]).hasDuplicateBranchPatterns
 #guard !(family [clause (seq [b "x", b "y"]) 1, clause (lst [b "x", b "y"]) 1]).hasDuplicateBranchPatterns
+#guard (family [clause (seq [lst []]) 1, clause (seq [lst [b "head", c "rest"]]) 2,
+  clause (seq [lst [b "first", c "others"]]) 3]).hasDuplicateBranchPatterns
+#guard !(family [clause (seq [lst []]) 1, clause (seq [lst [b "x"]]) 2, clause (seq [lst [c "xs"]]) 3]).hasDuplicateBranchPatterns
 
 /-! ## Value matching: the environment contract -/
 
@@ -85,6 +104,9 @@ def family (bs : List CondBranch) : Algorithm := .conditional none [] bs
 #guard matchStructureInto [] (some []) [("k", .atom 0)] == some [("k", .atom 0)]
 #guard matchStructureInto [b "x", b "y"] (some [.atom 1]) [] == none
 #guard matchStructureInto [b "x"] (some [.atom 1, .atom 2]) [] == none
+-- A collecting binder is no value pattern: only the need binder allocates its slice (Q-47).
+#guard matchPattern (c "xs") (.listValue [.atom 1]) == none
+#guard matchPattern (lst [b "h", c "t"]) (.listValue [.atom 1, .atom 2]) == none
 -- A raw one-item sequence (rejected earlier by source admission) keeps its current result.
 #guard matchPattern (seq [b "x"]) (.sequenceValue [.atom 4]) == some [("x", .atom 4)]
 #guard matchPattern (seq [b "x"]) (.atom 4) == none
@@ -98,6 +120,45 @@ def family (bs : List CondBranch) : Algorithm := .conditional none [] bs
 #guard (lst [b "x", b "y"]).plainClauseParameterPatterns?.map (·.map ParameterPattern.displayName)
   == some ["[x, y]"]
 #guard (seq [b "x", lst [b "x", b "y"]]).plainClauseParamNames? == some ["x", "x", "y"]
+-- A collecting binder converts to a collecting capture, at the top of a sole head and nested (Q-47).
+#guard (seq [b "head", c "rest"]).plainClauseParameterPatterns?.map (·.map ParameterPattern.displayName)
+  == some ["head", "*rest"]
+#guard (seq [lst [b "head", c "rest"]]).plainClauseParameterPatterns?.map (·.map ParameterPattern.displayName)
+  == some ["[head, *rest]"]
+#guard (c "xs").plainClauseParameterPatterns?.map (·.map ParameterPattern.displayName) == some ["*xs"]
+#guard (seq [.litInt 0, lst [c "xs"]]).plainClauseParameterPatterns?.isNone
+#guard (clauseCaptures (seq [b "a", lst [b "b", c "r"], .litInt 0])).map CallableParameter.displayName == ["a", "b", "*r"]
+
+/-! ## The collector rules of a clause head (Q-47) -/
+
+-- A collector directly among the head's call arguments, or a head that is itself one.
+#guard (seq [b "head", c "rest"]).headHasDirectCollector
+#guard (c "xs").headHasDirectCollector
+#guard !(seq [lst [b "head", c "rest"]]).headHasDirectCollector
+#guard !(seq [seq [b "head", c "rest"], b "y"]).headHasDirectCollector
+#guard !(lst [c "xs"]).headHasDirectCollector
+-- One collector per level: the head's own list and every nested group are levels.
+#guard (seq [lst [c "a", c "b"]]).hasMultipleCollectingLevel
+#guard (seq [c "a", c "b"]).hasMultipleCollectingLevel
+#guard (seq [b "x", seq [b "y", lst [c "a", b "z", c "b"]]]).hasMultipleCollectingLevel
+#guard !(seq [lst [c "a"], lst [c "b"]]).hasMultipleCollectingLevel
+#guard !(seq [lst [b "x", c "a", seq [c "b"]]]).hasMultipleCollectingLevel
+-- No repeated name involving a collector, at any depth.
+#guard (seq [lst [b "x", c "x"]]).hasRepeatedNameIncludingCollecting
+#guard (seq [b "r", lst [c "r"]]).hasRepeatedNameIncludingCollecting
+#guard (seq [lst [c "r"], lst [c "r"]]).hasRepeatedNameIncludingCollecting
+#guard !(seq [b "x", lst [b "x", c "r"]]).hasRepeatedNameIncludingCollecting
+#guard !(seq [lst [c "a"], lst [c "b"]]).hasRepeatedNameIncludingCollecting
+-- The singleton rule: a collector-only sequence pattern is valid, a group around it is not.
+#guard !(seq [seq [c "xs"]]).headHasSingletonSequenceGroup
+#guard (seq [seq [seq [c "xs"]]]).headHasSingletonSequenceGroup
+#guard (seq [seq [b "x"]]).headHasSingletonSequenceGroup
+#guard !(seq [seq [b "x", c "xs"]]).headHasSingletonSequenceGroup
+-- The collecting kind reaches the binder: only a head without a direct collector has a fixed arity.
+#guard needAcceptsCardinality (needClauseHead (seq [lst [b "head", c "rest"]])) 1
+#guard !needAcceptsCardinality (needClauseHead (seq [lst [b "head", c "rest"]])) 2
+#guard !needAcceptsCardinality (needClauseHead (seq [lst [b "head", c "rest"]])) 0
+#guard needAcceptsCardinality (needClauseHead (seq [b "head", c "rest"])) 5
 #guard (ParameterPattern.sequenceValue [cap "a", .listValue [cap "b", cap "r" .collecting], cap "m" .metaRef]).captures.map
   CallableParameter.displayName == ["a", "b", "*r", "meta m"]
 

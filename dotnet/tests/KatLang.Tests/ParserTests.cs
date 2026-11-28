@@ -5463,10 +5463,34 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
 
         Assert.True(result.HasErrors);
-        var diag = Assert.Single(result.Diagnostics, d =>
-            d.Message.Contains("Collecting bindings are only supported in ordinary explicit parameter lists") &&
-            d.Message.Contains("F"));
+        // A collecting binding directly among a clause family's call arguments (Q-47): the
+        // family has one fixed call arity.
+        var diag = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidCollectingBinding, diag.Code);
+        Assert.Equal(Parser.FamilyDirectCollectorDiagnosticFor("F"), diag.Message);
         Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
+    }
+
+    [Fact]
+    public void Parse_Conditional_CollectingBindingInsideAListPattern_IsAFamilyBinder()
+    {
+        var source = """
+            Tail([]) = []
+            Tail([head, *rest]) = rest
+            """;
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors, string.Join("\n", result.Diagnostics));
+        var cond = Assert.IsType<Algorithm.Conditional>(Assert.Single(result.Root.Properties).Value);
+        Assert.Equal(2, cond.Branches.Count);
+        // The head's own argument list holds ONE list pattern; the collector is nested in it.
+        var head = Assert.IsType<Pattern.SequenceValue>(cond.Branches[1].Pattern);
+        Assert.Equal(1, head.TopLevelArity());
+        var list = Assert.IsType<Pattern.ListValue>(Assert.Single(head.Items));
+        Assert.Equal(
+            [ParameterKind.Normal, ParameterKind.Collecting],
+            list.Items.Select(static item => Assert.IsType<Pattern.Bind>(item).ParameterKind));
+        Assert.False(head.HeadHasDirectCollector());
     }
 
     [Fact]

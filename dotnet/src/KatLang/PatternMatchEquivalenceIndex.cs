@@ -20,11 +20,13 @@ namespace KatLang;
 /// The relation is defined on the pattern TREE a head spells out, a node per occurrence. The key
 /// codes that tree's nodes as:</para>
 /// <list type="bullet">
-/// <item>a binder as its FIRST-OCCURRENCE index in left-to-right leaf order (spelling, span, and
-/// parameter kind are erased; a repeated name repeats its index, so the equality constraints of
-/// repeated binders are kept, and two patterns get the same index sequence exactly when a
-/// consistent bijection between their binder names exists — the bijection <c>IsMatchEquivalent</c>
-/// builds);</item>
+/// <item>a binder as its FIRST-OCCURRENCE index in left-to-right leaf order under a tag that says
+/// whether it COLLECTS (<c>b</c> for a fixed binder, <c>c</c> for a collecting one: <c>[x]</c> and
+/// <c>[*xs]</c> are different heads, Q-47; spelling, span and the META kind are erased; a repeated
+/// name repeats its index, so the equality constraints of repeated binders are kept, and two
+/// patterns get the same tagged index sequence exactly when a consistent bijection between their
+/// binder names exists and corresponding binders agree on collecting — the relation
+/// <c>IsMatchEquivalent</c> decides);</item>
 /// <item>a numeric literal as the canonical form of its VALUE, so key equality is
 /// <see cref="Decimal128"/>.Equals: one NaN token (NaN is reflexively equal), one zero token (the
 /// sign of zero is ignored), signed infinities, and for a finite nonzero value its sign, its
@@ -361,7 +363,7 @@ internal sealed class PatternMatchEquivalenceIndex(PatternComparisonObservations
                     _binderIndexes ??= new BinderInterner(_owner);
                     _owner._observations?.RecordBinderName(bind.Name.Length);
                     var index = _binderIndexes.GetOrAdd(bind.Name, out _);
-                    Append('b');
+                    Append(bind.ParameterKind == ParameterKind.Collecting ? 'c' : 'b');
                     AppendFormatted(index);
                     Append(';');
                     break;
@@ -685,7 +687,8 @@ internal sealed class PatternMatchEquivalenceIndex(PatternComparisonObservations
                             index = _binderIndexes.Count;
                             _binderIndexes.Add(bind.Name, index);
                         }
-                        _text.Append('b').Append(CultureInfo.InvariantCulture, $"{index}").Append(';');
+                        _text.Append(bind.ParameterKind == ParameterKind.Collecting ? 'c' : 'b')
+                            .Append(CultureInfo.InvariantCulture, $"{index}").Append(';');
                         break;
                     case Pattern.LitInt litInt:
                         _text.Append('n');

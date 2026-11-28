@@ -85,7 +85,26 @@ public class ClauseGroupElaborationTests
 
         new("collecting.inConditionalFamily",
             "F(0) = 0\nF(*xs) = 1\nF(1)",
-            [(DiagnosticCode.InvalidCollectingBinding, "Collecting bindings are only supported in ordinary explicit parameter lists for 'F'.", new SourceSpan(2, 1, 2, 11))]),
+            [(DiagnosticCode.InvalidCollectingBinding, Parser.FamilyDirectCollectorDiagnosticFor("F"), new SourceSpan(2, 1, 2, 11))]),
+
+        // Q-47: the restriction is about the family's CALL ARGUMENTS only. A collecting binding
+        // inside a list or sequence pattern of an argument is an ordinary family binder, in a
+        // family of several clauses and in a single literal-bearing clause.
+        new("collecting.insideAListPatternOfAFamilyIsValid",
+            "F([]) = 0\nF([x, *xs]) = 1\nF([1])",
+            []),
+        new("collecting.insideASequencePatternOfALiteralClauseIsValid",
+            "F((0, *xs)) = 1\nF((0, 1))",
+            []),
+        new("collecting.directBesideALiteral",
+            "F(0, *xs) = 1\nF(0)",
+            [(DiagnosticCode.InvalidCollectingBinding, Parser.FamilyDirectCollectorDiagnosticFor("F"), new SourceSpan(1, 1, 1, 14))]),
+        new("collecting.twoAtOneNestedLevel",
+            "F([]) = 0\nF([*a, *b]) = 1\nF([1])",
+            [(DiagnosticCode.InvalidCollectingBinding, Parser.MultipleCollectingBindingsPerLevelDiagnostic, new SourceSpan(2, 1, 2, 2))]),
+        new("collecting.repeatedNameInALiteralHead",
+            "F((0, x, *x)) = 1\nF((0, 1))",
+            [(DiagnosticCode.InvalidCollectingBinding, Parser.RepeatedNameIncludesCollectingDiagnostic, new SourceSpan(1, 1, 1, 2))]),
 
         // Grace is no clause-family build diagnostic (Q-16 G-O): the builder keeps only the
         // head-pattern grammar, and a marker in a branch body is judged by its OWNER in the
@@ -277,18 +296,18 @@ public class ClauseGroupElaborationTests
     public void InvalidFirstClause_StillEstablishesFamilyOrderAndDeclarationIdentity()
     {
         // Z's FIRST clause is invalid once the family is known to be conditional: a
-        // collecting binding is only valid in an ordinary explicit parameter list (a lone
-        // `Z((*xs))` clause would be an ordinary algorithm). Recovery still keeps that clause
+        // collecting binding cannot stand directly among a family's call arguments (a lone
+        // `Z(*xs)` clause would be an ordinary algorithm). Recovery still keeps that clause
         // as Z's first branch/declaration and, crucially, records Z as the first-seen family
         // before A. Dropping invalid clauses from the ordering state would reorder the
         // appended families to A, Z and change Z's canonical declaration identity. (This
         // witness used to be Grace in the clause body; Grace is no clause-family build
         // diagnostic since Q-16 G-O — the parameter detector judges it per owner.)
-        const string source = "Z((*xs)) = 0\nA(0) = 0\nZ(x) = x\nA(y) = y\nZ(1)";
+        const string source = "Z(*xs) = 0\nA(0) = 0\nZ(x) = x\nA(y) = y\nZ(1)";
         var syntax = Parser.ParseSyntax(source);
 
         Assert.Equal(
-            [(DiagnosticCode.InvalidCollectingBinding, "Collecting bindings are only supported in ordinary explicit parameter lists for 'Z'.", new SourceSpan(1, 1, 1, 13))],
+            [(DiagnosticCode.InvalidCollectingBinding, Parser.FamilyDirectCollectorDiagnosticFor("Z"), new SourceSpan(1, 1, 1, 11))],
             syntax.Diagnostics.Select(d => (d.Code, d.Message, d.Span)).ToList());
         Assert.Equal(
             [

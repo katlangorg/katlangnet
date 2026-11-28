@@ -316,36 +316,66 @@ public class InferredSignatureValidityTests
         Assert.IsType<EvalError.IllegalInEval>(result.Error);
     }
 
-    // A host-built CLAUSE HEAD never collects (FORMAL-07 research, October 2026): the parser
-    // refuses a collecting binder in a clause family, and Lean's clause binders cannot collect
-    // (`NeedPattern.ofClause`), so the pre-evaluation gate refuses such a head before the one
-    // binder sees it. Formerly only user algorithms were checked: two collecting binders at one
-    // level made a short supply (`F()`, `F(1, [])`) index out of range — a raw
-    // ArgumentOutOfRangeException escaped Evaluator.Run — and otherwise silently bound the
-    // second collector to ONE raw item (`F(1, 2, 3)` bound `a = [1, 2]`, `b = 3`); a single
-    // collecting binder collected in a two-clause family but lost its kind in a single-clause
-    // one, and zero-argument acceptance ignored it.
+    // THE COLLECTOR RULES OF A HOST-BUILT CLAUSE HEAD (Q-47, decided 2026-11-27; FORMAL-07
+    // research, October 2026): a clause family has one fixed call arity, so a collecting binder
+    // directly among its call arguments is refused, and every level of the head holds at most
+    // one collector — the pre-evaluation gate refuses such a head before the one binder sees it.
+    // Formerly only user algorithms were checked: two collecting binders at one level made a
+    // short supply (`F()`, `F(1, [])`) index out of range — a raw ArgumentOutOfRangeException
+    // escaped Evaluator.Run — and otherwise silently bound the second collector to ONE raw item
+    // (`F(1, 2, 3)` bound `a = [1, 2]`, `b = 3`); a single top-level collecting binder collected
+    // in a two-clause family but lost its kind in a single-clause one, and zero-argument
+    // acceptance ignored it.
     [Theory]
-    [InlineData("two-top", "F()")]
-    [InlineData("two-top", "F(1, 2, 3)")]
-    [InlineData("two-nested", "F(1, [])")]
-    [InlineData("one-top", "F(5, 6, 7)")]
-    [InlineData("one-nested-sequence", "F(1, (2, 3))")]
-    [InlineData("one-nested-list", "F(1, [2])")]
-    public void HostBuiltClauseHeadWithACollectingBinder_IsIllegalBeforeEvaluation_NeverAHostException(string shape, string call)
+    [InlineData("two-top", "F()", Parser.MultipleCollectingBindingsPerLevelDiagnostic)]
+    [InlineData("two-top", "F(1, 2, 3)", Parser.MultipleCollectingBindingsPerLevelDiagnostic)]
+    [InlineData("two-nested", "F(1, [])", Parser.MultipleCollectingBindingsPerLevelDiagnostic)]
+    [InlineData("one-top", "F(5, 6, 7)", Parser.FamilyDirectCollectorDiagnostic)]
+    [InlineData("repeated-nested", "F(1, [2, 3])", Parser.RepeatedNameIncludesCollectingDiagnostic)]
+    public void HostBuiltClauseHeadThatBreaksACollectorRule_IsIllegalBeforeEvaluation_NeverAHostException(string shape, string call, string reason)
     {
         Pattern head = shape switch
         {
             "two-top" => new Pattern.SequenceValue([CollectingBinder("a"), CollectingBinder("b")]),
             "two-nested" => new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.ListValue([CollectingBinder("p"), CollectingBinder("q")])]),
             "one-top" => new Pattern.SequenceValue([new Pattern.Bind("a"), CollectingBinder("b")]),
-            "one-nested-sequence" => new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.SequenceValue([new Pattern.Bind("p"), CollectingBinder("q")])]),
-            "one-nested-list" => new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.ListValue([CollectingBinder("q")])]),
+            "repeated-nested" => new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.ListValue([new Pattern.Bind("a"), CollectingBinder("a")])]),
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
 
         var illegal = Assert.IsType<EvalError.IllegalInEval>(RunHostBuiltFamily(call, head).Error);
-        Assert.Equal("Collecting bindings are only supported in ordinary explicit parameter lists.", illegal.Reason);
+        Assert.Equal(reason, illegal.Reason);
+    }
+
+    // A collecting binder INSIDE a sequence or list pattern of an argument is valid in a host-built
+    // head and binds through the one binder (until Q-47 the gate refused it wherever it stood).
+    // The body is `a`, the body of the written clause `F(a, b) = a`.
+    [Theory]
+    [InlineData("one-nested-sequence", "F(1, (2, 3))", "2")]
+    [InlineData("one-nested-sequence", "F(1, (2, 3, 4))", "2")]
+    [InlineData("one-nested-list", "F(1, [2])", "L[2]")]
+    [InlineData("one-nested-list", "F(1, [])", "L[]")]
+    [InlineData("one-nested-list", "F(0, 9)", "1")]
+    public void HostBuiltClauseHeadWithANestedCollector_Evaluates(string shape, string call, string expected)
+    {
+        Pattern head = shape switch
+        {
+            "one-nested-sequence" => new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.SequenceValue([new Pattern.Bind("a"), CollectingBinder("q")])]),
+            "one-nested-list" => new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.ListValue([CollectingBinder("a")])]),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+
+        var result = RunHostBuiltFamily(call, head);
+        if (result.IsError)
+            Assert.Fail(result.Error.ToString());
+        Assert.Equal(expected, Neutral(result.Value));
+
+        static string Neutral(Result value) => value switch
+        {
+            Result.Atom atom => Rendering.ValueTextRenderer.FormatNumberInvariant(atom.Value),
+            Result.ListValue list => "L[" + string.Join(", ", list.Items.Select(Neutral)) + "]",
+            _ => value.ToString() ?? "",
+        };
     }
 
     // `flat` is the single-clause flattened route (`TryGetFlatBinderUserEquivalent`), which
@@ -373,7 +403,7 @@ public class InferredSignatureValidityTests
             Output: OutputBundle.From([new Expr.Call(new Expr.Resolve("F"), OutputBundle.From(arguments))]));
 
         var illegal = Assert.IsType<EvalError.IllegalInEval>(Evaluator.Run(new Expr.AlgorithmExpr(root)).Error);
-        Assert.Equal("Collecting bindings are only supported in ordinary explicit parameter lists.", illegal.Reason);
+        Assert.Equal(Parser.FamilyDirectCollectorDiagnostic, illegal.Reason);
     }
 
     [Fact]

@@ -1,5 +1,7 @@
 # KatLang Semantic Constitution: law summary
 
+> **Q-47, collecting bindings inside clause-family patterns — 2026-11-28 (ONE owner decision, made on 2026-11-27 and recorded and implemented by the task whose brief states it; no law title changed, no law added, retired or renumbered; ONE registry status change, Q-47 RESOLVED BY DECISION; uncommitted over `main` @ `4fab2a56`):** the law headings and markers follow `constitution.md`. PAT-04 and VAR-02 lose their *(Open Q-47)* markers: a clause family has one fixed call arity, and within any argument a list or sequence pattern may contain collecting bindings under the ordinary structural-pattern rules, while a collector directly among a family's call arguments stays `InvalidCollectingBinding`. Lean and C# changed together, so neither law gains a *C#-only* marker.
+
 > **Q-57, the position of `xor` on the precedence ladder — 2026-11-28 (ONE owner decision, made on 2026-11-27 and recorded from the brief of the task that records it; no law title changed, no law added, retired or renumbered; ONE registry status change, Q-57 RESOLVED BY DECISION; uncommitted over `main` @ `a11ad7fa`):** the law headings and markers follow `constitution.md`. OP-01 loses its *(Open Q-57)* marker, because the owner confirmed the order `or` < `xor` < `and` and adopted its rationale: each side of an exclusive choice can express a conjunction, and the whole choice can serve as one alternative in a larger disjunction. OP-01 keeps *(C#-only)*: the ladder is a rule of the C# parser, and Lean has no parser.
 
 > **Q-51, a written spread right-hand side of assignment deconstruction — 2026-11-28 (ONE owner decision, recorded from the brief of the task that records it; no law title changed, no law added, retired or renumbered; ONE registry status change, Q-51 RESOLVED BY DECISION; uncommitted over `main` @ `1708b36f`):** the law headings and markers follow `constitution.md`. VAR-05 loses its *(Open Q-51)* marker, because the owner decided that a written spread right-hand side is captured by ordinary capture before deconstruction opens it one level, and keeps *(Open Q-84)*, the independent question about argument views.
@@ -102,7 +104,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 ## VAR — Collecting bindings, deconstruction, and forwarding
 
 - **VAR-01** A collecting binding collects exactly its allocated items as one exact list
-- **VAR-02** One collector per pattern level; fixed positions bind from both ends first and the collector takes the exact middle *(Open Q-47)*
+- **VAR-02** One collector per pattern level; fixed positions bind from both ends first and the collector takes the exact middle
 - **VAR-03** A collecting binding preserves its cells for re-spread, selective reads demand only the needed cells, and a whole read demands every cell
 - **VAR-04** No binder carries supply provenance: binding sees only the supplied items
 - **VAR-05** Assignment deconstruction is the explicit unpacking receiver *(Open Q-84)*
@@ -229,7 +231,7 @@ Derived from the headings of `constitution.md`, which is the one maintained edit
 - **PAT-01** A same-name clause group is classified as a whole: one literal-free binder/group clause is an ordinary algorithm, anything else is a clause family *(Open Q-46)*
 - **PAT-02** A family call selects the first matching clause in written order; no match is NoMatchingBranch *(Open Q-49)*
 - **PAT-03** A family has one outer call interface: every clause takes the same number of argument slots and writes the same number of output rows *(Open Q-48)*
-- **PAT-04** A clause head is the complete input specification of its branch *(Open Q-47)*
+- **PAT-04** A clause head is the complete input specification of its branch
 - **PAT-05** A literal pattern matches only an equal value of its own kind
 - **PAT-06** Structural pattern delimiters select the value kind they destructure: a parenthesized pattern matches sequence values only, a bracketed pattern list values only, and a one-item sequence pattern is invalid
 - **PAT-07** A clause family demands only what its patterns inspect, and its binders keep both channels of their cells

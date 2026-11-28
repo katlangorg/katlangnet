@@ -123,13 +123,14 @@ public class StructuralPatternKindTests
 
     public static TheoryData<int, int> FamilyMatrix()
     {
-        // Families have no collecting binders (InvalidCollectingBinding) and a bare-binder
-        // clause would duplicate the catch-all, so the family matrix takes the fixed
-        // structural patterns.
+        // A bare-binder clause would duplicate the catch-all, so the family matrix takes the
+        // structural patterns: the fixed ones and, since Q-47, the collecting ones too (a
+        // collector inside a list or sequence pattern of an argument is an ordinary family
+        // binder; only a collector directly among a family's call arguments is invalid).
         var data = new TheoryData<int, int>();
         for (var p = 0; p < Patterns.Length; p++)
         {
-            if (Patterns[p].Kind is null || Patterns[p].Collects)
+            if (Patterns[p].Kind is null)
                 continue;
             for (var v = 0; v < Values.Length; v++)
                 data.Add(p, v);

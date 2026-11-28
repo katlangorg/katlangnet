@@ -302,7 +302,7 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
     {
         var parsed = Parser.ParseSyntax("F(0, *a) = a\nF(0)");
         Assert.Equal(
-            new[] { "[InvalidCollectingBinding] 1:1-1:13 Collecting bindings are only supported in ordinary explicit parameter lists for 'F'." },
+            new[] { "[InvalidCollectingBinding] 1:1-1:13 " + Parser.FamilyDirectCollectorDiagnosticFor("F") },
             parsed.Diagnostics.Select(Describe));
     }
 

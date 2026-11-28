@@ -143,7 +143,9 @@ internal static class SemanticNestedWider
         var depth = Depth(g);
         var kinds = g.Pick("wider.kinds", 2);
         var pair = g.Pick("wider.pair", RepeatPairs.Length);
-        // Clauses cannot collect (InvalidCollectingBinding, the wide recipe's clause-collector refusal).
+        // The clause-family form writes fixed levels only; the wide recipe owns a family's direct
+        // collector (its clause-collector refusal), and nested family collectors are pinned by
+        // ClauseFamilyCollectingPatternTests (Q-47).
         var collects = form != 2 && g.Pick("wider.collect", 2) == 1;
         var equal = g.Pick("wider.equal", 2) == 0;
         var width = collects ? CollectorWidth : 0;

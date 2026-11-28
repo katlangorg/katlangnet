@@ -2345,17 +2345,46 @@ F(0)
 
 This program is rejected: its second clause takes two parameters where the first takes one. Two clauses whose patterns have the same structure, such as `F(x)` and `F(y)`, are rejected as duplicates. KatLang does not check whether a clause can ever be chosen: after `F(n)`, a clause `F(0)` is accepted but never used, which is why the catch-all belongs last.
 
-A clause infers no parameters: every name in its body must come from its head, the part before `=`, or be defined around it, so `F(0) = z` is an error. Clauses cannot collect either: `*name` works only in a single definition without literal patterns. To walk through a list, use `reduce`, or select from the list as you recurse:
+A clause infers no parameters: every name in its body must come from its head, the part before `=`, or be defined around it, so `F(0) = z` is an error.
+
+A conditional algorithm takes a fixed number of arguments. Inside one argument, a list or sequence pattern may collect, as in [Collecting Inside a Pattern](#collecting-inside-a-pattern):
+
+<!-- spec:family-list-pattern-collects-tail -->
+```
+Tail([]) = []
+Tail([head, *rest]) = rest
+
+Tail(['a', ['b', 'c'], 'd'])
+```
+
+**Result:** `[[b, c], d]`
+
+[Open in Playground](https://katlang.org/#1/_cjtDphTw9367X2Mca5_aZIQtvlZTFjU1iqIKy2-u6vUBJYB)
+
+Both clauses take one argument, a list, and `rest` is the list of the elements after the first. `Tail(['a'])` is `[]`. `Tail(('a', 'b'))` matches no clause, because a list pattern does not match a sequence, and `Tail('a', 'b')` is an error, because it passes two arguments where every clause takes one.
+
+A clause cannot collect the arguments themselves: beside `F(0, 0) = 0`, the clause `F(first, *others) = others` is rejected, and so is the single clause `F(0, *others) = others`, whose literal makes it a conditional algorithm. A single definition without literal patterns keeps its collecting parameter, so separate arguments are gathered by an ordinary definition such as `TailArgs(*items) = Tail(items)`.
+
+Collecting patterns make a recursion over a list read like its definition:
 
 ```
-Sum(xs) = if(xs.count == 0, 0, xs[0] + Sum(xs.skip(1)))
+Sum([]) = 0
+Sum([first, *others]) = first + Sum(others)
+
+Last([only]) = only
+Last([first, *others]) = Last(others)
 
 Sum([1, 2, 3])
+Last([4, 5, 9])
 ```
 
-**Result:** `6`
+**Results:**
+```
+6
+9
+```
 
-[Open in Playground](https://katlang.org/#1/_cD8mmZcX7-u)
+[Open in Playground](https://katlang.org/#1/_to_LlTN4LkvMCCXb_b6EoLmjtPuKo0kDrEijR6kM67SrYIDbTPxtYpPw8_OgX2)
 
 Because the clauses may inspect any argument, a conditional algorithm takes its arguments as values. So, as in arithmetic, the name of a formula that needs inputs is called there, and its inputs are handed on. To pass an algorithm itself, write it in braces:
 

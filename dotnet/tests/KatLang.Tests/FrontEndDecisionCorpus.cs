@@ -1360,18 +1360,19 @@ internal static class FrontEndDecisionCorpus
 
         private static FrontEndFamily DescribeFamily(string name, Algorithm.Conditional family)
         {
-            // Lean `Pattern.bind` carries no parameter kind, and C# gives a collecting or META binder (and the
-            // parser's recovery placeholder) no vote: such a head has no faithful Lean spelling.
+            // Lean `Pattern.bind` carries a binder's collecting flag (Q-47: `.bind name true`) and no META kind, and
+            // C# gives a META binder (and the parser's recovery placeholder) no vote: such a head has no faithful Lean
+            // spelling. A collecting binder is spelled, and names no argument position in either engine.
             static bool Unrepresentable(Pattern pattern) => pattern switch
             {
-                Pattern.Bind bind => bind.ParameterKind != ParameterKind.Normal || bind.IsRecoveryPlaceholder,
+                Pattern.Bind bind => bind.ParameterKind == ParameterKind.Meta || bind.IsRecoveryPlaceholder,
                 Pattern.SequenceValue(var items) => items.Any(Unrepresentable),
                 Pattern.ListValue(var items) => items.Any(Unrepresentable),
                 _ => false,
             };
 
             if (family.Branches.Any(branch => Unrepresentable(branch.Pattern)))
-                return new(name, null, null, "a clause head binds a collecting, META or recovery-placeholder name");
+                return new(name, null, null, "a clause head binds a META or recovery-placeholder name");
 
             string heads;
             try
