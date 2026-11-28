@@ -1611,9 +1611,10 @@ internal static class PropertyExposureResolver
     /// (<see cref="SummaryScope.ResolveRequirementsFromSite"/>); it lies at or below the settlement's
     /// level, on a chain through that level. When every such lookup landed at or above the level,
     /// every site below the level resolves it to the same scope (an owner on the level's chain cannot
-    /// also be nested below the level: bodies are acyclic), so one entry answers them all. A
-    /// settlement with a lookup that landed below its level, or found no owner (another site could
-    /// hold it), depends on its site and is never kept. Keys hold identities — levels, seeds, the
+    /// also be nested below the level: bodies are acyclic), so one entry answers them all. Finding
+    /// an open target's consulted level on the site's chain also counts as a landing (owner decision Q2).
+    /// A landing below the key's level prevents cross-site reuse. An owner lookup that misses has the
+    /// separate exact-bound-owner rule described below. Keys hold identities — levels, seeds, the
     /// origin and owner ids inside a content key, and the bound owners themselves
     /// (<see cref="BoundOwnerSet"/>, equal by content) — never a spelling alone, so owners with
     /// same-named parameters stay apart.</para>
@@ -2852,9 +2853,9 @@ internal static class PropertyExposureResolver
             /// <summary>
             /// Set on the walk of an open target settled AT its consulted level (owner decision Q2), to that level: the
             /// walk's site is the level its key already names, so an owner it found on no level of that chain is found
-            /// by no other settlement of the same key either. Such a lookup makes an ordinary settlement depend on its
-            /// site (<see cref="int.MaxValue"/>); this one depends on nothing deeper than its own level, which is what
-            /// it reports.
+            /// by no other settlement of the same key either. This bounds the walk's off-chain record
+            /// (<see cref="OwnerOffChain"/>). Finding that level also records its depth on this frame, so an
+            /// enclosing settlement keyed above the level depends on where the walk was checked.
             /// </summary>
             public SummaryScope? SiteIsItsLevel;
             private int _siteDepth = SummaryScope.NoOwnerLookup;
@@ -3535,6 +3536,10 @@ internal static class PropertyExposureResolver
                     level = checkedFrom;
                 site = checkedFrom;
                 self.SiteIsItsLevel = isConsultedLevel ? checkedFrom : null;
+                // The walk's own key includes the consulted level. An enclosing settlement can be keyed above it,
+                // where another reader's chain can miss that level. Propagate the dependency even on a cache hit.
+                if (isConsultedLevel)
+                    self.NoteSiteLanding(checkedFrom.Depth);
             }
 
             // The walk's bound owners plus this reference's own: the set is extended, never copied or
