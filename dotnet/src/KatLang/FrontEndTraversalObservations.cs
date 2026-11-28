@@ -943,6 +943,44 @@ internal sealed class FrontEndTraversalObservations
         SummaryMemberDeferredChangeTestFoldEntries = checked(SummaryMemberDeferredChangeTestFoldEntries + entries);
     }
 
+    /// <summary>
+    /// CHORDED CYCLES: later evaluations of mixed-cycle members whose copied expansion equals, in content and reference
+    /// order, a flat member seed they read that contains every other seed they read. Count the choice before observing
+    /// the expansion's cancellation checkpoint.
+    /// </summary>
+    public long SummaryMemberDominatingReads { get; private set; }
+
+    internal void RecordSummaryMemberDominatingRead()
+        => SummaryMemberDominatingReads = checked(SummaryMemberDominatingReads + 1);
+
+    /// <summary>
+    /// CHORDED CYCLES: replaced reference-free holders whose change-test fold was left out and that a fold budget then read,
+    /// folded first as the copied change test folded them (also counted in <see cref="SummaryMemberDeferredChangeTestFolds"/>).
+    /// </summary>
+    public long SummaryMemberDeferredFoldsOnBudgetRead { get; private set; }
+
+    internal void RecordSummaryMemberDeferredFoldOnBudgetRead(int entries)
+    {
+        SummaryMemberDeferredFoldsOnBudgetRead = checked(SummaryMemberDeferredFoldsOnBudgetRead + 1);
+        RecordSummaryMemberDeferredChangeTestFold(entries);
+    }
+
+    /// <summary>
+    /// CHORDED CYCLES: change tests that found a kept holder (a plain holder, or an ordered holder) equal to its flat
+    /// successor by comparing the requirements of its content with the successor's, and made it that flat seed without
+    /// folding it.
+    /// </summary>
+    public long SummaryMemberKeptHoldersWithoutFold { get; private set; }
+
+    /// <summary>The requirement entries the exact comparisons of kept and replaced holders collected, including duplicates.</summary>
+    public long SummaryMemberHolderComparisonEntries { get; private set; }
+
+    internal void RecordSummaryMemberKeptHolderWithoutFold()
+        => SummaryMemberKeptHoldersWithoutFold = checked(SummaryMemberKeptHoldersWithoutFold + 1);
+
+    internal void RecordSummaryMemberHolderComparisonEntries(long entries)
+        => SummaryMemberHolderComparisonEntries = checked(SummaryMemberHolderComparisonEntries + entries);
+
     /// <summary>Entries copied from small flat members by holding expansions, including duplicate inputs.</summary>
     public long MemberEntriesCopied { get; private set; }
     internal void RecordMemberEntriesCopied(int entries) => MemberEntriesCopied += entries;

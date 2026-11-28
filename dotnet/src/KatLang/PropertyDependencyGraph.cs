@@ -1008,6 +1008,134 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         internal void FoldInPlace() => Fold();
 
+        /// <summary>
+        /// CHORDED CYCLES (the change test of a kept holder): adds the required names and owner-qualified parameters of this
+        /// seed's whole content to <paramref name="required"/> and <paramref name="qualified"/> — what <see cref="Fold"/>
+        /// unites into the seed's own sets, the seed unchanged — with the caller's empty scratch collections. False, with the
+        /// collections partly filled, when the content carries a visible name or, unless <paramref name="referencesInOwnSet"/>
+        /// (an ordered holder, whose own references are all of its references, which this walk skips), a pending reference.
+        /// </summary>
+        internal bool CollectRequirements(HashSet<string> required, HashSet<OwnerQualifiedParameter> qualified,
+            HashSet<SummarySeed> visited, Stack<SummarySeed> pending, bool referencesInOwnSet, out long entries,
+            CancellationToken cancellationToken)
+        {
+            entries = 0;
+            pending.Push(this);
+            while (pending.TryPop(out var part))
+            {
+                if (!visited.Add(part))
+                    continue;
+                if ((visited.Count & 255) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+                if (part._visiblePropertyDependencyNames is { Count: > 0 } || part._pendingReferences is { Count: > 0 } && !referencesInOwnSet)
+                {
+                    pending.Clear();
+                    return false;
+                }
+
+                // Added one by one: a union into an empty set copies the source's storage, which a reused scratch set would
+                // allocate again on every comparison.
+                if (part._requiredAncestorOwnedParameterNames is { Count: > 0 } names)
+                {
+                    foreach (var name in names)
+                    {
+                        if ((entries++ & 255) == 0)
+                            cancellationToken.ThrowIfCancellationRequested();
+                        required.Add(name);
+                    }
+                }
+
+                if (part._ownerQualifiedParameters is { Count: > 0 } parameters)
+                {
+                    foreach (var parameter in parameters)
+                    {
+                        if ((entries++ & 255) == 0)
+                            cancellationToken.ThrowIfCancellationRequested();
+                        qualified.Add(parameter);
+                    }
+                }
+
+                if (part._absorbed is { } nested)
+                {
+                    for (var i = nested.Count - 1; i >= 0; i--)
+                        pending.Push(nested[i]);
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// CHORDED CYCLES (a re-evaluation's dominating read): whether this flat seed holds every requirement of
+        /// <paramref name="baseSeed"/>'s own sets as an expansion at the level of <paramref name="owner"/> qualifies it —
+        /// a required name <paramref name="ownerParameterNames"/> binds as the owner-qualified parameter, any other as the
+        /// name, an owner-qualified parameter as it is (<see cref="QualifyParameters"/>).
+        /// </summary>
+        internal bool HoldsQualifiedRequirementsOf(SummarySeed baseSeed, Algorithm owner, IReadOnlySet<string> ownerParameterNames,
+            CancellationToken cancellationToken)
+        {
+            var checkedEntries = 0;
+            if (baseSeed._requiredAncestorOwnedParameterNames is { Count: > 0 } names)
+            {
+                foreach (var name in names)
+                {
+                    if ((checkedEntries++ & 255) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    if (ownerParameterNames.Contains(name)
+                            ? _ownerQualifiedParameters?.Contains(new(name, owner)) != true
+                            : _requiredAncestorOwnedParameterNames?.Contains(name) != true)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            if (baseSeed._ownerQualifiedParameters is { Count: > 0 } parameters)
+            {
+                foreach (var parameter in parameters)
+                {
+                    if ((checkedEntries++ & 255) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    if (_ownerQualifiedParameters?.Contains(parameter) != true)
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// CHORDED CYCLES (the change test of a kept holder): whether this flat seed's required names and owner-qualified
+        /// parameters are exactly <paramref name="required"/> and <paramref name="qualified"/>.
+        /// </summary>
+        internal bool HasRequirements(HashSet<string> required, HashSet<OwnerQualifiedParameter> qualified)
+        {
+            return _absorbed is null && Same(_requiredAncestorOwnedParameterNames, required) && Same(_ownerQualifiedParameters, qualified);
+
+            static bool Same<T>(HashSet<T>? own, HashSet<T> other)
+                => (own?.Count ?? 0) == other.Count && (other.Count == 0 || own!.SetEquals(other));
+        }
+
+        /// <summary>
+        /// CHORDED CYCLES (the change test of a kept holder): makes this seed, which holds parts, the flat seed a fold makes
+        /// of it, given <paramref name="equal"/>, a flat seed whose required names and owner-qualified parameters are this
+        /// seed's content's: this seed takes <paramref name="equal"/>'s requirement sets (both flat, neither changes again,
+        /// as <see cref="WithSharedOwnSets"/>) and keeps its own references, which are all of its references. Only the
+        /// iteration order of the requirement sets can differ from the fold's; every consumer reads them as sets.
+        /// </summary>
+        internal void FoldAsRequirementsOf(SummarySeed equal)
+        {
+            if (equal._absorbed is not null || _absorbed is null || (_visiblePropertyDependencyNames?.Count ?? 0) != 0)
+                throw new InvalidOperationException("Only a holder without visible names takes a flat seed's requirements.");
+            _requiredAncestorOwnedParameterNames = equal._requiredAncestorOwnedParameterNames;
+            _ownerQualifiedParameters = equal._ownerQualifiedParameters;
+            _absorbed = null;
+            _absorbedSet = null;
+            _deferredMember = false;
+            _hasDeferredMember = false;
+            _orderedHolder = false;
+        }
+
         // Navigation observes the same flat expansion and the same completed-seed edges as the eager solve.
         // Materialize only the requested member, once per resolution, and preserve sharing between its readers.
         // Published module seeds can be shared by separate resolutions, so reconstruct on operation-local copies.
@@ -3661,6 +3789,17 @@ internal static class PropertyDependencyGraphBuilder
     /// proves the change, and the converged component folds it where a seed that stays still holds it. Content, reference
     /// order, published part structure, schedule, checkpoints and settlement are those of the copied seeds (the seam
     /// <see cref="ReferenceBearingSeedsCopiedForTesting"/>).</para>
+    ///
+    /// <para>CHORDED CYCLES (November 28 2026; implementation only). A chord makes the ranked schedule evaluate first-pass
+    /// members again. The change test tells a replaced holder that carries no reference from its successor by its bound or
+    /// by its content's requirements collected into scratch sets, without folding it, and every fold budget that later
+    /// reads such a holder folds it first (<see cref="HeldMemberSeeds.FoldOnRead"/>); a kept holder takes its equal
+    /// successor's requirement sets (<see cref="OrderedHolders.Decide"/>, <see cref="OrderedHolders.Same"/>); a kept seed
+    /// records what the evaluation equal to it read, for the bounds of the seeds that hold it
+    /// (<see cref="OrderedHolders.NoteKept"/>); and a later evaluation whose copied union equals one flat seed it reads takes a
+    /// new seed over that seed's sets (<c>TryDominatingRead</c>). Content, reference order, published part structure,
+    /// schedule, checkpoints, settlement and the fold-budget decisions of reference-free expansions are those of the solve
+    /// as before (the seam <see cref="KeptAndReplacedHoldersFoldedForTesting"/>).</para>
     /// </summary>
     private static void SolveMemberSeeds(
         Algorithm algorithm,
@@ -3821,6 +3960,9 @@ internal static class PropertyDependencyGraphBuilder
             orderedHolders = new(held, memos.Observations, memos.SharedMemo.CancellationToken);
         }
 
+        // Both using a dominating read and recording a kept seed's reads rely on mixed-member containment.
+        var reuseMixedMemberReads = orderedHolders is not null && !KeptAndReplacedHoldersFoldedForTesting.Value;
+
         while (worklist.TryDequeue(out var index))
         {
             // ORDERED HOLDING: the worklist takes the least queued rank, and nothing outside a component writes a seed its
@@ -3872,6 +4014,25 @@ internal static class PropertyDependencyGraphBuilder
                     // A fold the change test left out is the component's to make at its convergence, where reached.
                     if (orderedHolders?.TakeSkippedFold() == true && (orderedComponents is null || orderedComponents[^1] != mixedOf![member]))
                         (orderedComponents ??= []).Add(mixedOf![member]);
+                    // CHORDED CYCLES: a seed that stays contains what the evaluation equal to it read. A flat seed of at most
+                    // CopiedCompletedEntries entries is copied wherever it is read, so no bound counts it as a part. The
+                    // reads are the expansion record's where the evaluation made one.
+                    if (comparedSame && reuseMixedMemberReads && component < 0 && mixedOf![member] >= 0 && recorded.Reads.Count != 0
+                        && !ReferenceEquals(next, previous)
+                        && (previous.AbsorbedPartsWithoutFolding is not null || previous.OwnEntryCount > SummarySeed.CopiedCompletedEntries))
+                    {
+                        if (expansions is null || contents[member] is not { } key || !expansions.TryGetValue(key, out var record)
+                            || !ReferenceEquals(record.Result, next))
+                        {
+                            var reads = new (string Name, SummarySeed Read)[recorded.Reads.Count];
+                            var at = 0;
+                            foreach (var readName in recorded.Reads)
+                                reads[at++] = (readName, seeds[readName]);
+                            record = (next, reads);
+                        }
+
+                        orderedHolders!.NoteKept(previous, record.Reads);
+                    }
                 }
 
                 if (comparedSame)
@@ -3971,6 +4132,11 @@ internal static class PropertyDependencyGraphBuilder
             {
                 memos.Observations?.RecordSummaryMemberCompleteSeed();
                 expanded = complete.WithSharedOwnSets();
+            }
+            else if (mixed >= 0 && reuseMixedMemberReads && !evaluatedPrevious!.IsEmptyWithoutFolding()
+                && TryDominatingRead(baseSeed) is { } dominating)
+            {
+                expanded = dominating.WithSharedOwnSets();
             }
             else
             {
@@ -4164,6 +4330,103 @@ internal static class PropertyDependencyGraphBuilder
                     (before ??= []).Add(key);
             }
         }
+
+        // CHORDED CYCLES: the flat member seed that a later evaluation of a mixed member reads and that its copied expansion
+        // would equal in content and reference order, or null. The expansion of a base that reads only members of the level
+        // and carries no reference of its own unites those members' seeds and its own qualified requirements. When one seed
+        // it reads, D, is flat, provably contains every other seed it reads, and holds those requirements, the union's content
+        // is D's. Its references are D's in D's order as well when no seed read before D carries a reference: the union
+        // writes D's references first, and every reference a later read writes is already there with at most its bound owners
+        // (D was united from that read, so a second write narrows nothing). D is the first read that carries a reference, or,
+        // where none does, the first flat read that contains the others. The member then takes a new seed over D's own sets,
+        // with the expansion's one checkpoint and its reads. A read is contained where D holds it, where the evaluation that
+        // produced D read it (its expansion record, or a first evaluation's reads), or where D is a kept seed whose equal
+        // evaluation read it (OrderedHolders.ProvablyContains).
+        SummarySeed? TryDominatingRead(SummarySeed baseSeed)
+        {
+            if (baseSeed.PendingReferences.Count != 0 || baseSeed.VisiblePropertyDependencyNames.Count == 0)
+                return null;
+            var members = recorded.Seeds;
+            SummarySeed? dominating = null;
+            string? dominatingName = null;
+            var cancellationToken = memos.SharedMemo.CancellationToken;
+            foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!members.TryGetValue(name, out var read))
+                    return null;
+                if (dominating is null && !read.IsEmptyWithoutFolding() && orderedHolders!.CarriesReferenceSomewhere(read))
+                {
+                    dominating = read;
+                    dominatingName = name;
+                }
+            }
+
+            if (dominating is not null)
+                return Dominates(dominatingName!, dominating) ? Read(dominating) : null;
+            foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var read = members[name];
+                if (read.AbsorbedPartsWithoutFolding is null && !read.IsEmptyWithoutFolding() && Dominates(name, read))
+                    return Read(read);
+            }
+
+            return null;
+
+            bool Dominates(string name, SummarySeed candidate)
+            {
+                if (candidate.AbsorbedPartsWithoutFolding is not null || candidate.OwnVisibleNameCount != 0
+                    || !candidate.HoldsQualifiedRequirementsOf(baseSeed, level.Algorithm, level.ParameterNames, cancellationToken))
+                {
+                    return false;
+                }
+
+                foreach (var other in baseSeed.VisiblePropertyDependencyNames)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var read = members[other];
+                    if (!ReferenceEquals(read, candidate) && !read.IsEmptyWithoutFolding() && !ReadWhenProduced(name, candidate, read))
+                        return false;
+                }
+
+                return true;
+            }
+
+            // The expansion's side effects (ExpandAtLevel): its one checkpoint and its reads.
+            SummarySeed Read(SummarySeed found)
+            {
+                memos.Observations?.RecordSummaryMemberDominatingRead();
+                memos.SharedMemo.ObserveCancellation();
+                foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    recorded.Reads.Add(name);
+                }
+                return found;
+            }
+        }
+
+        // Whether `producer`, the seed of member `name`, provably contains `part`.
+        bool ReadWhenProduced(string name, SummarySeed producer, SummarySeed part)
+        {
+            if (orderedHolders!.ProvablyContains(producer, part))
+                return true;
+            if (expansions is null || contents[equationOf[name]] is not { } key || !expansions.TryGetValue(key, out var expansion)
+                || !ReferenceEquals(expansion.Result, producer))
+            {
+                return false;
+            }
+
+            foreach (var (_, read) in expansion.Reads)
+            {
+                memos.SharedMemo.CancellationToken.ThrowIfCancellationRequested();
+                if (ReferenceEquals(read, part))
+                    return true;
+            }
+
+            return false;
+        }
     }
 
     /// <summary>
@@ -4235,16 +4498,25 @@ internal static class PropertyDependencyGraphBuilder
         // The member seeds the evaluation that first produced a seed read: an evaluation unites every member seed it reads
         // (a complete seed holds them all), so a seed's content contains each one's.
         private readonly Dictionary<SummarySeed, SummarySeed[]> _readsOf = new(ReferenceEqualityComparer.Instance);
+        // CHORDED CYCLES: the seeds a kept seed is known to contain because an evaluation equal to it read them (NoteKept).
+        private Dictionary<SummarySeed, (string Name, SummarySeed Read)[]>? _keptReads;
+        // Only a second equal evaluation needs a union of read identities. Keep one copy of each across re-evaluations.
+        private Dictionary<SummarySeed, HashSet<SummarySeed>>? _repeatedKeptReads;
         // The seeds that became a second member's seed (a share that is a seed it read, a reused expansion), and which
         // holders carry a pending reference somewhere.
         private HashSet<SummarySeed>? _aliased;
         private readonly Dictionary<SummarySeed, bool> _carriesReference = new(ReferenceEqualityComparer.Instance);
-        // The replaced seeds whose fold the change test left out (Differs), and whether one was left out since the solve last
+        // The replaced seeds whose fold the change test left out (Decide), and whether one was left out since the solve last
         // asked (TakeSkippedFold).
         private HashSet<SummarySeed>? _foldSkipped;
         private bool _skippedSinceAsked;
         private HashSet<SummarySeed>? _clean;
         private Stack<SummarySeed>? _walk;
+        // CHORDED CYCLES: the scratch collections of the change test's exact comparisons of holders, kept for the solve.
+        private HashSet<string>? _scratchRequired;
+        private HashSet<OwnerQualifiedParameter>? _scratchQualified;
+        private HashSet<SummarySeed>? _scratchVisited;
+        private Stack<SummarySeed>? _scratchPending;
 
         /// <summary>Whether the change test left out a fold since the last call: the component's convergence folds it if reached.</summary>
         public bool TakeSkippedFold()
@@ -4258,40 +4530,169 @@ internal static class PropertyDependencyGraphBuilder
         /// Records that <paramref name="seed"/>, a seed some member already has, became another member's seed: a share that
         /// is the one seed it read, or a reused expansion. No other evaluation hands one seed object to two members.
         /// </summary>
-        public void NoteAlias(SummarySeed seed) => (_aliased ??= new(ReferenceEqualityComparer.Instance)).Add(seed);
+        public void NoteAlias(SummarySeed seed)
+        {
+            (_aliased ??= new(ReferenceEqualityComparer.Instance)).Add(seed);
+            // A replaced seed is never a member's seed again: a member's seed changes only to one of larger content. Should
+            // a reused expansion hand one back, it takes the shape the copied change test gave it.
+            if (_foldSkipped?.Remove(seed) == true && seed.AbsorbedPartsWithoutFolding is not null)
+            {
+                seed.FoldInPlace();
+                observations?.RecordSummaryMemberDeferredChangeTestFold(seed.OwnEntryCount);
+            }
+        }
 
         /// <summary>
-        /// CHANGE TEST (the reversed single-predecessor cycle): whether <paramref name="previous"/>, a member's current seed
-        /// that holds parts and is no ordered holder, provably differs from <paramref name="next"/> without folding it. The
-        /// copied change test has found no structural equality and folds both seeds, <paramref name="next"/> first; that
-        /// fold of <paramref name="next"/> is made here too. <paramref name="previous"/> is left as it is only when no other
-        /// member's seed is it, it carries a pending reference (so every holder of it is held by no fold budget, folded or
-        /// not), and its requirement bound is below <paramref name="next"/>'s counts. It is then replaced: only seeds that
-        /// hold it as a part still reach it, whose decisions read their own direct parts, and a fold reads its content in the
-        /// same order whether or not it was folded first. A seed that stays after a second pass stopped early can hold it
-        /// (through the copy of a small share's own sets); the converged component folds it then (<see cref="FoldReachable"/>),
-        /// as the copied change test folded it.
+        /// CHANGE TEST of a member's current seed <paramref name="previous"/>, which holds parts and is no ordered holder,
+        /// and its successor <paramref name="next"/>, past the structural test (<see cref="SameContent"/>): true or false
+        /// when decided here without folding <paramref name="previous"/>, null when the copied change test decides. That test
+        /// folds both seeds, <paramref name="next"/> first; the fold of <paramref name="next"/> is made here too.
+        /// <list type="bullet">
+        /// <item>A requirement bound of <paramref name="previous"/> below <paramref name="next"/>'s counts proves a change
+        /// (the reversed single-predecessor cycle).</item>
+        /// <item>CHORDED CYCLES: otherwise, when neither carries a reference or a visible name, the requirements of
+        /// <paramref name="previous"/>'s content, collected into the solve's scratch sets, are compared with
+        /// <paramref name="next"/>'s. Equal: <paramref name="previous"/> stays, and becomes the flat seed the copied fold makes
+        /// of it by taking <paramref name="next"/>'s requirement sets (<see cref="SummarySeed.FoldAsRequirementsOf"/>).
+        /// Different: a change.</item>
+        /// </list>
+        /// A changed <paramref name="previous"/> is left as it is only when no other member's seed is it. It is replaced:
+        /// only seeds that hold it as a part still reach it, and a fold reads its content in the same order whether or not it
+        /// was folded first. A fold budget reads a part's shape; one that carries a reference is held by no fold budget, and
+        /// any budget that reads a reference-free one folds it first (<see cref="HeldMemberSeeds.FoldOnRead"/>). A seed that
+        /// stays after a second pass stopped early can hold it (through the copy of a small share's own sets); the converged
+        /// component folds it then (<see cref="FoldReachable"/>), as the copied change test folded it.
         /// </summary>
-        public bool Differs(SummarySeed next, SummarySeed previous)
+        public bool? Decide(SummarySeed next, SummarySeed previous)
         {
             if (previous.AbsorbedPartsWithoutFolding is null || previous.IsOrderedHolder || next.IsOrderedHolder
-                || _aliased?.Contains(previous) == true || held.KnownReferenceFree(previous) || !CarriesReference(previous))
+                || _aliased?.Contains(previous) == true)
             {
-                return false;
+                return null;
             }
+
+            // The seam keeps the copied change test's folds of reference-free holders.
+            var referenceFree = held.KnownReferenceFree(previous) || !CarriesReference(previous);
+            if (referenceFree && FoldsAsBefore)
+                return null;
 
             next.FoldInPlace();
             var (required, qualified) = UpperBound(previous);
-            if (required >= (next.OwnRequiredNamesWithoutFolding?.Count ?? 0)
-                && qualified >= (next.OwnQualifiedParametersWithoutFolding?.Count ?? 0))
+            if (required < (next.OwnRequiredNamesWithoutFolding?.Count ?? 0)
+                || qualified < (next.OwnQualifiedParametersWithoutFolding?.Count ?? 0))
             {
+                Replaced(previous, referenceFree);
                 return false;
             }
 
+            if (!referenceFree || next.OwnVisibleNameCount != 0 || !next.OwnSetsHoldNoReferences
+                || CollectedRequirements(previous, referencesInOwnSet: false) is not { } collected)
+            {
+                return null;
+            }
+
+            if (next.HasRequirements(collected.Required, collected.Qualified))
+            {
+                previous.FoldAsRequirementsOf(next);
+                observations?.RecordSummaryMemberKeptHolderWithoutFold();
+                return true;
+            }
+
+            Replaced(previous, referenceFree);
+            return false;
+        }
+
+        // Whether the solve runs the change test as before CHORDED CYCLES (the test seam).
+        private static bool FoldsAsBefore => KeptAndReplacedHoldersFoldedForTesting.Value;
+
+        // A changed seed whose fold the change test left out.
+        private void Replaced(SummarySeed previous, bool referenceFree)
+        {
             (_foldSkipped ??= new(ReferenceEqualityComparer.Instance)).Add(previous);
+            if (referenceFree)
+                held.FoldOnRead(previous);
             _skippedSinceAsked = true;
             observations?.RecordSummaryMemberChangeTestWithoutFold();
-            return true;
+        }
+
+        // CHORDED CYCLES: the requirements of a holder's whole content in the solve's scratch sets, or null where the content
+        // carries a visible name or (unless referencesInOwnSet) a pending reference.
+        private (HashSet<string> Required, HashSet<OwnerQualifiedParameter> Qualified)? CollectedRequirements(SummarySeed holder,
+            bool referencesInOwnSet)
+        {
+            var required = _scratchRequired ??= new(StringComparer.Ordinal);
+            var qualified = _scratchQualified ??= [];
+            var visited = _scratchVisited ??= new(ReferenceEqualityComparer.Instance);
+            var pending = _scratchPending ??= new();
+            required.Clear();
+            qualified.Clear();
+            visited.Clear();
+            pending.Clear();
+            var collected = holder.CollectRequirements(required, qualified, visited, pending, referencesInOwnSet, out var entries, cancellationToken);
+            observations?.RecordSummaryMemberHolderComparisonEntries(entries);
+            return collected ? (required, qualified) : null;
+        }
+
+        /// <summary>
+        /// CHORDED CYCLES: records that <paramref name="kept"/>, a member's seed the change test found equal in content to a
+        /// later evaluation of that member, contains each seed that evaluation read (<paramref name="reads"/>), for the
+        /// upper bounds of the seeds that hold it beside one of them (<see cref="UpperBound"/>). Unlike the reads of a first
+        /// evaluation, these can be seeds built after <paramref name="kept"/>.
+        /// </summary>
+        public void NoteKept(SummarySeed kept, (string Name, SummarySeed Read)[] reads)
+        {
+            var keptReads = _keptReads ??= new(ReferenceEqualityComparer.Instance);
+            if (!keptReads.TryGetValue(kept, out var known))
+            {
+                keptReads.Add(kept, reads);
+                return;
+            }
+
+            if (ReferenceEquals(known, reads))
+                return;
+            var repeated = _repeatedKeptReads ??= new(ReferenceEqualityComparer.Instance);
+            if (!repeated.TryGetValue(kept, out var all))
+            {
+                all = new(ReferenceEqualityComparer.Instance);
+                AddReads(known);
+                repeated.Add(kept, all);
+            }
+            AddReads(reads);
+
+            void AddReads((string Name, SummarySeed Read)[] batch)
+            {
+                foreach (var (_, read) in batch)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    all.Add(read);
+                }
+            }
+        }
+
+        /// <summary>
+        /// CHORDED CYCLES: whether <paramref name="seed"/>'s content provably contains <paramref name="part"/>'s: it holds it
+        /// directly, the first evaluation that produced it read it, or it is a kept seed whose equal evaluation read it.
+        /// </summary>
+        public bool ProvablyContains(SummarySeed seed, SummarySeed part) => Contains(seed, part) || KeptContains(seed, part);
+
+        /// <summary>CHORDED CYCLES: whether <paramref name="seed"/> carries a pending reference in its own sets or a part it holds.</summary>
+        public bool CarriesReferenceSomewhere(SummarySeed seed) => CarriesReference(seed);
+
+        // Whether `kept` is recorded to contain `part` by NoteKept.
+        private bool KeptContains(SummarySeed kept, SummarySeed part)
+        {
+            if (_repeatedKeptReads is { } repeated && repeated.TryGetValue(kept, out var all))
+                return all.Contains(part);
+            if (_keptReads is not { } keptReads || !keptReads.TryGetValue(kept, out var reads))
+                return false;
+            foreach (var (_, read) in reads)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (ReferenceEquals(read, part))
+                    return true;
+            }
+
+            return false;
         }
 
         // Whether a seed carries a pending reference in its own sets or in any part it holds. Post-order on the heap, each
@@ -4358,6 +4759,7 @@ internal static class PropertyDependencyGraphBuilder
             {
                 foreach (var read in reads)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (ReferenceEquals(read, part))
                         return true;
                 }
@@ -4378,6 +4780,7 @@ internal static class PropertyDependencyGraphBuilder
                 return Own(seed);
             if (_upperBounds.TryGetValue(seed, out var known))
                 return known;
+            Span<bool> within = stackalloc bool[SummarySeed.CopiedCompletedEntries];
             _pending.Clear();
             _pending.Push((seed, false));
             while (_pending.TryPop(out var entry))
@@ -4400,9 +4803,13 @@ internal static class PropertyDependencyGraphBuilder
 
                 var (required, qualified) = Own(current);
                 long requiredSum = required, qualifiedSum = qualified;
+                // A part another part of a short list provably contains is counted once.
+                var scanned = parts.Count <= SummarySeed.CopiedCompletedEntries;
+                if (scanned)
+                    WithinSiblings(parts, within);
                 for (var i = 0; i < parts.Count; i++)
                 {
-                    if (WithinSibling(parts, i))
+                    if (scanned && within[i])
                         continue;
                     var (r, q) = parts[i].AbsorbedPartsWithoutFolding is null ? Own(parts[i]) : _upperBounds[parts[i]];
                     requiredSum += r;
@@ -4418,20 +4825,45 @@ internal static class PropertyDependencyGraphBuilder
                 => (seed.OwnRequiredNamesWithoutFolding?.Count ?? 0, seed.OwnQualifiedParametersWithoutFolding?.Count ?? 0);
         }
 
-        // Whether another of a short part list provably contains the part at `at` (the test scans the list per part). A seed
-        // contains only seeds built before it, so of two parts at most one contains the other, and every skipped part lies
-        // within a counted one.
-        private bool WithinSibling(IReadOnlyList<SummarySeed> parts, int at)
+        // Marks the parts of a short part list that another part provably contains, which the bound counts once (the test
+        // scans the list per part). Held parts and first-evaluation reads were built before the seed that holds or read them,
+        // so of two parts at most one contains the other that way, and every part skipped that way lies within a counted one.
+        // CHORDED CYCLES: a kept seed can contain seeds built after it (NoteKept), so such containment can go both ways or
+        // round a cycle; a part is skipped by it only when its container is still counted, and a skipped part never counts
+        // as a container again, so every skipped part still lies within a counted one.
+        private void WithinSiblings(IReadOnlyList<SummarySeed> parts, Span<bool> within)
         {
-            if (parts.Count > SummarySeed.CopiedCompletedEntries)
-                return false;
-            for (var j = 0; j < parts.Count; j++)
+            var any = false;
+            for (var at = 0; at < parts.Count; at++)
             {
-                if (j != at && Contains(parts[j], parts[at]))
-                    return true;
+                within[at] = false;
+                for (var j = 0; j < parts.Count; j++)
+                {
+                    if (j != at && Contains(parts[j], parts[at]))
+                    {
+                        within[at] = true;
+                        break;
+                    }
+                }
+
+                any |= !within[at];
             }
 
-            return false;
+            if (_keptReads is null || !any)
+                return;
+            for (var at = 0; at < parts.Count; at++)
+            {
+                if (within[at])
+                    continue;
+                for (var j = 0; j < parts.Count; j++)
+                {
+                    if (j != at && !within[j] && KeptContains(parts[j], parts[at]))
+                    {
+                        within[at] = true;
+                        break;
+                    }
+                }
+            }
         }
 
         /// <summary>Folds an ordered holder in place: it becomes the flat seed it stands for, in content and reference order.</summary>
@@ -4471,6 +4903,21 @@ internal static class PropertyDependencyGraphBuilder
                     || qualified < (flat.OwnQualifiedParametersWithoutFolding?.Count ?? 0))
                 {
                     return false;
+                }
+
+                // CHORDED CYCLES: a kept ordered holder and its flat successor with the same references compare by the
+                // requirements of the holder's content, collected without folding it; an equal holder becomes the flat seed
+                // it stands for by taking the successor's requirement sets beside its own references, a different one is
+                // replaced as it is.
+                if (previous.IsOrderedHolder && !FoldsAsBefore && _aliased?.Contains(previous) != true
+                    && next.OwnVisibleNameCount == 0
+                    && CollectedRequirements(previous, referencesInOwnSet: true) is { } collected)
+                {
+                    if (!next.HasRequirements(collected.Required, collected.Qualified))
+                        return false;
+                    previous.FoldAsRequirementsOf(next);
+                    observations?.RecordSummaryMemberKeptHolderWithoutFold();
+                    return true;
                 }
             }
 
@@ -4567,6 +5014,14 @@ internal static class PropertyDependencyGraphBuilder
     internal static readonly AsyncLocal<bool> ReferenceBearingSeedsCopiedForTesting = new();
 
     /// <summary>
+    /// TEST SEAM (<c>MixedCycleChordTests</c>): while set on the calling flow, the member solver's change test folds every
+    /// kept holder and every replaced holder that carries no reference as the copied change test does, and a seed the change
+    /// test keeps records nothing of what the evaluation equal to it read — the member solve as it was before CHORDED CYCLES
+    /// (November 28 2026). Never set by production code.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> KeptAndReplacedHoldersFoldedForTesting = new();
+
+    /// <summary>
     /// The member solver's worklist (<see cref="SolveMemberSeeds"/>). Each evaluation unit is RANKED by its position in the
     /// first-evaluation order and is queued at most once at a time; the solver always takes the queued unit of least rank.
     /// A unit re-queued because a member seed it read changed is therefore evaluated before every unit ranked after it: a
@@ -4660,6 +5115,26 @@ internal static class PropertyDependencyGraphBuilder
         // The scratch collections of the folds an exhausted budget makes, kept for the solve.
         private HashSet<SummarySeed>? _folded;
         private Stack<SummarySeed>? _foldPending;
+        // CHORDED CYCLES: replaced reference-free holders whose change-test fold was left out (OrderedHolders.Decide).
+        private HashSet<SummarySeed>? _foldsOnRead;
+
+        /// <summary>
+        /// CHORDED CYCLES (<see cref="OrderedHolders.Decide"/>): records that the change test left out the fold of
+        /// <paramref name="replaced"/>, a replaced holder that carries no visible name or pending reference. The copied
+        /// change test folded it in place, and a fold budget reads a part's shape: until the solve folds it, every budget
+        /// that reads it folds it first (<see cref="FoldWhereLeftOut"/>), so each budget reads the shape the copied seeds
+        /// give it.
+        /// </summary>
+        public void FoldOnRead(SummarySeed replaced) => (_foldsOnRead ??= new(ReferenceEqualityComparer.Instance)).Add(replaced);
+
+        // Folds a seed whose change-test fold was left out before a budget reads its shape (FoldOnRead).
+        private void FoldWhereLeftOut(SummarySeed seed)
+        {
+            if (_foldsOnRead is not { Count: > 0 } leftOut || !leftOut.Remove(seed) || seed.AbsorbedPartsWithoutFolding is null)
+                return;
+            seed.FoldInPlace();
+            observations?.RecordSummaryMemberDeferredFoldOnBudgetRead(seed.OwnEntryCount);
+        }
 
         /// <summary>Folds the parts an expansion holds once its <see cref="Budget"/> is spent.</summary>
         public void FoldHeldParts(SummarySeed expanded)
@@ -4736,6 +5211,12 @@ internal static class PropertyDependencyGraphBuilder
         // is contained in the eventual folded answer.
         private FoldCost Combined(SummarySeed seed, IReadOnlyList<SummarySeed> parts, bool ordered)
         {
+            if (_foldsOnRead is { Count: > 0 })
+            {
+                for (var i = 0; i < parts.Count; i++)
+                    FoldWhereLeftOut(parts[i]);
+            }
+
             var least = int.MaxValue;
             var width = seed.OwnRequirementCount;
             long work = (long)seed.OwnEntryCount + parts.Count;
@@ -4801,6 +5282,7 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         private FoldCost Budget(SummarySeed member)
         {
+            FoldWhereLeftOut(member);
             if (!member.OwnSetsHoldNoNamesOrReferences)
                 return NotHeld;
             if (member.AbsorbedPartsWithoutFolding is null)
@@ -4816,6 +5298,8 @@ internal static class PropertyDependencyGraphBuilder
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var (seed, partsDone) = entry;
+                if (!partsDone)
+                    FoldWhereLeftOut(seed);
                 if (known.ContainsKey(seed))
                     continue;
                 if (!seed.OwnSetsHoldNoNamesOrReferences)
@@ -4897,6 +5381,8 @@ internal static class PropertyDependencyGraphBuilder
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var (seed, partsDone) = entry;
+                if (!partsDone)
+                    FoldWhereLeftOut(seed);
                 if (known.ContainsKey(seed))
                     continue;
                 if (seed.AbsorbedPartsWithoutFolding is not { } parts)
@@ -5183,8 +5669,9 @@ internal static class PropertyDependencyGraphBuilder
             return orderedHolders.Same(next, previous);
         if (next.StructurallyEquals(previous))
             return true;
-        // A replaced holder whose requirement bound proves the change is left unfolded (OrderedHolders.Differs).
-        return orderedHolders?.Differs(next, previous) != true && next.SetEquals(previous);
+        // A holder the change test decides without folding it (OrderedHolders.Decide): a replaced one is left unfolded, a
+        // kept one takes its successor's requirement sets.
+        return orderedHolders?.Decide(next, previous) ?? next.SetEquals(previous);
 
         static bool CarriesReferenceAgainstReferenceFree(SummarySeed carrier, SummarySeed other, HeldMemberSeeds referenceFree)
             => !carrier.OwnSetsHoldNoReferences && other.AbsorbedPartsWithoutFolding is not null && referenceFree.MayHold(other);

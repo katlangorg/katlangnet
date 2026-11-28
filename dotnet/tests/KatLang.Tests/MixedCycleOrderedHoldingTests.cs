@@ -579,8 +579,9 @@ public sealed class MixedCycleOrderedHoldingTests(ITestOutputHelper output)
     /// <summary>
     /// Levels whose cycles hold no reference-bearing first pass, or that have no mixed cycle, are unchanged: an acyclic
     /// two-predecessor chain with a path and its readers, a pure-union cycle, members that read themselves, a member
-    /// navigating its own owner, the chain whose cycle closes through a path, and the branched cycle in source order. Every
-    /// counter, the checkpoint sequence, the static work and every summary are the copied seeds'.
+    /// navigating its own owner, and the chain whose cycle closes through a path. Every counter, the checkpoint sequence,
+    /// the static work and every summary are the copied seeds'. (The branched cycle in source order, which this list held
+    /// until CHORDED CYCLES, is <c>MixedCycleChordTests</c>' shape now.)
     /// </summary>
     [Fact]
     public void LevelsWithoutAReferenceBearingFirstPass_AreUnchanged()
@@ -595,7 +596,6 @@ public sealed class MixedCycleOrderedHoldingTests(ITestOutputHelper output)
             Level(k, i => i == 1 ? "P1 + p1 + Lib.X" : $"P{i} + P{i - 1} + p{i}", row: $"P{k}"),
             Level(k, i => i == 1 ? "p1" : Chain(i), row: "X", extra: $"X = F.P{k}\n"),
             Level(k, i => i == 1 ? "B.X + p1 + Lib.X" : Chain(i), extra: $"B = {{\npublic X = 1\nP{k}\n}}\n"),
-            Level(k, i => (i == 1 ? Closing(k) : Chain(i)) + (i % 8 == 0 && i + 4 <= k ? $" + P{i + 4}" : "")),
         };
         foreach (var source in sources)
         {
